@@ -1,0 +1,700 @@
+:root {
+  --wt-accent: #4f9cf9;
+  --wt-accent-rgb: 79, 156, 249;
+  --wt-accent-ink: #f4f8ff;
+  --wt-opacity: 0.86;
+  --wt-bg-image: none;
+  --wt-radius: 12px;
+  --wt-gap: 10px;
+  --wt-ok: 34, 197, 94;
+  --wt-warn: 245, 165, 36;
+}
+
+:root[data-theme="dark"] {
+  --wt-bg: #0a1120;
+  --wt-surface: rgba(18, 27, 44, var(--wt-opacity));
+  --wt-surface-2: rgba(26, 38, 60, calc(var(--wt-opacity) * 0.7));
+  --wt-border: rgba(255, 255, 255, 0.1);
+  --wt-text: #e6edf7;
+  --wt-muted: #8fa1bd;
+  --wt-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  --wt-grid: rgba(255, 255, 255, 0.045);
+}
+
+:root[data-theme="light"] {
+  --wt-bg: #f2f6fc;
+  --wt-surface: rgba(255, 255, 255, var(--wt-opacity));
+  --wt-surface-2: rgba(244, 249, 255, calc(var(--wt-opacity) * 0.8));
+  --wt-border: rgba(18, 40, 80, 0.12);
+  --wt-text: #16233c;
+  --wt-muted: #5c6d88;
+  --wt-shadow: 0 18px 40px rgba(24, 45, 80, 0.14);
+  --wt-grid: rgba(18, 40, 80, 0.05);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--wt-bg);
+  background-image: var(--wt-bg-image);
+  background-attachment: fixed;
+  background-size: cover;
+  color: var(--wt-text);
+  font-family: var(--vscode-font-family, system-ui, -apple-system, "Segoe UI", sans-serif);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+/* 蓝图网格：整个工作台的底纹 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(var(--wt-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--wt-grid) 1px, transparent 1px);
+  background-size: 28px 28px;
+  z-index: 0;
+}
+
+.wt-root {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: var(--wt-gap);
+  padding: var(--wt-gap);
+}
+
+/* ---------- 顶栏 ---------- */
+
+.wt-topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--wt-border);
+  border-radius: var(--wt-radius);
+  background: var(--wt-surface);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: var(--wt-shadow);
+}
+
+.wt-chip-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.wt-chip {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 5px 12px;
+  background: var(--wt-surface-2);
+  color: var(--wt-text);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.wt-chip:hover {
+  border-color: var(--wt-border);
+}
+
+.wt-chip.is-active {
+  background: var(--wt-accent);
+  color: var(--wt-accent-ink);
+  border-color: var(--wt-accent);
+  box-shadow: 0 0 0 3px rgba(var(--wt-accent-rgb), 0.22);
+}
+
+.wt-chip-ghost {
+  background: transparent;
+  border-color: var(--wt-border);
+  color: var(--wt-muted);
+}
+
+.wt-chip-ghost.is-active {
+  color: var(--wt-accent-ink);
+}
+
+.wt-hint {
+  color: var(--wt-muted);
+}
+
+/* ---------- 外观面板 ---------- */
+
+.wt-appearance {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--wt-border);
+  border-radius: var(--wt-radius);
+  background: var(--wt-surface);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: var(--wt-shadow);
+}
+
+.wt-appearance.is-collapsed {
+  display: none;
+}
+
+.wt-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wt-label {
+  color: var(--wt-muted);
+  white-space: nowrap;
+}
+
+.wt-value {
+  color: var(--wt-muted);
+  min-width: 38px;
+  text-align: right;
+}
+
+.wt-seg {
+  display: inline-flex;
+  border: 1px solid var(--wt-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.wt-seg-btn {
+  appearance: none;
+  border: 0;
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--wt-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wt-seg-btn + .wt-seg-btn {
+  border-left: 1px solid var(--wt-border);
+}
+
+.wt-seg-btn.is-active {
+  background: var(--wt-accent);
+  color: var(--wt-accent-ink);
+}
+
+.wt-color {
+  width: 34px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--wt-border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.wt-range {
+  width: 130px;
+  accent-color: var(--wt-accent);
+}
+
+/* ---------- 分栏舞台 ---------- */
+
+.wt-stage {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 0;
+}
+
+.wt-col-left,
+.wt-chat {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wt-gap);
+  min-width: 0;
+}
+
+.wt-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 0;
+}
+
+.wt-row {
+  display: flex;
+  gap: var(--wt-gap);
+  min-height: 0;
+}
+
+.wt-row-top {
+  flex: 0 0 auto;
+}
+
+.wt-row-main {
+  flex: 1 1 auto;
+}
+
+.wt-col-left > .wt-pane,
+.wt-chat > .wt-pane {
+  flex: 1 1 auto;
+}
+
+/* ---------- 分隔条 ---------- */
+
+.wt-divider {
+  flex: 0 0 auto;
+  background: transparent;
+  position: relative;
+}
+
+.wt-divider::after {
+  content: "";
+  position: absolute;
+  background: var(--wt-border);
+  transition: background 0.15s ease;
+}
+
+.wt-divider-x {
+  width: var(--wt-gap);
+  cursor: col-resize;
+}
+
+.wt-divider-x::after {
+  inset: 8px 45%;
+  width: 2px;
+}
+
+.wt-divider-y {
+  height: var(--wt-gap);
+  cursor: row-resize;
+}
+
+.wt-divider-y::after {
+  inset: 45% 8px;
+  height: 2px;
+}
+
+.wt-divider:hover::after,
+.wt-divider.is-dragging::after {
+  background: var(--wt-accent);
+  inset: 0;
+  width: auto;
+  height: auto;
+}
+
+.wt-divider-y:hover::after,
+.wt-divider-y.is-dragging::after {
+  inset: 0;
+}
+
+/* ---------- 窗格 ---------- */
+
+.wt-pane {
+  position: relative;
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--wt-border);
+  border-radius: var(--wt-radius);
+  background: var(--wt-surface);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: var(--wt-shadow);
+  overflow: hidden;
+}
+
+/* 霓虹状态光 */
+.wt-pane[data-status="working"] {
+  border-color: rgba(var(--wt-accent-rgb), 0.5);
+  box-shadow: var(--wt-shadow), 0 0 0 1px rgba(var(--wt-accent-rgb), 0.3),
+    0 0 26px rgba(var(--wt-accent-rgb), 0.32);
+}
+
+.wt-pane[data-status="needs-you"] {
+  border-color: rgba(var(--wt-warn), 0.55);
+  box-shadow: var(--wt-shadow), 0 0 0 1px rgba(var(--wt-warn), 0.3),
+    0 0 26px rgba(var(--wt-warn), 0.3);
+}
+
+.wt-pane[data-status="done"] {
+  border-color: rgba(var(--wt-ok), 0.5);
+  box-shadow: var(--wt-shadow), 0 0 0 1px rgba(var(--wt-ok), 0.26),
+    0 0 22px rgba(var(--wt-ok), 0.24);
+}
+
+.wt-pane-head {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--wt-border);
+  background: var(--wt-surface-2);
+}
+
+/* 忙碌窗格的旋转彗星 */
+@keyframes wt-comet {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.wt-pane[data-status="working"] .wt-pane-head::after {
+  content: "";
+  position: absolute;
+  inset: -60%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(var(--wt-accent-rgb), 0.5) 36deg,
+    transparent 84deg
+  );
+  animation: wt-comet 2.6s linear infinite;
+  pointer-events: none;
+}
+
+.wt-pane-no {
+  position: relative;
+  z-index: 1;
+  color: var(--wt-muted);
+  white-space: nowrap;
+}
+
+.wt-status {
+  position: relative;
+  z-index: 1;
+  appearance: none;
+  border: 1px solid var(--wt-border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: transparent;
+  color: var(--wt-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.wt-pane[data-status="working"] .wt-status {
+  color: var(--wt-accent);
+  border-color: rgba(var(--wt-accent-rgb), 0.5);
+}
+
+.wt-pane[data-status="needs-you"] .wt-status {
+  color: rgb(var(--wt-warn));
+  border-color: rgba(var(--wt-warn), 0.5);
+}
+
+.wt-pane[data-status="done"] .wt-status {
+  color: rgb(var(--wt-ok));
+  border-color: rgba(var(--wt-ok), 0.5);
+}
+
+.wt-tabs {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.wt-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.wt-tab {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 2px 6px;
+  background: transparent;
+  color: var(--wt-muted);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.wt-tab.is-active {
+  background: var(--wt-surface);
+  border-color: var(--wt-border);
+  color: var(--wt-text);
+}
+
+.wt-tab-x {
+  color: var(--wt-muted);
+  padding: 0 2px;
+  border-radius: 4px;
+}
+
+.wt-tab-x:hover {
+  background: rgba(255, 80, 80, 0.22);
+  color: var(--wt-text);
+}
+
+.wt-icon-btn {
+  position: relative;
+  z-index: 1;
+  appearance: none;
+  border: 1px solid var(--wt-border);
+  border-radius: 6px;
+  width: 22px;
+  height: 20px;
+  background: transparent;
+  color: var(--wt-muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.wt-icon-btn:hover {
+  color: var(--wt-text);
+  border-color: var(--wt-accent);
+}
+
+.wt-pane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.wt-tab-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.wt-kind-bar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px 0;
+}
+
+.wt-kind {
+  appearance: none;
+  border: 1px solid var(--wt-border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  background: transparent;
+  color: var(--wt-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.wt-kind.is-active {
+  border-color: var(--wt-accent);
+  color: var(--wt-accent);
+}
+
+.wt-note {
+  flex: 1 1 auto;
+  min-height: 120px;
+  margin: 8px;
+  padding: 8px;
+  resize: none;
+  border: 1px solid var(--wt-border);
+  border-radius: 8px;
+  background: var(--wt-surface-2);
+  color: var(--wt-text);
+  font: inherit;
+  line-height: 1.55;
+}
+
+.wt-note:focus,
+.wt-todo-input:focus,
+.wt-link-input:focus {
+  outline: none;
+  border-color: var(--wt-accent);
+  box-shadow: 0 0 0 3px rgba(var(--wt-accent-rgb), 0.18);
+}
+
+.wt-todo {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+
+.wt-todo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wt-todo-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: var(--wt-surface-2);
+}
+
+.wt-todo-item.is-done .wt-todo-text {
+  text-decoration: line-through;
+  color: var(--wt-muted);
+}
+
+.wt-check {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--wt-border);
+  border-radius: 5px;
+  background: transparent;
+  color: rgb(var(--wt-ok));
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.wt-todo-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.wt-todo-del {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--wt-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wt-todo-del:hover {
+  color: #ff7b72;
+}
+
+.wt-todo-input,
+.wt-link-input {
+  padding: 6px 8px;
+  border: 1px solid var(--wt-border);
+  border-radius: 8px;
+  background: var(--wt-surface-2);
+  color: var(--wt-text);
+  font: inherit;
+}
+
+.wt-link-row {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+}
+
+.wt-link-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.wt-btn {
+  appearance: none;
+  border: 1px solid var(--wt-accent);
+  border-radius: 8px;
+  padding: 6px 12px;
+  background: var(--wt-accent);
+  color: var(--wt-accent-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wt-placeholder {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  margin: 8px;
+  padding: 18px;
+  border: 1px dashed var(--wt-border);
+  border-radius: 10px;
+  color: var(--wt-muted);
+  line-height: 1.6;
+}
+
+/* ---------- 会话窗 ---------- */
+
+.wt-chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--wt-border);
+  border-radius: var(--wt-radius);
+  background: var(--wt-surface);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: var(--wt-shadow);
+}
+
+.wt-chat-title {
+  font-weight: 600;
+}
+
+.wt-chat-hint {
+  color: var(--wt-muted);
+  font-size: 11px;
+}
+
+.wt-chat > .wt-placeholder {
+  flex: 1 1 auto;
+  background: var(--wt-surface);
+  backdrop-filter: blur(14px) saturate(1.2);
+  border-style: dashed;
+}
+
+/* ---------- 空状态 ---------- */
+
+.wt-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--wt-border);
+  border-radius: var(--wt-radius);
+  background: var(--wt-surface);
+  backdrop-filter: blur(14px) saturate(1.2);
+  color: var(--wt-muted);
+  text-align: center;
+  padding: 24px;
+}
+
+.wt-empty-text {
+  margin: 0;
+  max-width: 420px;
+  line-height: 1.7;
+}

@@ -1,0 +1,13 @@
+.vscode/**
+src/**
+test/**
+scripts/**
+docs/**
+.trae/**
+node_modules/**
+out/shared/**
+*.vsix
+.gitignore
+AGENTS.md
+esbuild.mjs
+tsconfig.json

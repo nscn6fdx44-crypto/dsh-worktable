@@ -1,0 +1,256 @@
+{
+  "name": "trae-worktable",
+  "displayName": "Trae Worktable",
+  "description": "工作台：把项目收纳成侧边栏应用抽屉，并提供可停靠分栏工作区与统一外观系统。",
+  "version": "0.1.0",
+  "publisher": "nscn6fdx44-crypto",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nscn6fdx44-crypto/trae-usage.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "worktable",
+    "workbench",
+    "layout",
+    "drawer",
+    "trae"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "traeWorktable",
+          "title": "工作台",
+          "icon": "media/icons/worktable.svg"
+        }
+      ]
+    },
+    "views": {
+      "traeWorktable": [
+        {
+          "id": "traeWorktable.projects",
+          "name": "项目"
+        },
+        {
+          "id": "traeWorktable.hidden",
+          "name": "已隐藏",
+          "visibility": "collapsed"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "traeWorktable.addProject",
+        "title": "添加项目",
+        "category": "工作台",
+        "icon": "$(add)"
+      },
+      {
+        "command": "traeWorktable.openWorktable",
+        "title": "打开工作台",
+        "category": "工作台",
+        "icon": "$(layout)"
+      },
+      {
+        "command": "traeWorktable.pickLayout",
+        "title": "选择布局预设",
+        "category": "工作台",
+        "icon": "$(symbol-structure)"
+      },
+      {
+        "command": "traeWorktable.renameProject",
+        "title": "重命名项目",
+        "category": "工作台",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "traeWorktable.changeIcon",
+        "title": "更换图标",
+        "category": "工作台",
+        "icon": "$(symbol-color)"
+      },
+      {
+        "command": "traeWorktable.moveProjectUp",
+        "title": "上移",
+        "category": "工作台",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "traeWorktable.moveProjectDown",
+        "title": "下移",
+        "category": "工作台",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "traeWorktable.hideProject",
+        "title": "隐藏项目",
+        "category": "工作台",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "traeWorktable.showProject",
+        "title": "取消隐藏",
+        "category": "工作台",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "traeWorktable.removeProject",
+        "title": "移除项目",
+        "category": "工作台",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "traeWorktable.revealProjectFolder",
+        "title": "在文件管理器中打开",
+        "category": "工作台",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "traeWorktable.showChangelog",
+        "title": "变更日志",
+        "category": "工作台",
+        "icon": "$(history)"
+      },
+      {
+        "command": "traeWorktable.checkUpdates",
+        "title": "检查更新",
+        "category": "工作台",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "traeWorktable.copyUpgradePrompt",
+        "title": "复制升级提示",
+        "category": "工作台",
+        "icon": "$(clippy)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "traeWorktable.addProject",
+          "when": "view == traeWorktable.projects",
+          "group": "navigation@1"
+        },
+        {
+          "command": "traeWorktable.openWorktable",
+          "when": "view == traeWorktable.projects",
+          "group": "navigation@2"
+        },
+        {
+          "command": "traeWorktable.pickLayout",
+          "when": "view == traeWorktable.projects",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "traeWorktable.renameProject",
+          "when": "viewItem == traeWorktable.project",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "traeWorktable.changeIcon",
+          "when": "viewItem == traeWorktable.project",
+          "group": "1_edit@2"
+        },
+        {
+          "command": "traeWorktable.revealProjectFolder",
+          "when": "viewItem == traeWorktable.project",
+          "group": "1_edit@3"
+        },
+        {
+          "command": "traeWorktable.moveProjectUp",
+          "when": "viewItem == traeWorktable.project",
+          "group": "2_order@1"
+        },
+        {
+          "command": "traeWorktable.moveProjectDown",
+          "when": "viewItem == traeWorktable.project",
+          "group": "2_order@2"
+        },
+        {
+          "command": "traeWorktable.hideProject",
+          "when": "viewItem == traeWorktable.project",
+          "group": "3_visibility@1"
+        },
+        {
+          "command": "traeWorktable.showProject",
+          "when": "viewItem == traeWorktable.hiddenProject",
+          "group": "3_visibility@1"
+        },
+        {
+          "command": "traeWorktable.removeProject",
+          "when": "viewItem == traeWorktable.project || viewItem == traeWorktable.hiddenProject",
+          "group": "9_danger@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "工作台",
+      "properties": {
+        "traeWorktable.theme.mode": {
+          "type": "string",
+          "enum": [
+            "system",
+            "dark",
+            "light"
+          ],
+          "default": "system",
+          "markdownDescription": "工作台外观模式。`system` 跟随宿主主题。"
+        },
+        "traeWorktable.theme.accent": {
+          "type": "string",
+          "pattern": "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$",
+          "default": "#4f9cf9",
+          "markdownDescription": "强调色（十六进制）。"
+        },
+        "traeWorktable.theme.opacity": {
+          "type": "number",
+          "default": 0.86,
+          "minimum": 0.3,
+          "maximum": 1,
+          "description": "卡片与面板不透明度。"
+        },
+        "traeWorktable.theme.background": {
+          "type": "string",
+          "enum": [
+            "aurora",
+            "coast",
+            "grid",
+            "none"
+          ],
+          "default": "aurora",
+          "description": "背景预设。"
+        },
+        "traeWorktable.updateCheck.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用更新检查（只读 GitHub Releases 请求，不自动升级）。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "check": "node --check out/extension.js && node --check media/worktable.js",
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm run build",
+    "test": "node test/presets.test.mjs && node test/state.test.mjs && node test/package.test.mjs",
+    "verify:package": "node scripts/verify-package.mjs",
+    "pack": "npm run build && npm run check && node test/presets.test.mjs && node test/state.test.mjs && node test/package.test.mjs && npx --yes @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0"
+  }
+}

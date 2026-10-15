@@ -1,0 +1,10 @@
+node_modules/
+*.vsix
+dist/
+.trae/
+*.log
+
+# 构建产物：由 `npm run build` 生成，源码是唯一事实来源
+out/
+media/worktable.js
+media/worktable.css
