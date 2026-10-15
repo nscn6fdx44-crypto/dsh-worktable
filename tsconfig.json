@@ -15,5 +15,5 @@
     "noEmit": true,
     "types": ["node", "vscode"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "traework/src/**/*.ts"]
 }

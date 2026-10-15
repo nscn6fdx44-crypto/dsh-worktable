@@ -63,7 +63,8 @@ const REQUIRED = [
   "CHANGELOG.md"
 ];
 
-const FORBIDDEN_PREFIXES = ["src/", "test/", "scripts/", "docs/", "node_modules/", "out/shared/"];
+// traework/ 是同一仓库里的另一个产物（TraeWork Skill），不属于 TraeCode 扩展的包内容
+const FORBIDDEN_PREFIXES = ["src/", "test/", "scripts/", "traework/", "docs/", "node_modules/", "out/shared/"];
 const FORBIDDEN_EXACT = ["tsconfig.json", "esbuild.mjs", "AGENTS.md", "esbuild.mjs"];
 
 const missing = REQUIRED.filter((path) => !packaged.includes(path));

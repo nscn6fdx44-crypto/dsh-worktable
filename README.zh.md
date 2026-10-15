@@ -4,6 +4,16 @@
 
 本仓库是开源项目 [`Aisland-SJL/dsh-worktable`](https://github.com/Aisland-SJL/dsh-worktable)（MIT）在 **TraeCode IDE 上的独立复刻实现**。复刻范围为 **C1「视觉骨架派」**：抽屉 + 布局预设 + 外观主题 + 工程配套。功能设计参考上游，代码为独立编写。
 
+仓库同时产出**两个形态**，互不影响：
+
+| 产物 | 载体 | 说明 |
+|---|---|---|
+| TraeCode 扩展 | `.vsix` | 根目录的 `src/` `out/` `media/`，即下文全部内容 |
+| TraeWork 工作台 | Skill + 单文件 HTML | 见 [`traework/`](traework/README.md)：Skill 管数据、HTML 做视觉 |
+
+TraeWork **不支持**导入 `.vsix`，其扩展面是面向任务场景的插件 / Skill，没有自定义 UI 容器，
+因此工作台在 TraeWork 侧换了形态实现（数据走 CLI，视觉走自包含 HTML）。
+
 ---
 
 ## 功能
@@ -121,6 +131,7 @@ npm run build            # esbuild 双端构建 + 复制样式
 npm run check            # node --check 构建产物
 npm test                 # 离线回归（自动先 build）
 npm run verify:package   # 离线打包结构断言
+npm run verify:sync      # 校验 traework/lib 与源码逐字节一致（提交前单独跑）
 npm run pack             # 构建 + 检查 + 测试 + 出 .vsix
 npm run typecheck        # tsc --noEmit（需先 npm install）
 ```

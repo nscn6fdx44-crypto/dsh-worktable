@@ -1,5 +1,16 @@
 # 变更日志
 
+## 未发布
+
+新增仓库的**第二个产物**：面向 **TraeWork** 的工作台（`traework/`），形态为「Skill 管数据 + 单文件 HTML 做视觉」。
+
+- `traework/SKILL.md`：Skill 定义；`traework/scripts/wt.mjs` 读写 `.worktable/worktable.json`（项目增删改排序隐藏 / 布局预设 / 外观主题）
+- `traework/scripts/render.mjs`：组装自包含单文件 HTML，样式与运行时全内联、**零外部引用**
+- 数据形状与扩展共用 `src/shared/types.ts`，不另起一套
+- 配套：`npm run verify:sync` 校验 `traework/lib/` 与源码逐字节一致；`traework/` 已进 `.vscodeignore`，不混入扩展 `.vsix`
+
+> 本节描述仓库级新增，**不影响** TraeCode 扩展 v0.1.0 的既有行为；TraeWork 版尚未打 tag。
+
 ## v0.1.0
 
 首个版本。复刻范围：**C1（视觉骨架派）** —— M1 + M4 + M11 + M12。

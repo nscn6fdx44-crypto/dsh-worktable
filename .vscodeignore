@@ -2,7 +2,9 @@
 src/**
 test/**
 scripts/**
+traework/**
 docs/**
+dist/**
 .trae/**
 node_modules/**
 out/shared/**

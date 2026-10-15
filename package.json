@@ -240,10 +240,11 @@
   },
   "scripts": {
     "build": "node esbuild.mjs",
-    "check": "node --check out/extension.js && node --check media/worktable.js",
+    "check": "node --check out/extension.js && node --check media/worktable.js && node --check traework/lib/core.mjs && node --check traework/lib/app.js",
     "typecheck": "tsc --noEmit",
     "pretest": "npm run build",
-    "test": "node test/presets.test.mjs && node test/state.test.mjs && node test/package.test.mjs",
+    "test": "node test/presets.test.mjs && node test/state.test.mjs && node test/package.test.mjs && node traework/test/cli.test.mjs && node traework/test/render.test.mjs",
+    "verify:sync": "node traework/test/core-sync.test.mjs",
     "verify:package": "node scripts/verify-package.mjs",
     "pack": "npm run build && npm run check && node test/presets.test.mjs && node test/state.test.mjs && node test/package.test.mjs && npx --yes @vscode/vsce package --no-dependencies"
   },

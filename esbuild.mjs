@@ -52,5 +52,25 @@ await build({
   format: "esm"
 });
 
+// TraeWork 版：纯逻辑核心（ESM），供 traework 的 CLI 与测试直接 import
+await mkdir("traework/lib", { recursive: true });
+await build({
+  ...shared,
+  entryPoints: ["src/shared/state-core.ts"],
+  outfile: "traework/lib/core.mjs",
+  platform: "node",
+  format: "esm"
+});
+
+// TraeWork 版：浏览器运行时（IIFE），由 render.mjs 内联进单文件 HTML
+await build({
+  ...shared,
+  minify: true,
+  entryPoints: ["traework/src/main.ts"],
+  outfile: "traework/lib/app.js",
+  platform: "browser",
+  format: "iife"
+});
+
 // 样式单一来源：源码在 src/webview/styles.css，构建时复制到 media
 await copyFile("src/webview/styles.css", "media/worktable.css");

@@ -33,7 +33,9 @@ const MUST_BE_IGNORED = [
   "esbuild.mjs",
   "AGENTS.md",
   "docs/note.md",
-  ".trae/documents/plan.md"
+  ".trae/documents/plan.md",
+  "traework/lib/app.js",
+  "dist/demo/.worktable/worktable.html"
 ];
 
 const MUST_BE_PACKAGED = [
