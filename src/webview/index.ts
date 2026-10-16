@@ -4,6 +4,8 @@ import { PRESET_DEFS } from "../shared/presets";
 import { BACKGROUND_LABEL, applyTheme, toFullHex } from "./theme";
 import { renderSplit } from "./split";
 import { clear, el } from "./dom";
+import type { ProjectViewCallbacks } from "./projects";
+import { nextProjectStatus, renderEmpty, renderProjectGrid, renderSidebar } from "./projects";
 
 declare function acquireVsCodeApi(): {
   postMessage(message: WebviewToHost): void;
@@ -59,7 +61,16 @@ function sameStructureExceptTheme(a: WorktableState, b: WorktableState): boolean
   for (let i = 0; i < a.projects.length; i++) {
     const x = a.projects[i];
     const y = b.projects[i];
-    if (x.id !== y.id || x.name !== y.name || x.icon !== y.icon || x.hidden !== y.hidden || x.order !== y.order) {
+    if (
+      x.id !== y.id ||
+      x.name !== y.name ||
+      x.icon !== y.icon ||
+      x.hidden !== y.hidden ||
+      x.order !== y.order ||
+      x.status !== y.status ||
+      x.duration !== y.duration ||
+      x.description !== y.description
+    ) {
       return false;
     }
   }
@@ -108,48 +119,32 @@ function syncAppearance(): void {
   appearanceRefs.opacityValue.textContent = `${Math.round(state.theme.opacity * 100)}%`;
 }
 
-function renderEmpty(text = "还没有项目。在侧边栏「工作台」视图里点「添加项目」开始。"): HTMLElement {
-  const box = el("div", "wt-empty");
-  box.appendChild(el("p", "wt-empty-text", text));
-  return box;
-}
-
 function renderTopbar(s: WorktableState): HTMLElement {
   const bar = el("header", "wt-topbar");
 
-  const projects = el("div", "wt-chip-group");
-  const visible = s.projects.filter((p) => !p.hidden).sort((a, b) => a.order - b.order);
-  if (visible.length === 0) {
-    projects.appendChild(el("span", "wt-hint", "暂无项目"));
+  if (s.activeProjectId) {
+    const back = el("button", "wt-chip wt-chip-ghost", "← 全部项目");
+    back.title = "退出当前项目，回到全部项目视图";
+    back.addEventListener("click", () => post({ type: "setActiveProject", projectId: null }));
+    bar.appendChild(back);
   }
-  for (const project of visible) {
-    const chip = el(
-      "button",
-      `wt-chip${project.id === s.activeProjectId ? " is-active" : ""}`,
-      project.name
-    );
-    chip.title = project.folder;
-    chip.addEventListener("click", () => post({ type: "setActiveProject", projectId: project.id }));
-    projects.appendChild(chip);
-  }
-  bar.appendChild(projects);
 
   const layouts = el("div", "wt-chip-group");
-  const currentPresetId = s.activeProjectId
-    ? s.presetByProject[s.activeProjectId] ?? PRESET_DEFS[0].id
-    : null;
-  for (const preset of PRESET_DEFS) {
-    const chip = el(
-      "button",
-      `wt-chip wt-chip-ghost${preset.id === currentPresetId ? " is-active" : ""}`,
-      preset.label
-    );
-    chip.title = `${preset.id} · ${preset.contentCount} 窗`;
-    chip.addEventListener("click", () => {
-      if (!s.activeProjectId) return;
-      post({ type: "setPreset", projectId: s.activeProjectId, presetId: preset.id });
-    });
-    layouts.appendChild(chip);
+  if (s.activeProjectId) {
+    const currentPresetId = s.presetByProject[s.activeProjectId] ?? PRESET_DEFS[0].id;
+    for (const preset of PRESET_DEFS) {
+      const chip = el(
+        "button",
+        `wt-chip wt-chip-ghost${preset.id === currentPresetId ? " is-active" : ""}`,
+        preset.label
+      );
+      chip.title = `${preset.id} · ${preset.contentCount} 窗`;
+      chip.addEventListener("click", () => {
+        if (!s.activeProjectId) return;
+        post({ type: "setPreset", projectId: s.activeProjectId, presetId: preset.id });
+      });
+      layouts.appendChild(chip);
+    }
   }
   bar.appendChild(layouts);
 
@@ -250,27 +245,44 @@ function render(): void {
   root.appendChild(renderAppearance(current));
   syncAppearance();
 
+  const callbacks: ProjectViewCallbacks = {
+    onActivate: (projectId) => post({ type: "setActiveProject", projectId }),
+    onDeactivate: () => post({ type: "setActiveProject", projectId: null }),
+    onAdd: () => post({ type: "addProject" }),
+    onCycleStatus: (projectId) => {
+      const project = current.projects.find((p) => p.id === projectId);
+      if (!project) return;
+      post({
+        type: "setProjectMeta",
+        projectId,
+        patch: { status: nextProjectStatus(project.status) }
+      });
+    }
+  };
+
+  const shell = el("div", "wt-shell");
+  shell.appendChild(renderSidebar(current, callbacks));
+
+  const content = el("div", "wt-content");
   const active = current.projects.find((p) => p.id === current.activeProjectId && !p.hidden);
+  const key = active ? activeLayoutKey(current) : null;
   if (!active) {
-    root.appendChild(renderEmpty());
-    return;
+    content.appendChild(renderProjectGrid(current, callbacks));
+  } else if (!key || !current.layouts[key]) {
+    content.appendChild(renderEmpty("正在初始化布局…"));
+  } else {
+    content.appendChild(
+      renderSplit({
+        state: current,
+        layoutKey: key,
+        onPersist: persistDebounced,
+        onRerender: rerender,
+        onOpenExternal: (url) => post({ type: "openExternal", url })
+      })
+    );
   }
-
-  const key = activeLayoutKey(current);
-  if (!key || !current.layouts[key]) {
-    root.appendChild(renderEmpty("正在初始化布局…"));
-    return;
-  }
-
-  root.appendChild(
-    renderSplit({
-      state: current,
-      layoutKey: key,
-      onPersist: persistDebounced,
-      onRerender: rerender,
-      onOpenExternal: (url) => post({ type: "openExternal", url })
-    })
-  );
+  shell.appendChild(content);
+  root.appendChild(shell);
 }
 
 window.addEventListener("message", (event: MessageEvent<HostToWebview>) => {

@@ -12,6 +12,7 @@ const shared = {
 await rm("out", { recursive: true, force: true });
 await rm("media/worktable.js", { force: true });
 await rm("media/worktable.css", { force: true });
+await rm("traework/lib", { recursive: true, force: true });
 
 await mkdir("out/shared", { recursive: true });
 await mkdir("media", { recursive: true });
@@ -72,5 +73,6 @@ await build({
   format: "iife"
 });
 
-// 样式单一来源：源码在 src/webview/styles.css，构建时复制到 media
+// 样式单一来源：源码在 src/webview/styles.css，构建时复制到两处消费方
 await copyFile("src/webview/styles.css", "media/worktable.css");
+await copyFile("src/webview/styles.css", "traework/lib/styles.css");

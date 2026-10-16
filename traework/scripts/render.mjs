@@ -1,16 +1,15 @@
 #!/usr/bin/env node
 // 把 worktable.json 组装成单文件 HTML：样式与运行时全部内联，零外部引用。
-// 样式复用 src/webview/styles.css（与 TraeCode 版同一份），运行时复用 lib/app.js。
+// 样式与运行时都取自技能自身的 lib/，因此技能目录可以被复制到任何地方独立运行。
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TRAEWORK = resolve(HERE, "..");
-const REPO = resolve(TRAEWORK, "..");
 
 const APP_JS = join(TRAEWORK, "lib", "app.js");
-const STYLES = join(REPO, "src", "webview", "styles.css");
+const STYLES = join(TRAEWORK, "lib", "styles.css");
 
 /** 内联 JSON 时转义 `<` `>` `&`，避免内容提前闭合 script 标签。 */
 function jsonForScript(value) {
@@ -30,7 +29,7 @@ export function buildHtml(state) {
     /<\/script/gi,
     "<\\/script"
   );
-  const css = readOrThrow(STYLES, "样式单一来源缺失，仓库结构可能被改动");
+  const css = readOrThrow(STYLES, "请先在仓库根目录运行 npm run build");
 
   return `<!DOCTYPE html>
 <html lang="zh-CN" data-theme="dark" data-background="aurora">

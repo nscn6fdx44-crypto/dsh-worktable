@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
-import { addProject, defaultState, normalizeState, setProjectPreset } from "../lib/core.mjs";
+import { spawnSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  addProject,
+  defaultState,
+  normalizeState,
+  setProjectMeta,
+  setProjectPreset
+} from "../lib/core.mjs";
 import { buildHtml } from "../scripts/render.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const TRAEWORK = resolve(HERE, "..");
 
 let passed = 0;
 
@@ -79,10 +93,72 @@ test("项目名含 </script> 也不会提前闭合脚本块", () => {
   assert.equal(seedOf(html).projects[0].name, nasty);
 });
 
+test("内联样式含左栏与项目卡片网格", () => {
+  const html = buildHtml(fixture());
+  for (const marker of [
+    ".wt-shell",
+    ".wt-sidebar",
+    ".wt-project-item",
+    ".wt-project-badge",
+    ".wt-dot",
+    ".wt-grid",
+    ".wt-card",
+    ".wt-card-desc",
+    ".wt-status-pill"
+  ]) {
+    assert.ok(html.includes(marker), `缺少 ${marker}`);
+  }
+  for (const status of ["working", "needs-you", "done"]) {
+    assert.ok(html.includes(`.wt-status-pill[data-status="${status}"]`), `缺少卡片状态 ${status} 的样式`);
+  }
+});
+
+test("项目级字段原样透传进 seed", () => {
+  let s = fixture();
+  s = setProjectMeta(s, s.projects[0].id, {
+    status: "working",
+    duration: "2h",
+    description: "演示项目"
+  });
+  const seed = seedOf(buildHtml(s));
+  assert.equal(seed.projects[0].status, "working");
+  assert.equal(seed.projects[0].duration, "2h");
+  assert.equal(seed.projects[0].description, "演示项目");
+  assert.equal(seed.projects[1].status, "idle");
+  assert.equal(seed.projects[1].duration, "");
+  assert.equal(seed.projects[1].description, "");
+});
+
 test("空状态也能渲染出空态提示", () => {
   const html = buildHtml(defaultState());
   assert.match(html, /id="wt-seed"/);
   assert.deepEqual(seedOf(html).projects, []);
+});
+
+test("技能目录被复制到别处后仍能独立渲染", () => {
+  const sandbox = mkdtempSync(join(tmpdir(), "wt-skill-"));
+  const installed = join(sandbox, "traework-worktable");
+  mkdirSync(installed, { recursive: true });
+  for (const part of ["SKILL.md", "scripts", "lib"]) {
+    cpSync(join(TRAEWORK, part), join(installed, part), { recursive: true });
+  }
+
+  const file = join(sandbox, "worktable.json");
+  const cli = join(installed, "scripts", "wt.mjs");
+  const added = spawnSync(
+    process.execPath,
+    [cli, "add", "--folder", "C:/demo/portable", "--name", "甲", "--file", file],
+    { encoding: "utf8" }
+  );
+  assert.equal(added.status, 0, added.stderr);
+  const rendered = spawnSync(process.execPath, [cli, "render", "--file", file], { encoding: "utf8" });
+  assert.equal(rendered.status, 0, rendered.stderr);
+
+  const html = readFileSync(join(sandbox, "worktable.html"), "utf8");
+  assert.ok(html.includes('id="wt-seed"'), "复制的技能目录里渲染不出 seed");
+  assert.ok(html.includes(".wt-stage"), "复制的技能目录里样式没被内联");
+  assert.equal(/<link\b/i.test(html), false);
+  rmSync(sandbox, { recursive: true, force: true });
 });
 
 console.log(`traework-render: ${passed} passed`);

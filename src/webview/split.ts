@@ -1,7 +1,7 @@
-import type { LayoutState, WorktableState } from "../shared/types";
+import type { LayoutState, Project, WorktableState } from "../shared/types";
 import { mainRowCount, paneSlots, presetById } from "../shared/presets";
 import { el } from "./dom";
-import { renderPane, type PaneCallbacks } from "./panes";
+import { renderPane, type PaneCallbacks, type PaneContext } from "./panes";
 
 export interface SplitContext extends PaneCallbacks {
   state: WorktableState;
@@ -53,12 +53,22 @@ export function renderSplit(ctx: SplitContext): HTMLElement {
   const stage = el("div", "wt-stage");
   const persist = () => ctx.onPersist();
 
+  // 布局键形如 `<projectId>::<presetId>`；模块窗格靠它反查项目根。
+  const project: Project | null =
+    ctx.state.projects.find((p) => p.id === ctx.layoutKey.split("::")[0]) ?? null;
+  const paneCtx: PaneContext = {
+    project,
+    onPersist: ctx.onPersist,
+    onRerender: ctx.onRerender,
+    onOpenExternal: ctx.onOpenExternal
+  };
+
   // ---- 左栏 ----
   if (preset.leftCount > 0) {
     const left = el("div", "wt-col-left");
     left.style.width = `${layout.leftWidth}px`;
     for (let i = 0; i < preset.leftCount; i++) {
-      left.appendChild(renderPane(layout.slots[i], slots[i].windowNo, ctx));
+      left.appendChild(renderPane(layout.slots[i], slots[i].windowNo, paneCtx));
     }
     stage.appendChild(left);
 
@@ -84,7 +94,7 @@ export function renderSplit(ctx: SplitContext): HTMLElement {
     top.style.height = `${layout.topHeight}px`;
     for (let i = 0; i < preset.topCount; i++) {
       const index = preset.leftCount + i;
-      top.appendChild(renderPane(layout.slots[index], slots[index].windowNo, ctx));
+      top.appendChild(renderPane(layout.slots[index], slots[index].windowNo, paneCtx));
     }
     main.appendChild(top);
 
@@ -108,7 +118,7 @@ export function renderSplit(ctx: SplitContext): HTMLElement {
   const mainStart = preset.leftCount + preset.topCount;
   for (let i = 0; i < mainRowCount(preset); i++) {
     const index = mainStart + i;
-    mainRow.appendChild(renderPane(layout.slots[index], slots[index].windowNo, ctx));
+    mainRow.appendChild(renderPane(layout.slots[index], slots[index].windowNo, paneCtx));
   }
   main.appendChild(mainRow);
   stage.appendChild(main);

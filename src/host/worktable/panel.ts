@@ -109,8 +109,14 @@ export function openWorktablePanel(
       case "setLayouts":
         await store.update((s) => ({ ...s, layouts: message.layouts }));
         break;
+      case "addProject":
+        await vscode.commands.executeCommand("traeWorktable.addProject");
+        break;
       case "setActiveProject":
         await store.update((s) => core.setActiveProject(s, message.projectId));
+        break;
+      case "setProjectMeta":
+        await store.update((s) => core.setProjectMeta(s, message.projectId, message.patch));
         break;
       case "setPreset":
         await store.update((s) => core.setProjectPreset(s, message.projectId, message.presetId));

@@ -132,6 +132,7 @@ npm run check            # node --check 构建产物
 npm test                 # 离线回归（自动先 build）
 npm run verify:package   # 离线打包结构断言
 npm run verify:sync      # 校验 traework/lib 与源码逐字节一致（提交前单独跑）
+npm run traework:install # 把 TraeWork 工作台安装成项目技能（.trae/skills/traework-worktable/）
 npm run pack             # 构建 + 检查 + 测试 + 出 .vsix
 npm run typecheck        # tsc --noEmit（需先 npm install）
 ```

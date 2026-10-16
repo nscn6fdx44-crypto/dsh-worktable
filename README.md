@@ -132,6 +132,7 @@ npm run check            # node --check on built artifacts
 npm test                 # offline regression (builds first)
 npm run verify:package   # offline package-structure assertions
 npm run verify:sync      # assert traework/lib matches the sources byte-for-byte (run standalone before committing)
+npm run traework:install # install the TraeWork worktable as a project skill (.trae/skills/traework-worktable/)
 npm run pack             # build + check + test + .vsix
 npm run typecheck        # tsc --noEmit (requires npm install)
 ```

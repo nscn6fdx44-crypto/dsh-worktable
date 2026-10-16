@@ -7,7 +7,25 @@
 - `traework/SKILL.md`：Skill 定义；`traework/scripts/wt.mjs` 读写 `.worktable/worktable.json`（项目增删改排序隐藏 / 布局预设 / 外观主题）
 - `traework/scripts/render.mjs`：组装自包含单文件 HTML，样式与运行时全内联、**零外部引用**
 - 数据形状与扩展共用 `src/shared/types.ts`，不另起一套
+- 安装：官方要求**项目技能**必须位于 `.trae/skills/`，故 `traework/` 本身不是技能目录；新增 `npm run traework:install` 安装到 `.trae/skills/traework-worktable/`
+- 修缺陷：`theme` 对非法值曾静默覆盖用户设置（`--background neon` 退出码 0，且把 `coast` 改写成默认 `aurora`）；现按域显式校验，非法值退出码 1 且不改动文件
+- 修缺陷：`render.mjs` 曾依赖仓库根的 `src/webview/styles.css`，技能复制到别处即渲染失败；现从自持的 `lib/styles.css` 取样式
 - 配套：`npm run verify:sync` 校验 `traework/lib/` 与源码逐字节一致；`traework/` 已进 `.vscodeignore`，不混入扩展 `.vsix`
+- 界面重构：主界面改为**左栏项目列表 + 右侧双范式**——未选项目时是**项目卡片网格**，选中项目时是**分栏工作台**；
+  退出当前项目两条路：再点左栏已高亮那项，或点顶栏「← 全部项目」
+- 项目级字段：`status`（四态）/ `duration` / `description`，卡片状态光与窗格**共用同一套色板**；
+  `activeProjectId` 支持显式 `null`（`active --none`）表示「停在卡片视图」，且可持久化
+- 新增 `slot` 命令：按窗口序号写入窗格标签页（类型 / 标题 / 内容 / 状态），解决「只有界面没有内容」
+- 新增 `src/webview/projects.ts`：左栏与卡片网格视图
+- 窗格模块从四种扩为六种：新增 **`repo`**（目录树 + 源码编辑保存，保存直写磁盘）与 **`web`**（窗格内嵌浏览器）；
+  原先的 `note` / `todo` / `link` / `placeholder` 保留为通用兜底，不再当默认占位
+- 新增**本地服务** `traework/scripts/serve.mjs` 与 `wt.mjs serve` 命令：一个进程同时提供「每次请求现渲染的工作台 HTML」
+  「项目文件目录树与读写 API」「网页反代」；`repo` / `web` 两类模块只有走它才可用，静态单文件形态下自动降级为可读提示
+- 安全边界：`repo` / `web` 的所有路径经 `resolveWithin` 钉在项目根内，`..` 与绝对路径一律拒绝；读取上限 512 KB、
+  写入上限 1 MB、目录列表上限 400 项；反代剥掉 `X-Frame-Options` / CSP 等封锁头，且不给 iframe `allow-same-origin`
+- 新增服务端机器可读错误码（`not-found` / `not-a-directory` / `not-a-file`），前端据此在「目录 / 文件」共用同一路径字段时分支
+- 新增 `/api/probe`：网页模块先探上游状态再决定是否内嵌，上游 401/403 会给出可读原因，不塞空白框
+- 新增离线用例 `traework/test/serve.test.mjs`（30 例，含越界防护、读写边界与反代头剥离）
 
 > 本节描述仓库级新增，**不影响** TraeCode 扩展 v0.1.0 的既有行为；TraeWork 版尚未打 tag。
 

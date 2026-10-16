@@ -8,3 +8,6 @@ dist/
 out/
 media/worktable.js
 media/worktable.css
+
+# TraeWork 工作台的本地数据：记录的是本机项目绝对路径，属本地实例数据，不入库
+.worktable/

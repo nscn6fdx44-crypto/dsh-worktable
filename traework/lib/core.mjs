@@ -61,8 +61,19 @@ function paneSlots(preset) {
 var STATE_KEY = "traeWorktable.state.v1";
 var THEME_MODES = ["system", "dark", "light"];
 var BACKGROUNDS = ["aurora", "coast", "grid", "none"];
-var PANE_KINDS = ["note", "todo", "link", "placeholder"];
+var ACCENT_PATTERN = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+var OPACITY_MIN = 0.3;
+var OPACITY_MAX = 1;
+var PANE_KINDS = ["note", "todo", "link", "placeholder", "repo", "web"];
 var PANE_STATUSES = ["idle", "working", "needs-you", "done"];
+var STATUS_ORDER = [...PANE_STATUSES];
+var STATUS_LABEL = {
+  idle: "\u7A7A\u95F2",
+  working: "\u8FDB\u884C\u4E2D",
+  "needs-you": "\u5F85\u4F60\u5904\u7406",
+  done: "\u5B8C\u6210"
+};
+var PANE_KIND_ORDER = [...PANE_KINDS];
 var seq = 0;
 function uid(prefix = "id") {
   seq += 1;
@@ -76,6 +87,10 @@ function defaultTabTitle(kind) {
       return "\u94FE\u63A5";
     case "placeholder":
       return "\u5360\u4F4D";
+    case "repo":
+      return "\u4ED3\u5E93";
+    case "web":
+      return "\u7F51\u9875";
     default:
       return "\u7B14\u8BB0";
   }
@@ -130,14 +145,30 @@ function ensureLayout(state, projectId, presetId) {
 }
 function themeFromConfig(raw) {
   const d = defaultTheme();
-  const accent = typeof raw.accent === "string" && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(raw.accent) ? raw.accent : d.accent;
-  const opacity = typeof raw.opacity === "number" && raw.opacity >= 0.3 && raw.opacity <= 1 ? raw.opacity : d.opacity;
+  const accent = typeof raw.accent === "string" && ACCENT_PATTERN.test(raw.accent) ? raw.accent : d.accent;
+  const opacity = typeof raw.opacity === "number" && raw.opacity >= OPACITY_MIN && raw.opacity <= OPACITY_MAX ? raw.opacity : d.opacity;
   return {
     mode: THEME_MODES.includes(raw.mode) ? raw.mode : d.mode,
     accent,
     opacity,
     background: BACKGROUNDS.includes(raw.background) ? raw.background : d.background
   };
+}
+function themeIssues(patch) {
+  const issues = [];
+  if (patch.mode !== void 0 && !THEME_MODES.includes(patch.mode)) {
+    issues.push(`mode \u53EA\u63A5\u53D7 ${THEME_MODES.join(" | ")}\uFF0C\u6536\u5230\uFF1A${String(patch.mode)}`);
+  }
+  if (patch.accent !== void 0 && !ACCENT_PATTERN.test(patch.accent)) {
+    issues.push(`accent \u9700\u8981 #rgb \u6216 #rrggbb\uFF0C\u6536\u5230\uFF1A${String(patch.accent)}`);
+  }
+  if (patch.background !== void 0 && !BACKGROUNDS.includes(patch.background)) {
+    issues.push(`background \u53EA\u63A5\u53D7 ${BACKGROUNDS.join(" | ")}\uFF0C\u6536\u5230\uFF1A${String(patch.background)}`);
+  }
+  if (patch.opacity !== void 0 && !(typeof patch.opacity === "number" && patch.opacity >= OPACITY_MIN && patch.opacity <= OPACITY_MAX)) {
+    issues.push(`opacity \u9700\u8981\u662F ${OPACITY_MIN}\u2013${OPACITY_MAX} \u4E4B\u95F4\u7684\u6570\u5B57\uFF0C\u6536\u5230\uFF1A${String(patch.opacity)}`);
+  }
+  return issues;
 }
 function normalizeProject(raw, index) {
   if (!raw || typeof raw !== "object") return null;
@@ -149,7 +180,10 @@ function normalizeProject(raw, index) {
     icon: typeof o.icon === "string" && o.icon ? o.icon : "folder",
     folder: o.folder,
     hidden: o.hidden === true,
-    order: typeof o.order === "number" ? o.order : index
+    order: typeof o.order === "number" ? o.order : index,
+    status: PANE_STATUSES.includes(o.status) ? o.status : "idle",
+    duration: typeof o.duration === "string" ? o.duration : "",
+    description: typeof o.description === "string" ? o.description : ""
   };
 }
 function normalizeTab(raw) {
@@ -213,10 +247,12 @@ function normalizeState(raw) {
       presetByProject[projectId] = presetId;
     }
   }
+  const activeRaw = o.activeProjectId;
+  const activeProjectId = activeRaw === null ? null : typeof activeRaw === "string" && projects.some((p) => p.id === activeRaw) ? activeRaw : projects.find((p) => !p.hidden)?.id ?? null;
   return {
     version: 1,
     projects,
-    activeProjectId: typeof o.activeProjectId === "string" && projects.some((p) => p.id === o.activeProjectId) ? o.activeProjectId : projects.find((p) => !p.hidden)?.id ?? null,
+    activeProjectId,
     presetByProject,
     layouts,
     theme: themeFromConfig(themeRaw)
@@ -235,12 +271,15 @@ function addProject(state, folder, name, icon) {
     icon: icon || "folder",
     folder,
     hidden: false,
-    order: state.projects.length
+    order: state.projects.length,
+    status: "idle",
+    duration: "",
+    description: ""
   };
   return {
     ...state,
     projects: [...state.projects, project],
-    activeProjectId: state.activeProjectId ?? project.id
+    activeProjectId: state.activeProjectId ?? (state.projects.length === 0 ? project.id : null)
   };
 }
 function renameProject(state, id, name) {
@@ -257,6 +296,61 @@ function setProjectIcon(state, id, icon) {
     ...state,
     projects: state.projects.map((p) => p.id === id ? { ...p, icon } : p)
   };
+}
+function setProjectMeta(state, id, patch) {
+  const project = state.projects.find((p) => p.id === id);
+  if (!project) return state;
+  const next = { ...project };
+  let changed = false;
+  if (patch.status !== void 0 && patch.status !== project.status) {
+    next.status = patch.status;
+    changed = true;
+  }
+  if (patch.duration !== void 0 && patch.duration !== project.duration) {
+    next.duration = patch.duration;
+    changed = true;
+  }
+  if (patch.description !== void 0 && patch.description !== project.description) {
+    next.description = patch.description;
+    changed = true;
+  }
+  if (!changed) return state;
+  return { ...state, projects: state.projects.map((p) => p.id === id ? next : p) };
+}
+function projectMetaIssues(patch) {
+  const issues = [];
+  if (patch.status !== void 0 && !PANE_STATUSES.includes(patch.status)) {
+    issues.push(`status \u53EA\u63A5\u53D7 ${PANE_STATUSES.join(" | ")}\uFF0C\u6536\u5230\uFF1A${String(patch.status)}`);
+  }
+  if (patch.duration !== void 0 && typeof patch.duration !== "string") {
+    issues.push(`duration \u9700\u8981\u662F\u6587\u672C\uFF0C\u6536\u5230\uFF1A${String(patch.duration)}`);
+  }
+  if (patch.description !== void 0 && typeof patch.description !== "string") {
+    issues.push(`description \u9700\u8981\u662F\u6587\u672C\uFF0C\u6536\u5230\uFF1A${String(patch.description)}`);
+  }
+  return issues;
+}
+function projectStats(state, projectId) {
+  const presetId = presetForProject(state, projectId);
+  const total = presetById(presetId).contentCount;
+  const slots = state.layouts[layoutKey(projectId, presetId)]?.slots ?? [];
+  const stats = { total, idle: 0, working: 0, needsYou: 0, done: 0 };
+  for (let i = 0; i < total; i++) {
+    switch (slots[i]?.status) {
+      case "working":
+        stats.working += 1;
+        break;
+      case "needs-you":
+        stats.needsYou += 1;
+        break;
+      case "done":
+        stats.done += 1;
+        break;
+      default:
+        stats.idle += 1;
+    }
+  }
+  return stats;
 }
 function setProjectHidden(state, id, hidden) {
   const projects = state.projects.map((p) => p.id === id ? { ...p, hidden } : p);
@@ -301,7 +395,10 @@ function presetIds() {
   return PRESET_DEFS.map((p) => p.id);
 }
 export {
+  PANE_KIND_ORDER,
   STATE_KEY,
+  STATUS_LABEL,
+  STATUS_ORDER,
   addProject,
   defaultState,
   defaultTabTitle,
@@ -315,13 +412,17 @@ export {
   normalizeState,
   presetForProject,
   presetIds,
+  projectMetaIssues,
+  projectStats,
   removeProject,
   renameProject,
   setActiveProject,
   setProjectHidden,
   setProjectIcon,
+  setProjectMeta,
   setProjectPreset,
   themeFromConfig,
+  themeIssues,
   uid,
   visibleProjects
 };

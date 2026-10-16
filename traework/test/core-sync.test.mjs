@@ -56,4 +56,12 @@ for (const target of TARGETS) {
   });
 }
 
+test("traework/lib/styles.css 与 src/webview/styles.css 逐字节一致", () => {
+  assert.equal(
+    readFileSync(join(TRAEWORK, "lib", "styles.css"), "utf8"),
+    readFileSync(join(REPO, "src", "webview", "styles.css"), "utf8"),
+    "traework/lib/styles.css 已过期：请先在仓库根目录运行 npm run build，再把 lib/ 一起提交"
+  );
+});
+
 console.log(`traework-sync: ${passed} passed`);

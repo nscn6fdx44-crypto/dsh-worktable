@@ -8,10 +8,14 @@ import {
   moveProject,
   normalizeState,
   presetForProject,
+  projectMetaIssues,
+  projectStats,
   removeProject,
   renameProject,
+  setActiveProject,
   setProjectHidden,
   setProjectIcon,
+  setProjectMeta,
   setProjectPreset,
   themeFromConfig,
   visibleProjects
@@ -195,6 +199,112 @@ test("主题合法值保留", () => {
   assert.equal(theme.accent, "#abc");
   assert.equal(theme.opacity, 0.5);
   assert.equal(theme.background, "coast");
+});
+
+test("新增项目带项目级字段默认值", () => {
+  const s = addProject(defaultState(), "C:/a", "A", "folder");
+  assert.equal(s.projects[0].status, "idle");
+  assert.equal(s.projects[0].duration, "");
+  assert.equal(s.projects[0].description, "");
+});
+
+test("normalizeProject 回落非法 status 并保留合法文本字段", () => {
+  const s = normalizeState({
+    projects: [
+      { folder: "C:/a", name: "A", status: "紫色", duration: 5, description: "  项目简介  " }
+    ]
+  });
+  assert.equal(s.projects[0].status, "idle");
+  assert.equal(s.projects[0].duration, "", "非文本 duration 应回落空串");
+  assert.equal(s.projects[0].description, "  项目简介  ", "合法文本原样保留");
+});
+
+test("显式 activeProjectId: null 被保留（退出到卡片视图可持久化）", () => {
+  const raw = { projects: [{ id: "p1", folder: "C:/a", name: "A", order: 0 }], activeProjectId: null };
+  const s = normalizeState(raw);
+  assert.equal(s.activeProjectId, null);
+});
+
+test("缺失 activeProjectId 时仍自动选中首个可见项目", () => {
+  const raw = { projects: [{ id: "p1", folder: "C:/a", name: "A", order: 0 }] };
+  const s = normalizeState(raw);
+  assert.equal(s.activeProjectId, "p1");
+});
+
+test("setActiveProject 可清空当前项目", () => {
+  let s = addProject(defaultState(), "C:/a", "A", "folder");
+  assert.equal(s.activeProjectId, s.projects[0].id);
+  s = setActiveProject(s, null);
+  assert.equal(s.activeProjectId, null);
+});
+
+test("非空状态里新增项目不会强行抢走当前项目", () => {
+  let s = addProject(defaultState(), "C:/a", "A", "folder");
+  const first = s.projects[0].id;
+  s = setActiveProject(s, null);
+  s = addProject(s, "C:/b", "B", "folder");
+  assert.equal(s.activeProjectId, null, "停在卡片视图时新增不应被拽走");
+  assert.equal(s.projects.length, 2);
+  s = setActiveProject(s, first);
+  s = addProject(s, "C:/c", "C", "folder");
+  assert.equal(s.activeProjectId, first, "已有当前项目时新增不改动它");
+});
+
+test("setProjectMeta 只改传入字段，未传字段不动", () => {
+  let s = addProject(defaultState(), "C:/a", "A", "folder");
+  const id = s.projects[0].id;
+  s = setProjectMeta(s, id, { status: "working", duration: "2h", description: "演示" });
+  assert.equal(s.projects[0].status, "working");
+  assert.equal(s.projects[0].duration, "2h");
+  assert.equal(s.projects[0].description, "演示");
+
+  s = setProjectMeta(s, id, { status: "done" });
+  assert.equal(s.projects[0].status, "done");
+  assert.equal(s.projects[0].duration, "2h", "未传字段必须保持原值");
+  assert.equal(s.projects[0].description, "演示");
+});
+
+test("setProjectMeta 空 patch 或未知项目返回原状态对象", () => {
+  const s = addProject(defaultState(), "C:/a", "A", "folder");
+  assert.equal(setProjectMeta(s, s.projects[0].id, {}), s);
+  assert.equal(setProjectMeta(s, s.projects[0].id, { status: "idle" }), s, "同值不应产生新对象");
+  assert.equal(setProjectMeta(s, "proj-不存在", { status: "done" }), s);
+});
+
+test("projectMetaIssues 按域校验", () => {
+  assert.deepEqual(projectMetaIssues({}), []);
+  assert.deepEqual(projectMetaIssues({ status: "working", duration: "2h", description: "x" }), []);
+  assert.equal(projectMetaIssues({ status: "紫色" }).length, 1);
+  assert.equal(projectMetaIssues({ duration: 5 }).length, 1);
+  assert.equal(projectMetaIssues({ description: null }).length, 1);
+});
+
+test("projectStats 无布局时全记空闲，分母等于预设窗口数", () => {
+  const s = addProject(defaultState(), "C:/a", "A", "folder");
+  const stats = projectStats(s, s.projects[0].id);
+  assert.equal(stats.total, presetById(DEFAULT_PRESET_ID).contentCount);
+  assert.equal(stats.idle, stats.total);
+  assert.equal(stats.working, 0);
+  assert.equal(stats.needsYou, 0);
+  assert.equal(stats.done, 0);
+});
+
+test("projectStats 按槽位状态计数", () => {
+  let s = addProject(defaultState(), "C:/a", "A", "folder");
+  const id = s.projects[0].id;
+  s = setProjectPreset(s, id, "g4");
+  const layout = ensureLayout(s, id, "g4");
+  layout.slots[0].status = "working";
+  layout.slots[1].status = "needs-you";
+  layout.slots[2].status = "done";
+  s = { ...s, layouts: { ...s.layouts, [layoutKey(id, "g4")]: layout } };
+
+  const stats = projectStats(s, id);
+  assert.equal(stats.total, 4);
+  assert.equal(stats.working, 1);
+  assert.equal(stats.needsYou, 1);
+  assert.equal(stats.done, 1);
+  assert.equal(stats.idle, 1);
 });
 
 console.log(`state-core: ${passed} passed`);
