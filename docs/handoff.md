@@ -8,9 +8,9 @@
 
 ## 0. 一句话现状
 
-**代码已写完、离线验收全绿、进度已提交并推送，但「真实 TraeWork 里的装载与端到端」尚未验证。**
-`main` 与 `origin/main` 已同步（HEAD = `6a7744a`），工作区干净。
-下一步的核心工作是：**执行端到端验证计划，再决定是否打 tag 发版。**
+**代码已写完、离线验收全绿、进度已提交并推送并打 tag，但「真实 TraeWork 里的装载与端到端」尚未验证。**
+`main` 与 `origin/main` 已同步，工作区干净，发版 tag `v0.2.0-traework` 已发布（锚点 `b581b2d`）。
+下一步的核心工作是：**执行端到端验证计划**；验证通过后再考虑下一个版本。
 
 ---
 
@@ -20,8 +20,8 @@
 |---|---|
 | 包名 | `trae-worktable` |
 | 远端 | `https://github.com/nscn6fdx44-crypto/trae-usage.git` |
-| 分支 | `main`（HEAD = `6a7744a`，与 `origin/main` **已同步**） |
-| 已有 tag | `v0.1.0`（指向 `acf383c`，即扩展初始实现那个提交） |
+| 分支 | `main`（与 `origin/main` **已同步**；发版 tag `v0.2.0-traework` 锚在 `b581b2d`） |
+| 已有 tag | `v0.1.0`（`acf383c`，扩展初始实现）、`v0.2.0-traework`（`b581b2d`，TraeWork 窗格模块化 + 本地服务） |
 | 提交作者 | 已统一为 `438567753@qq.com` |
 | 上游参考 | `https://github.com/Aisland-SJL/dsh-worktable`（MIT）。本项目是**独立实现**，只参考功能设计与工程纪律，未复制源码 |
 
@@ -139,19 +139,21 @@ gitee 对**任何非浏览器请求**一律回 403「您的访问受限」——
 
 ## 5. 改动落库情况（新任务必读）
 
-**HEAD = `6a7744a`，与 `origin/main` 已同步，工作区干净。**
+**`main` 与 `origin/main` 已同步，工作区干净。最近一次发版 tag：`v0.2.0-traework` → `b581b2d`。**
 
 本次进度已作为提交推送到远端：
 
 | 提交 | 内容 |
 |---|---|
+| `b581b2d` | docs(changelog): 未发布转为 v0.2.0-traework —— **即 tag `v0.2.0-traework`** |
+| `cbda0de` | docs: 交接文档同步最新落库状态 |
 | `6a7744a` | feat(traework): 窗格新增 repo/web 模块与本地服务，主界面改为左栏+双范式 —— **32 文件，+4597 / -225** |
 | `44575f6` | feat(traework): 新增 TraeWork 版工作台（形态为 Skill 管数据 + 单文件 HTML 做视觉） |
 | `acf383c` | feat: 工作台扩展初始实现（M1 / M4 / M11 / M12）—— 即 tag `v0.1.0` |
 
 `6a7744a` 覆盖：界面重构（左栏项目列表 + 双范式）、项目级字段、`slot` 命令、
 `repo` / `web` 模块、本地服务 `serve`、安全边界、`/api/probe`、离线用例，
-以及 `.worktable/` 进 `.gitignore`。更新日志见 `CHANGELOG.md` 的「未发布」一节。
+以及 `.worktable/` 进 `.gitignore`。更新日志见 `CHANGELOG.md` 的「v0.2.0-traework」一节。
 
 **注意点**：
 - `.worktable/` 已加入 `.gitignore`：它记录的是**本机项目绝对路径**，属本地实例数据，不入库（换机器重新 `add` 即可）
@@ -179,7 +181,7 @@ gitee 对**任何非浏览器请求**一律回 403「您的访问受限」——
 |---|---|---|
 | D1 | gitee 那条标签怎么处理 | 换掉 / 删掉 / 保留（会显示 403 原因）。用户此前跳过了这个提问，尚未拍板 |
 | D2 | ~~`.worktable/` 是否进 `.gitignore`~~ | **已定**：已加入 `.gitignore`（记录本机绝对路径，属本地实例数据） |
-| D3 | ~~30 项改动是否提交、何时推送~~ / 是否打新 tag | **已提交并推送**（`6a7744a`）；**是否打新 tag 仍未定** |
+| D3 | ~~30 项改动是否提交、何时推送~~ / 是否打新 tag | **已定**：已提交并推送，并打 tag `v0.2.0-traework`（`b581b2d`） |
 | D4 | TraeWork 版是否也要出「最小版」文档供拍板 | 未定 |
 
 ---
@@ -248,7 +250,7 @@ gitee 对**任何非浏览器请求**一律回 403「您的访问受限」——
 ## 11. 交接自检清单
 
 - [ ] 读过根 `AGENTS.md`
-- [ ] 确认 `git status` 干净、HEAD = `6a7744a`（与本文 §5 一致）
+- [ ] 确认 `git status` 干净、本地存在 tag `v0.2.0-traework`（锚点 `b581b2d`）
 - [ ] 确认服务在 `http://127.0.0.1:7331/`（交接时存活，PID 3740；重启后需重新 `serve`）
 - [ ] 跑过一次 `npm test`（应 112 例全绿）再动手改任何东西
 - [ ] 读完 `docs/traework-e2e-verification.md` 再开始验证
