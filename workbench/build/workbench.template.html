@@ -683,6 +683,32 @@
 
   /* ================= 控制室 ================= */
   .ports-strip{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+
+  /* 零服务模式：本机目录授权（File System Access + IndexedDB 句柄持久化） */
+  .dirbar{
+    border:1px solid var(--line);border-radius:var(--r);margin-bottom:18px;overflow:hidden;
+    background:linear-gradient(180deg,rgba(255,255,255,.032),rgba(255,255,255,.008))
+  }
+  .dir-row{
+    display:flex;align-items:center;gap:10px;padding:9px 13px;border-bottom:1px solid var(--line);
+    font-size:12.5px;color:var(--txt-dim);flex-wrap:wrap
+  }
+  .dir-row:last-child{border-bottom:0}
+  .dir-k{flex:none;width:74px;font-size:11px;letter-spacing:.08em;color:var(--txt-mute);text-transform:uppercase}
+  .dir-v{flex:1;min-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dir-v.mute{color:var(--txt-mute)}
+  .dir-v b{color:var(--amber);font-weight:600;font-family:var(--mono)}
+  .dir-note{
+    padding:11px 13px;font-size:12px;color:var(--txt-mute);line-height:1.65
+  }
+  .dir-note b{color:var(--txt-dim);font-weight:600}
+  .dir-note code{font-family:var(--mono);font-size:11.5px;color:var(--amber);background:rgba(240,180,41,.08);padding:1px 5px;border-radius:4px}
+  .dir-tip{
+    padding:8px 13px;border-top:1px solid var(--line);font-size:11.5px;line-height:1.6;color:var(--txt-mute);
+    background:rgba(240,180,41,.035)
+  }
+  .dir-tip i{color:var(--amber);font-style:normal}
+
   .port-chip{
     display:inline-flex;align-items:center;gap:8px;padding:7px 11px;border-radius:10px;
     border:1px solid var(--line);background:var(--panel);font-size:11.5px;color:var(--txt-dim);transition:.2s var(--ease)
@@ -906,8 +932,18 @@
       <div class="stats" id="crStats"></div>
 
       <div class="section-head">
+        <h2>本机目录 <span id="dirAuthCount">—</span></h2>
+        <div class="hint">零服务模式 · 目录句柄存浏览器，刷新后一键续期</div>
+      </div>
+      <div class="dirbar" id="dirBar"></div>
+      <!-- 兼容模式扫描：webkitdirectory 只枚举文件清单，不需要任何权限、不需要安全上下文，
+           在 file:// 下也能用。作为 showDirectoryPicker 不可用 / 授权被拒时的兜底通道。 -->
+      <input type="file" id="dirFlatInput" webkitdirectory directory multiple
+        style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" />
+
+      <div class="section-head">
         <h2>本机监听端口 <span id="portCount">—</span></h2>
-        <div class="hint">快照采集 · 与项目匹配的已标注</div>
+        <div class="hint" id="portHint">快照采集 · 与项目匹配的已标注</div>
       </div>
       <div class="ports-strip" id="portsStrip"></div>
 
@@ -1013,7 +1049,8 @@ let AI_PRESETS = (DATA && Array.isArray(DATA.aiPresets) && DATA.aiPresets.length
 
 const LS = {
   view:'wt2.view', active:'wt2.active', status:'wt2.status', preset:'wt2.preset',
-  panes:'wt2.panes', custom:'wt2.custom', filter:'wt2.filter', removed:'wt2.removed'
+  panes:'wt2.panes', custom:'wt2.custom', filter:'wt2.filter', removed:'wt2.removed',
+  zero:'wt2.zero'
 };
 
 /* ============================================================
@@ -1038,7 +1075,17 @@ let armedDelete = false;                        // 移除二次确认（不持�
 let query       = '';
 let repoView    = {};   // { 'pid|rel' : {file: path|null} }  —— 会话内，不持久化
 
-const dirHandles = {};  // { pid: FileSystemDirectoryHandle } —— 会话内
+const dirHandles = {};  // { pid: FileSystemDirectoryHandle } —— 会话内，持久副本在 IndexedDB
+const SCAN_ROOT_KEY = '__scanroot__';
+let scanRoot     = null;  // FileSystemDirectoryHandle —— 零服务模式的单页扫描根
+let scanRootName = '';
+let pendingAuth  = [];    // [{ key, handle }] —— 权限降级为 prompt，需用户手势才能续期
+let localPorts   = null;  // { scannedAt, ports:[{port}], attempted } —— 端口试探结果（近似）
+let zeroScan     = store.read(LS.zero, { scannedAt:'', rootName:'', rootPath:'', mode:'', projects:[] });
+const zeroPending = {};   // { pid: true } —— 正在把扫描根解析成项目目录句柄
+let pickFail     = null; // { name, msg } —— 最近一次目录选择失败的原因，常驻显示，避免用户「不知道为什么没反应」
+let flatFiles    = null; // Map<相对路径, File> —— 兼容模式扫描到的文件清单；会话内有效，刷新后需重扫一次
+let flatRootName = '';   // 兼容模式扫描根目录名（浏览器不暴露绝对路径）
 
 let SERVER = false;     // 是否跑在本地服务下（可读写文件）；启动时探测 /api/health
 let scanCache = null;   // { scannedAt, roots, projects } —— /api/scan 的结果，会话内
@@ -1050,7 +1097,32 @@ let projFilter = 'all'; // 'all' | 'running' | 'new'
    工具
    ============================================================ */
 function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function allProjects(){ return DATA.projects.concat(custom).filter(p => removed.indexOf(p.id) < 0); }
+function hkey(s){ let h = 5381; for(let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return h.toString(36); }
+/* 零服务模式扫描出来的项目，形状对齐 DATA.projects，便于整套渲染复用 */
+function zeroProjects(){
+  return (zeroScan.projects || []).map(sp => ({
+    id: 'zero-' + hkey((zeroScan.rootName || '') + '|' + sp.rel),
+    name: sp.name, alias: sp.name, path: sp.path, rel: sp.rel,
+    langs: sp.langs || [], category: sp.category || '本机扫描',
+    sizeMB: Math.round(((sp.sizeBytes || 0) / 1048576) * 10) / 10,
+    files: sp.files || 0, git: !!sp.git, updated: sp.updated || '',
+    live: sp.live || null, samples: sp.samples || [], ports: sp.ports || [], zero: true
+  }));
+}
+function zeroById(pid){ return zeroProjects().find(p => p.id === pid) || null; }
+/* 快照项目 + 零服务扫描 + 自定义项目，按路径去重后合并 */
+function allProjects(){
+  const merged = DATA.projects.concat(zeroProjects(), custom);
+  const seen = new Set(), out = [];
+  for(const p of merged){
+    if(removed.indexOf(p.id) >= 0) continue;
+    const k = normPath(p.path);
+    if(k && seen.has(k)) continue;
+    if(k) seen.add(k);
+    out.push(p);
+  }
+  return out;
+}
 function projectById(id){ return allProjects().find(p => p.id === id) || null; }
 function initials(p){ const s = (p.alias || p.name || '?').replace(/[^\w\u4e00-\u9fa5]/g,''); return (s.slice(0,2) || 'PR').toUpperCase(); }
 function shortPath(p, n){
@@ -1107,7 +1179,7 @@ function relTime(d){
 /* 卡片预览：优先取 README 正文首段，退化到语言/规模摘要 */
 function projPreview(p){
   const set = DATA.trees[p.id];
-  const list = (set && set.samples) || [];
+  const list = (set && set.samples) || p.samples || [];
   const readme = list.find(s => /(^|\/)readme\.(md|markdown|txt|rst)$/i.test(s.p));
   const pick = readme || list.find(s => s.t && s.t.trim().length > 24) || list[0];
   if(pick && pick.t){
@@ -1263,8 +1335,10 @@ function projStatHTML(hit, total, running){
   return '<span>命中 <b>' + hit + '</b> / 共 ' + total + '</span>' +
     '<span>运行中 <b>' + running + '</b></span>' +
     '<span class="sp"></span>' +
-    '<span>' + (SERVER ? '索引：本地服务实时重扫' : '索引：内置快照 ' + esc(DATA.snapshot)) + '</span>' +
-    (scanCache ? '<span>· 重扫于 ' + esc(String(scanCache.scannedAt || '').slice(11, 19)) + '</span>' : '');
+    '<span>' + (SERVER ? '索引：本地服务实时重扫'
+      : (scanRoot ? '索引：本机目录扫描（零服务）' : '索引：内置快照 ' + esc(DATA.snapshot))) + '</span>' +
+    (scanCache ? '<span>· 重扫于 ' + esc(String(scanCache.scannedAt || '').slice(11, 19)) + '</span>'
+      : (zeroScan.scannedAt ? '<span>· 扫描于 ' + esc(String(zeroScan.scannedAt).slice(11, 19)) + '</span>' : ''));
 }
 
 function projRowHTML(r){
@@ -1400,7 +1474,9 @@ function statsHTML(full){
   ];
   if(full){
     tiles.push(statTile('已完成', c.done, '个', 'done', '四态状态光汇总'));
-    tiles.push(statTile('运行中服务', running, '个', '', '本机监听端口匹配到 ' + DATA.ports.length + ' 条'));
+    tiles.push(statTile('运行中服务', running, '个', '', (localPorts && !SERVER)
+      ? '近似探测 ' + localPorts.attempted + ' 个常见端口'
+      : '本机监听端口匹配到 ' + DATA.ports.length + ' 条'));
   }
   return tiles.join('');
 }
@@ -1414,7 +1490,7 @@ function ccCell(k, v, cls){
 function renderCards(){
   const cs = countByState();
   const total = allProjects().length;
-  const liveN = DATA.projects.filter(p => p.live).length;
+  const liveN = allProjects().filter(p => p.live).length;
 
   const controlCard =
     '<article class="card control-card" data-act="goto-control" tabindex="0" title="控制室 · 本机项目总控">' +
@@ -1517,6 +1593,8 @@ function renderSplit(){
   host.innerHTML = bar + '<div class="pane-grid" data-preset="' + preset + '">' + cells.join('') + '</div>';
   if(SERVER) srvFill(p.id);
   else if(dirHandles[p.id]) surviveLive(p.id);
+  else if(zeroScan.mode === 'flat' && zeroById(p.id)) flatFill(p.id);
+  else if(zeroById(p.id)) ensureZeroHandle(p.id);
 }
 
 function renderPane(pane, slot, pid){
@@ -1600,7 +1678,7 @@ function projectsBody(slot){
       '<input class="pj-q" data-field="proj-q" data-slot="' + slot + '" value="' + esc(projQuery) +
         '" placeholder="搜索项目名 / 路径 / 语言…" spellcheck="false" autocomplete="off" />' +
       '<button class="btn small" data-act="scan-refresh" data-slot="' + slot + '"' +
-        (SERVER ? '' : ' title="实时重扫需要本地服务"') + '>刷新索引</button>' +
+        ((SERVER || scanRoot) ? '' : ' title="实时重扫需先在控制室授权本机目录，或启动本地服务"') + '>刷新索引</button>' +
     '</div>' +
     '<div class="seg pj-seg">' +
       segBtn('proj-filter', 'all', projFilter, '全部', universe.length) +
@@ -1674,7 +1752,9 @@ function repoBody(pane, slot, pid){
   const p = projectById(pid);
   const rel = pane.content || '';
   const handle = dirHandles[pid];
-  const mode = SERVER ? 'server' : (handle ? 'live' : 'snapshot');
+  const flat = !SERVER && zeroScan.mode === 'flat' && !!zeroById(pid);
+  const mode = SERVER ? 'server' : (flat ? 'flat' : (handle ? 'live' : 'snapshot'));
+  const isZero = mode === 'snapshot' && !!zeroById(pid);
   const rv = repoView[repoKey(pid, rel)] || {};
   const sel = rv.file || null;
 
@@ -1683,7 +1763,9 @@ function repoBody(pane, slot, pid){
       '<div class="crumb">' + crumbHTML(pid, rel, mode) + '</div>' +
       (mode === 'server'
         ? '<span class="server-pill"><i>●</i>服务端读写</span>'
-        : '<button class="mini-btn" data-act="connect-dir" data-pid="' + esc(pid) + '" title="连接真实目录后可读写文件">' + (handle ? '已连接' : '连接目录') + '</button>') +
+        : mode === 'flat'
+          ? '<span class="server-pill"><i>◇</i>兼容模式 · 只读</span>'
+          : '<button class="mini-btn" data-act="connect-dir" data-pid="' + esc(pid) + '" title="连接真实目录后可读写文件">' + (handle ? '已连接' : (isZero ? '解析中…' : '连接目录')) + '</button>') +
       '<button class="mini-btn" data-act="copy-text" data-text="' + esc(p ? p.path : '') + '">复制根路径</button>' +
       (rel ? '<button class="mini-btn" data-act="repo-nav" data-slot="' + slot + '" data-rel="' + esc(rel.split('/').slice(0,-1).join('/')) + '">↑ 上级</button>' : '') +
     '</div>';
@@ -1692,7 +1774,11 @@ function repoBody(pane, slot, pid){
     ? '<div class="note-line"><i>●</i>本地服务已接管：无需点选目录，可直接读取并保存文件</div>'
     : mode === 'live'
       ? '<div class="note-line"><i>●</i>已连接真实目录，可直接读取并保存文件</div>'
-      : '<div class="note-line"><i>◇</i>快照浏览模式（只读）· 想要直接读写磁盘文件，双击「启动工作台.bat」起本地服务</div>';
+      : mode === 'flat'
+        ? '<div class="note-line"><i>●</i>兼容模式扫描（只读）：可浏览文件内容，<b>不能写盘</b> · 想直接写盘就到控制室点「选择本机目录」</div>'
+        : isZero
+          ? '<div class="note-line"><i>●</i>本机目录（零服务）：正在解析目录句柄，稍候即可直接读写</div>'
+          : '<div class="note-line"><i>◇</i>快照浏览模式（只读）· 想直接读写磁盘文件，就在控制室授权一个本机目录，或双击「启动工作台.bat」起本地服务</div>';
 
   let body = '';
   if(mode === 'server'){
@@ -1701,6 +1787,13 @@ function repoBody(pane, slot, pid){
   } else if(mode === 'live'){
     body = '<div class="tree" data-live-tree="' + slot + '"><div class="empty" style="padding:14px">正在读取目录…</div></div>' +
            '<div class="file-view" data-live-file="' + slot + '"></div>';
+  } else if(mode === 'flat'){
+    body = '<div class="tree" data-flat-tree="' + slot + '"><div class="empty" style="padding:14px">正在整理目录…</div></div>' +
+           '<div class="file-view" data-flat-file="' + slot + '"></div>';
+  } else if(isZero){
+    body = '<div class="tree"><div class="empty" style="padding:14px">' +
+      (scanRoot ? '正在解析本机目录…' : '本机目录未连接：到控制室点「续期授权」或重新扫描一次') +
+      '</div></div><div class="file-view"></div>';
   } else {
     const { dirs, files } = listAt(pid, rel);
     body = '<div class="tree">' +
@@ -1836,13 +1929,19 @@ function filePreview(pid, rel, file, slot){
    ============================================================ */
 function renderControl(){
   document.getElementById('crStats').innerHTML = statsHTML(true);
+  renderDirBar();
 
-  const usedPorts = new Set(DATA.projects.filter(p => p.live).map(p => p.live.port));
-  document.getElementById('portsStrip').innerHTML = DATA.ports.map(pt =>
-    '<div class="port-chip"><b>:' + pt.port + '</b><span>' + esc(pt.proc) + '</span><span>· ' + pt.memMB + ' MB</span>' +
+  const portRows = (localPorts && !SERVER) ? localPorts.ports : DATA.ports;
+  const usedPorts = new Set(allProjects().filter(p => p.live).map(p => p.live.port));
+  document.getElementById('portsStrip').innerHTML = portRows.length ? portRows.map(pt =>
+    '<div class="port-chip"><b>:' + pt.port + '</b><span>' + esc(pt.proc) + '</span>' +
+    (pt.memMB ? '<span>· ' + pt.memMB + ' MB</span>' : '') +
     (usedPorts.has(pt.port) ? '<span style="color:var(--st-done)">· 已匹配项目</span>' : '') + '</div>'
-  ).join('');
-  document.getElementById('portCount').textContent = '· ' + DATA.ports.length + ' 个';
+  ).join('') : '<div class="empty" style="padding:12px">未探测到监听端口</div>';
+  const portHint = document.getElementById('portHint');
+  if(portHint) portHint.textContent = (localPorts && !SERVER) ? '近似探测 · 浏览器只探常见端口' : '快照采集 · 与项目匹配的已标注';
+
+  document.getElementById('portCount').textContent = '· ' + portRows.length + ' 个';
 
   document.getElementById('stateFilter').innerHTML =
     '<button class="' + (stateFilter === 'all' ? 'on' : '') + '" data-act="filter-state" data-state="all">全部<span class="k">' + allProjects().length + '</span></button>' +
@@ -1906,12 +2005,19 @@ function renderAll(){
 function syncModeBadge(){
   const el = document.getElementById('modeBadge');
   if(!el) return;
-  el.className = 'mode-badge' + (SERVER ? ' on' : '');
+  const isFlat = !SERVER && zeroScan.mode === 'flat';
+  el.className = 'mode-badge' + (SERVER || scanRoot || isFlat ? ' on' : '');
   const port = (typeof location !== 'undefined' && location.port) ? ':' + location.port : '';
-  el.innerHTML = SERVER ? '<i>●</i>本地服务 · 可读写' : '<i>◇</i>快照模式 · 只读';
+  el.innerHTML = SERVER ? '<i>●</i>本地服务 · 可读写'
+    : (scanRoot ? '<i>●</i>本机目录 · 零服务读写'
+    : (isFlat ? '<i>◇</i>兼容模式 · 只读' : '<i>◇</i>快照模式 · 只读'));
   el.title = SERVER
     ? '本地服务已接管' + port + '，仓库窗格可直接读写磁盘文件'
-    : '快照模式为只读：双击「启动工作台.bat」起本地服务后即可读写文件';
+    : scanRoot
+      ? '已授权本机目录「' + (scanRootName || '') + '」· 句柄存浏览器 IndexedDB，可扫描并直接读写'
+      : isFlat
+        ? '兼容模式扫描「' + (zeroScan.rootName || '') + '」· 只读浏览，刷新后需重扫一次；想写盘请到控制室点「选择本机目录」'
+        : '快照模式为只读：到控制室授权一个本机目录即可扫描并直接读写；也可双击「启动工作台.bat」起本地服务';
 }
 
 function detectServer(){
@@ -2060,6 +2166,8 @@ function repoOpen(slot, rel){
   if(!activeId) return;
   const key = repoKey(activeId, rel);
   repoView[key] = { file: rel.split('/').pop() };
+  /* 兼容模式没有快照样本，直接读文件清单里的 File 对象（只读） */
+  if(!SERVER && zeroScan.mode === 'flat' && zeroById(activeId)){ flatOpen(activeId, slot, rel); return; }
   renderSplit();
   const txt = sampleOf(activeId, rel);
   toast(txt ? '已载入 ' + rel + ' 的快照内容' : rel + ' 未内嵌预览（点复制路径用编辑器打开）', txt ? 'ok' : 'warn');
@@ -2121,6 +2229,13 @@ function openUrl(url){
 /* ---------- 连接真实目录（File System Access API） ---------- */
 async function connectDir(pid){
   if(SERVER){ toast('本地服务已接管读写，无需再连接目录', 'ok'); return; }
+  if(zeroById(pid) && scanRoot){
+    if(zeroPending[pid]){ toast('正在解析本机目录，稍候…'); return; }
+    await ensureZeroHandle(pid);
+    if(dirHandles[pid]){ toast('已通过本机扫描根连接该目录 · 可读写', 'ok'); renderSplit(); return; }
+    toast('该目录解析失败，可能是权限已过期或目录被移动 · 请到控制室点「续期授权」或「重新扫描」', 'warn');
+    return;
+  }
   const fileProto = typeof location !== 'undefined' && location.protocol === 'file:';
   if(!window.showDirectoryPicker){
     toast('当前浏览器不支持目录访问（需 Chrome / Edge 86+）', 'warn');
@@ -2136,7 +2251,7 @@ async function connectDir(pid){
     const why = fileProto
       ? 'file:// 不是安全上下文，浏览器直接拦掉了目录选择器 —— 这不是本页的 bug。'
       : '浏览器拒绝了目录选择器：' + (e && e.message ? e.message : e);
-    toast(why + ' 解决办法：双击「启动工作台.bat」，用 http://127.0.0.1 打开即可零点击读写文件。', 'warn');
+    toast(why + ' 解决办法：用 https 地址（GitHub Pages）或双击「启动工作台.bat」后用 http://127.0.0.1 打开。', 'warn');
   }
 }
 
@@ -2209,9 +2324,750 @@ async function liveSave(pid, rel, btn){
   } catch(e){ toast('写入失败：' + (e.message || e), 'warn'); }
 }
 
+/* ============================================================
+   零服务模式：本机目录授权 → 单页扫描 → 直接读写
+   把 serve.mjs + 启动工作台.bat 的扫描能力搬进单页：
+   目录句柄存 IndexedDB，刷新后点一次续期即可；无需 Node、无需安装。
+   ============================================================ */
+const IDB_NAME = 'wt-fs', IDB_STORE = 'handles';
+
+/* IndexedDB 在 file:// 等环境下偶发「既不成功也不报错」，会永远吊住 await。
+   因此每个操作都必须带超时：宁可放弃持久化，也绝不能让扫描这条主链路被卡住。 */
+const IDB_TIMEOUT_MS = 1500;
+function idbOpen(){
+  return new Promise((res, rej) => {
+    if(typeof indexedDB === 'undefined'){ rej(new Error('浏览器不支持 IndexedDB')); return; }
+    let done = false, timer = null;
+    const finish = (fn, arg) => { if(done) return; done = true; if(timer) clearTimeout(timer); fn(arg); };
+    timer = setTimeout(() => finish(rej, new Error('IndexedDB 无响应（已跳过持久化）')), IDB_TIMEOUT_MS);
+    let rq;
+    try { rq = indexedDB.open(IDB_NAME, 1); } catch(e){ finish(rej, e); return; }
+    rq.onupgradeneeded = () => { const db = rq.result; if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE); };
+    rq.onsuccess = () => finish(res, rq.result);
+    rq.onerror = () => finish(rej, rq.error || new Error('IndexedDB 打开失败'));
+    rq.onblocked = () => finish(rej, new Error('IndexedDB 被其它标签页占用'));
+  });
+}
+function idbTx(mode, fn){
+  return idbOpen().then(db => new Promise((res, rej) => {
+    let done = false, timer = null;
+    const finish = (fn2, arg) => { if(done) return; done = true; if(timer) clearTimeout(timer); fn2(arg); };
+    timer = setTimeout(() => finish(rej, new Error('IndexedDB 事务无响应')), IDB_TIMEOUT_MS);
+    let tx, rq;
+    try { tx = db.transaction(IDB_STORE, mode); rq = fn(tx.objectStore(IDB_STORE)); }
+    catch(e){ finish(rej, e); return; }
+    tx.oncomplete = () => finish(res, rq && rq.result);
+    tx.onerror = () => finish(rej, tx.error || new Error('IndexedDB 事务失败'));
+    tx.onabort = () => finish(rej, tx.error || new Error('IndexedDB 事务中止'));
+  }));
+}
+const idbPut = (k, v) => idbTx('readwrite', os => os.put(v, k));
+const idbGet = (k) => idbTx('readonly', os => os.get(k));
+const idbDel = (k) => idbTx('readwrite', os => os.delete(k));
+
+/* FileSystemHandle 的权限三态：granted / prompt / denied */
+async function permState(handle, mode){
+  if(!handle) return 'none';
+  if(typeof handle.queryPermission !== 'function') return 'granted';
+  try { return await handle.queryPermission({ mode: mode || 'readwrite' }); }
+  catch(e){ return 'denied'; }
+}
+async function permAsk(handle, mode){
+  if(!handle) return 'none';
+  if(typeof handle.requestPermission !== 'function') return 'granted';
+  try { return await handle.requestPermission({ mode: mode || 'readwrite' }); }
+  catch(e){ return 'denied'; }
+}
+
+const CAN_FS = typeof window !== 'undefined' && !!window.showDirectoryPicker;
+
+/* ---- 项目识别表 ---- */
+const MARK_FILES = {
+  'package.json':'Node', 'pnpm-workspace.yaml':'Node', 'tsconfig.json':'TypeScript',
+  'Cargo.toml':'Rust', 'go.mod':'Go', 'pyproject.toml':'Python', 'requirements.txt':'Python',
+  'setup.py':'Python', 'manage.py':'Python', 'pom.xml':'Java', 'build.gradle':'Java',
+  'build.gradle.kts':'Kotlin', 'CMakeLists.txt':'C/C++', 'Makefile':'Make', 'platformio.ini':'PlatformIO',
+  'composer.json':'PHP', 'Gemfile':'Ruby', 'pubspec.yaml':'Dart', 'Podfile':'Swift',
+  'mix.exs':'Elixir', 'docker-compose.yml':'Docker', 'angular.json':'Angular',
+  'vite.config.ts':'Vite', 'next.config.js':'Next.js', 'nuxt.config.ts':'Nuxt'
+};
+const SUFFIX_MARKS = { '.sln':'.NET', '.csproj':'.NET', '.fsproj':'.NET', '.xcodeproj':'Swift', '.uproject':'Unreal' };
+const EXT_LANG = {
+  '.js':'JavaScript', '.mjs':'JavaScript', '.cjs':'JavaScript', '.jsx':'JavaScript',
+  '.ts':'TypeScript', '.tsx':'TypeScript', '.vue':'Vue', '.svelte':'Svelte',
+  '.py':'Python', '.ipynb':'Python', '.rs':'Rust', '.go':'Go', '.java':'Java', '.kt':'Kotlin',
+  '.c':'C', '.h':'C', '.cpp':'C++', '.cc':'C++', '.hpp':'C++', '.cs':'C#', '.swift':'Swift',
+  '.rb':'Ruby', '.php':'PHP', '.dart':'Dart', '.lua':'Lua', '.sh':'Shell', '.ps1':'PowerShell',
+  '.sql':'SQL', '.html':'HTML', '.css':'CSS', '.scss':'SCSS', '.md':'Markdown'
+};
+const SKIP_DIRS = new Set(['node_modules','.git','.svn','.hg','.venv','venv','env','__pycache__',
+  'dist','build','out','target','bin','obj','.next','.nuxt','.cache','.idea','.vscode','.vs',
+  'vendor','Pods','.gradle','.mvn','coverage','.pytest_cache','.mypy_cache','.tox','site-packages',
+  /* 系统 / 厂商 / 联结目录：没人把它们当项目，体量却极大，扫进去只会拖慢并污染结果 */
+  'Windows','Program Files','Program Files (x86)','ProgramData','System Volume Information',
+  'Recovery','PerfLogs','MSOCache','Config.Msi','Windows.old','$Recycle.Bin','$WinREAgent','$SysReset',
+  'Documents and Settings','All Users','Default User','Library','Temp','OneDriveTemp','AppData','Application Data',
+  'Intel','AMD','NVIDIA','WindowsApps','WpSystem']);
+/* 扫描必须有硬上限：选到 C:\ 这类超大根时也得在几秒内返回，而不是卡住不动、界面像没反应 */
+const MAX_WALK_DEPTH = 4, MAX_PROJECTS = 150, MAX_VISITED = 2500, MAX_MEASURE = 2500, MAX_SAMPLES = 8;
+const FIND_BUDGET_MS = 5000, MEASURE_BUDGET_MS = 5000;
+let lastScan = { visited:0, depth:0, errors:0, truncated:false };   // 最近一次扫描的遍历统计，用于「0 结果」时给出可诊断的提示
+let scanStateMsg = '';   // 扫描进度文案；扫描期间实时刷新，避免界面看起来像「点了没反应」
+
+/* 扫描是异步且可能耗时的（选到 C:\ 这类超大根时尤甚），必须给出实时进度。
+   只更新进度行本身，不整块重绘 dirBar，避免扫描期间反复重建按钮。 */
+function setScanState(msg){
+  scanStateMsg = msg || '';
+  const el = document.getElementById('dirStateRow');
+  if(!el) return;
+  el.style.display = scanStateMsg ? '' : 'none';
+  el.innerHTML = scanStateMsg
+    ? '<span class="dir-k">进度</span><span class="dir-v">' + esc(scanStateMsg) + '</span>'
+    : '';
+}
+
+/* 兼容不同实现：优先 entries()，退化到 values()；两者都不可用时记一次错误 */
+async function listDir(dir){
+  const out = [];
+  try {
+    if(typeof dir.entries === 'function'){
+      for await (const e of dir.entries()) out.push([e[0], e[1]]);
+      return out;
+    }
+    for await (const h of dir.values()) out.push([h.name, h]);
+  } catch(e){ lastScan.errors++; }
+  return out;
+}
+
+async function readSmallText(dir, name, cap){
+  try {
+    const fh = await dir.getFileHandle(name);
+    const f = await fh.getFile();
+    if(f.size > cap) return null;
+    return await f.text();
+  } catch(e){ return null; }
+}
+function portsFromText(txt){
+  const out = new Set();
+  if(!txt) return [];
+  const re = /(?:--port[=\s]+|-p\s+|PORT\s*=\s*|localhost:|127\.0\.0\.1:)(\d{2,5})/g;
+  let m;
+  while((m = re.exec(txt))){ const n = +m[1]; if(n >= 80 && n <= 65535) out.add(n); }
+  return [...out].slice(0, 6);
+}
+
+/* 递归找项目根：命中 .git 或任一工程标记文件即认定为项目。
+   被选中的目录本身若是项目，也计入（rel 为空串）——否则「直接选中单个项目文件夹」会一无所获。
+   遍历用广度优先：选到 C:\ 这类超大根时，预算优先花在浅层，先把整个盘面扫一遍再往深处走；
+   若用深度优先，预算会被 Users\<你>\AppData 这类巨型单支一次耗尽，深层项目永远轮不到。
+   全程带硬预算（目录数 + 耗时），超限即停并置 truncated，保证几秒内一定返回结果。 */
+async function findProjectRoots(root, onProgress){
+  const hits = [];
+  lastScan = { visited:0, depth:0, errors:0, truncated:false };
+  const t0 = Date.now();
+  const overBudget = () => lastScan.visited >= MAX_VISITED || (Date.now() - t0) > FIND_BUDGET_MS;
+  const queue = [{ dir: root, rel: '', depth: 0 }];
+  let qi = 0;
+  while(qi < queue.length){
+    if(hits.length >= MAX_PROJECTS){ lastScan.truncated = true; break; }
+    if(overBudget()){ lastScan.truncated = true; break; }
+    const { dir, rel, depth } = queue[qi++];
+    lastScan.visited++;
+    if(depth > lastScan.depth) lastScan.depth = depth;
+    if(onProgress && lastScan.visited % 100 === 0) onProgress(lastScan);
+    const entries = await listDir(dir);
+    const files = entries.filter(e => e[1] && e[1].kind === 'file');
+    const dirs  = entries.filter(e => e[1] && e[1].kind === 'directory');
+    const langs = new Set();
+    for(const [n] of files){
+      if(MARK_FILES[n]) langs.add(MARK_FILES[n]);
+      const i = n.lastIndexOf('.');
+      if(i > 0 && SUFFIX_MARKS[n.slice(i).toLowerCase()]) langs.add(SUFFIX_MARKS[n.slice(i).toLowerCase()]);
+    }
+    const git = dirs.some(([n]) => n === '.git');
+    if(git || langs.size) hits.push({ rel, dir, git, langs:[...langs] });
+    if(depth >= MAX_WALK_DEPTH) continue;
+    for(const [n, h] of dirs){
+      if(SKIP_DIRS.has(n) || n.startsWith('.')) continue;
+      queue.push({ dir: h, rel: rel ? rel + '/' + n : n, depth: depth + 1 });
+    }
+  }
+  return hits;
+}
+
+/* 量一个项目：字节数 / 文件数 / 语言分布 / README 首段 / 声明端口。
+   全部有上限（文件数 + 深度 + 截止时间），保证单个超大目录也不会把整次扫描拖住。 */
+async function measureDir(dir, deadline){
+  let size = 0, files = 0, truncated = false, mtime = 0;
+  const langs = new Map(), samples = [];
+  async function walk(d, rel, depth){
+    if(truncated || depth > 4) return;
+    if(deadline && Date.now() > deadline){ truncated = true; return; }
+    const entries = await listDir(d);
+    entries.sort((a, b) => a[1].kind === b[1].kind ? a[0].localeCompare(b[0], 'zh') : (a[1].kind === 'directory' ? -1 : 1));
+    for(const [n, h] of entries){
+      if(files >= MAX_MEASURE){ truncated = true; return; }
+      if(h.kind === 'directory'){
+        if(SKIP_DIRS.has(n) || n.startsWith('.')) continue;
+        await walk(h, rel ? rel + '/' + n : n, depth + 1);
+        continue;
+      }
+      files++;
+      const i = n.lastIndexOf('.');
+      const lang = i > 0 ? EXT_LANG[n.slice(i).toLowerCase()] : '';
+      if(lang) langs.set(lang, (langs.get(lang) || 0) + 1);
+      try {
+        const f = await h.getFile();
+        size += f.size;
+        if(f.lastModified > mtime) mtime = f.lastModified;
+        if(depth === 0 && samples.length < MAX_SAMPLES && f.size < 262144) samples.push({ p:rel ? rel + '/' + n : n, t:await f.text() });
+      } catch(e){}
+    }
+  }
+  await walk(dir, '', 0);
+  const pkg = await readSmallText(dir, 'package.json', 131072);
+  const readme = samples.find(s => /^readme(\.(md|markdown|txt|rst))?$/i.test(s.p));
+  const readmeTxt = readme ? readme.t : null;
+  return {
+    size, files, truncated, langs, samples,
+    readme: readmeTxt ? readmeTxt.slice(0, 400) : '',
+    ports: portsFromText(pkg || readmeTxt || ''),
+    mtime
+  };
+}
+/* 未测量（超出总预算）的项目用这份占位：语言仍由标记文件推导，体积/预览留空 */
+function emptyMeasure(){ return { size:0, files:0, truncated:true, langs:new Map(), samples:[], readme:'', ports:[], mtime:0 }; }
+
+function pickLangs(markerLangs, langMap){
+  const top = [...langMap.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
+  const out = [];
+  for(const l of markerLangs.concat(top)) if(out.indexOf(l) < 0) out.push(l);
+  return out.slice(0, 3);
+}
+function joinRootPath(rel){
+  const base = String(zeroScan.rootPath || '').replace(/[\\/]+$/, '');
+  const sep = /\\/.test(base) || /^[A-Za-z]:/.test(base) ? '\\' : '/';
+  const label = scanRootName || zeroScan.rootName || '本机目录';
+  if(!rel) return base || label;
+  const tail = rel.split('/').join(sep);
+  return base ? base + sep + tail : label + '/' + rel;
+}
+
+/* ---- 授权 / 续期 / 扫描 ---- */
+async function pickScanRoot(forceReadOnly){
+  if(!CAN_FS){ toast('当前浏览器不支持原生目录访问，请改用「兼容模式扫描」（不需要该 API）', 'warn'); return; }
+  let h = null, firstErr = '';
+  if(!forceReadOnly){
+    try {
+      h = await window.showDirectoryPicker({ mode:'readwrite', id:'wt-root' });
+    } catch(e){
+      if(e && e.name === 'AbortError'){ toast('已取消选择目录'); return; }
+      /* C:\ 这类位置常被系统拒绝写权限，readwrite 会直接失败。
+         顺手再试一次只读——有些浏览器在同一个手势窗口内会放行；
+         但第二次调用往往已经没有用户手势了（弹窗只授权一次），所以失败时要如实把「第一次的原因」
+         记进 pickFail 常驻显示，而不是把「缺手势」这种次生错误报给用户。 */
+      firstErr = e && e.message ? e.message : String(e);
+      try {
+        h = await window.showDirectoryPicker({ id:'wt-root' });
+        toast('该位置不可写，已按只读方式授权 · 扫描不受影响', 'warn');
+      } catch(e2){
+        if(e2 && e2.name === 'AbortError'){ toast('已取消选择目录'); return; }
+        pickFail = { name:'', msg:firstErr };
+        renderDirBar();
+        toast('选择目录失败：' + firstErr + ' · 点「以只读方式重选」或「兼容模式扫描」继续', 'warn');
+        return;
+      }
+    }
+  } else {
+    try {
+      h = await window.showDirectoryPicker({ id:'wt-root' });
+    } catch(e){
+      if(e && e.name === 'AbortError'){ toast('已取消选择目录'); return; }
+      pickFail = { name:'', msg:(e && e.message ? e.message : String(e)) };
+      renderDirBar();
+      toast('只读方式选择目录也失败：' + pickFail.msg + ' · 请改用「兼容模式扫描」', 'warn');
+      return;
+    }
+  }
+  try {
+    pickFail = null;
+    scanRoot = h; scanRootName = h.name;
+    flatFiles = null; flatRootName = '';   // 切回句柄模式，兼容模式的旧清单作废
+    pendingAuth = [];
+    renderDirBar(); syncModeBadge();
+    toast('已授权目录 ' + h.name + ' · 开始扫描', 'ok');
+    /* 句柄持久化放后台尽力而为：IndexedDB 无响应时也只影响「刷新后续用」，绝不挡本次扫描 */
+    idbPut(SCAN_ROOT_KEY, h).catch(() => toast('句柄未能写入浏览器存储 · 刷新后需重新授权', 'warn'));
+    await scanRootNow();
+  } catch(e){
+    toast('扫描失败：' + (e && e.message ? e.message : e), 'warn');
+    setScanState('扫描失败：' + (e && e.message ? e.message : String(e)));
+  }
+}
+async function resumeScanRoot(){
+  const item = pendingAuth.find(x => x.key === SCAN_ROOT_KEY) || (scanRoot ? { handle:scanRoot } : null);
+  if(!item){ toast('没有待续期的目录授权', 'warn'); return; }
+  const r = await permAsk(item.handle, 'readwrite');
+  if(r !== 'granted'){ toast('未获授权，目录仍不可读写', 'warn'); renderDirBar(); return; }
+  scanRoot = item.handle; scanRootName = item.handle.name;
+  pendingAuth = pendingAuth.filter(x => x.key !== SCAN_ROOT_KEY);
+  renderDirBar(); syncModeBadge();
+  toast('已续期目录授权 · 可读写', 'ok');
+  await scanRootNow();
+}
+async function clearScanRoot(){
+  scanRoot = null; scanRootName = ''; pendingAuth = []; localPorts = null;
+  flatFiles = null; flatRootName = ''; pickFail = null;
+  zeroScan = { scannedAt:'', rootName:'', rootPath:zeroScan.rootPath || '', mode:'', projects:[] };
+  Object.keys(dirHandles).forEach(k => { delete dirHandles[k]; });
+  store.write(LS.zero, zeroScan);
+  try { await idbDel(SCAN_ROOT_KEY); } catch(e){}
+  buildIndex(); renderAll(); syncModeBadge();
+  toast('已清除本机目录授权与扫描结果', 'warn');
+}
+async function scanRootNow(){
+  if(!scanRoot){ toast('先在控制室选择一个本机目录', 'warn'); return; }
+  /* 权限不满足也不直接放弃：先试着读，真读不动时再在结果里给出「续期授权」的针对性提示 */
+  let perm = await permState(scanRoot, 'readwrite');
+  if(perm !== 'granted'){ perm = await permAsk(scanRoot, 'readwrite'); renderDirBar(); }
+  const btn = document.getElementById('dirScanBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '扫描中…'; }
+  setScanState('正在扫描…');
+  const t0 = Date.now();
+  let roots = [];
+  try { roots = await findProjectRoots(scanRoot, p => setScanState('正在扫描… 已遍历 ' + p.visited + ' 个目录，最深 ' + p.depth + ' 层')); }
+  catch(e){
+    const msg = e && e.message ? e.message : String(e);
+    toast('扫描失败：' + msg, 'warn');
+    setScanState('扫描失败：' + msg + '（可换个更靠近项目的父目录再试）');
+    if(btn){ btn.disabled = false; btn.textContent = '重新扫描'; }
+    return;
+  }
+  const projects = [];
+  const measureDeadline = t0 + FIND_BUDGET_MS + MEASURE_BUDGET_MS;
+  let measureStopped = false;
+  for(const r of roots){
+    let m;
+    if(measureStopped || Date.now() > measureDeadline){ measureStopped = true; m = emptyMeasure(); }
+    else {
+      m = await measureDir(r.dir, measureDeadline);
+      setScanState('正在统计 ' + (projects.length + 1) + '/' + roots.length + ' 个项目…');
+    }
+    projects.push({
+      rel: r.rel,
+      name: r.rel ? r.rel.split('/').pop() : (scanRootName || '本机目录'),
+      path: joinRootPath(r.rel),
+      langs: pickLangs(r.langs, m.langs),
+      category: r.git ? '本机扫描 · git' : '本机扫描',
+      sizeBytes: m.size, files: m.files, truncated: m.truncated,
+      updated: new Date(m.mtime || Date.now()).toISOString().slice(0, 10),
+      git: r.git, samples: m.samples, readme: m.readme, ports: m.ports, live: null
+    });
+  }
+  projects.sort((a, b) => b.sizeBytes - a.sizeBytes);
+  const truncated = lastScan.truncated || measureStopped;
+  zeroScan = {
+    scannedAt: new Date().toISOString(), rootName: scanRootName,
+    rootPath: zeroScan.rootPath || '', mode:'handle', projects,
+    stats: { visited: lastScan.visited, depth: lastScan.depth, errors: lastScan.errors, truncated, measured: projects.filter(p => !p.truncated).length }
+  };
+  store.write(LS.zero, zeroScan);
+  if(localPorts) applyPorts();
+  setScanState('');
+  buildIndex(); renderAll();
+  if(!projects.length){
+    toast('扫描完成：该目录下没找到项目（已遍历 ' + lastScan.visited + ' 个目录，最深 ' + lastScan.depth + ' 层' +
+      (lastScan.errors ? '，有 ' + lastScan.errors + ' 个目录读取失败' : '') + '）。' +
+      (perm !== 'granted' ? '当前未取得目录访问权限，请点「续期授权」。' : '') +
+      (lastScan.truncated ? '目录太大，扫描已达上限，可能没走到项目所在位置——请改选更靠近项目的父目录。' : '') +
+      '项目需含 .git 或工程标记文件（package.json / CMakeLists.txt / Cargo.toml / go.mod 等）；' +
+      '若项目在更深层，请改选更靠近项目的父目录。', 'warn');
+  } else if(truncated){
+    toast('扫描完成 · 发现 ' + projects.length + ' 个项目 · 用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's' +
+      '（已达扫描上限，结果可能不完整；选中的目录越大越容易漏，建议改选更靠近项目的父目录）', 'warn');
+  } else {
+    toast('扫描完成 · 发现 ' + projects.length + ' 个项目 · 用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's', 'ok');
+  }
+}
+async function restoreScanRoot(){
+  /* 兼容模式的结果不依赖句柄：刷新后项目列表仍在，只是「只读浏览」要重扫一次才有文件清单 */
+  if(zeroScan.mode === 'flat'){
+    scanRootName = zeroScan.rootName || '';
+    renderDirBar();
+    return;
+  }
+  let h = null;
+  try { h = await idbGet(SCAN_ROOT_KEY); } catch(e){ h = null; }
+  if(!h){ renderDirBar(); return; }
+  scanRootName = h.name;
+  if(await permState(h, 'readwrite') === 'granted'){
+    scanRoot = h;
+    renderDirBar(); syncModeBadge();
+    if(!(zeroScan.projects || []).length) scanRootNow();
+    return;
+  }
+  pendingAuth = [{ key:SCAN_ROOT_KEY, handle:h }];
+  renderDirBar();
+}
+
+/* ============================================================
+   兼容模式扫描（兜底通道）：不依赖 showDirectoryPicker
+   ------------------------------------------------------------
+   <input webkitdirectory> 会把选中目录的完整文件清单交给页面，每个 File 自带
+   webkitRelativePath（形如 "root/sub/a.txt"）。据此在内存里重建一棵虚拟目录树，
+   再用与句柄模式完全相同的「命中 .git 或任一工程标记文件即认定为项目」规则识别项目。
+   好处：不需要任何权限、不需要安全上下文，file:// 下也能用，C:\ 这类系统拒绝写入的位置也能扫。
+   代价：拿不到目录句柄，所以只能只读浏览、不能写盘，且刷新后需要重新扫一次。 */
+const MAX_FLAT_FILES = 60000;   // 文件清单处理上限：选到 C:\ 这类根会枚举出百万级文件，必须截断，否则内存与耗时都失控
+
+function pickFlatRoot(){
+  const inp = document.getElementById('dirFlatInput');
+  if(!inp){ toast('当前环境不支持兼容模式扫描', 'warn'); return; }
+  inp.value = '';   // 清空后再次选同一个目录也能触发 change
+  inp.click();
+}
+function onFlatPicked(e){
+  const files = e && e.target && e.target.files;
+  if(!files || !files.length){ toast('没读到文件清单（目录为空或已取消选择）', 'warn'); return; }
+  const btn = document.getElementById('dirScanBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '扫描中…'; }
+  const done = () => { if(btn){ btn.disabled = false; btn.textContent = '重新扫描（兼容模式）'; } };
+  scanFlatList(files).then(done, err => {
+    const msg = err && err.message ? err.message : String(err);
+    setScanState('兼容模式扫描失败：' + msg);
+    toast('兼容模式扫描失败：' + msg, 'warn');
+    done();
+  });
+}
+async function scanFlatList(files){
+  const t0 = Date.now();
+  const tree = new Map();   // rel -> { dirs:Set<string>, files:[{name,size,mtime,file}] }
+  const node = rel => { let n = tree.get(rel); if(!n){ n = { dirs:new Set(), files:[] }; tree.set(rel, n); } return n; };
+  node('');
+  const list = new Map();   // 相对路径 -> File，供仓库窗格只读浏览
+  let rootName = '', truncatedList = false, i = 0;
+  for(const f of files){
+    if(i++ >= MAX_FLAT_FILES){ truncatedList = true; break; }
+    const segs = String(f.webkitRelativePath || f.name).split('/');
+    if(!rootName) rootName = segs[0];
+    const rest = segs.slice(1);
+    if(!rest.length) continue;
+    const fname = rest.pop();
+    let cur = '';
+    for(const seg of rest){ node(cur).dirs.add(seg); cur = cur ? cur + '/' + seg : seg; }
+    node(cur).files.push({ name:fname, size:f.size, mtime:f.lastModified, file:f });
+    list.set(cur ? cur + '/' + fname : fname, f);
+    if(i % 8000 === 0) setScanState('正在整理文件清单… ' + i + ' / ' + files.length + ' 个文件');
+  }
+  if(!rootName){ toast('文件清单为空，无法识别目录名', 'warn'); return; }
+  setScanState('正在扫描… 已整理 ' + i + ' 个文件');
+
+  /* 广度优先识别项目根，规则与硬预算与句柄模式完全一致 */
+  const hits = [];
+  const stats = { visited:0, depth:0, errors:0, truncated:truncatedList };
+  const queue = [{ rel:'', depth:0 }];
+  let qi = 0;
+  while(qi < queue.length){
+    if(hits.length >= MAX_PROJECTS){ stats.truncated = true; break; }
+    if(Date.now() - t0 > FIND_BUDGET_MS){ stats.truncated = true; break; }
+    const { rel, depth } = queue[qi++];
+    stats.visited++;
+    if(depth > stats.depth) stats.depth = depth;
+    if(stats.visited % 200 === 0) setScanState('正在扫描… 已遍历 ' + stats.visited + ' 个目录，最深 ' + stats.depth + ' 层');
+    const n = tree.get(rel);
+    if(!n) continue;
+    const langs = new Set();
+    for(const f of n.files){
+      if(MARK_FILES[f.name]) langs.add(MARK_FILES[f.name]);
+      const i2 = f.name.lastIndexOf('.');
+      if(i2 > 0 && SUFFIX_MARKS[f.name.slice(i2).toLowerCase()]) langs.add(SUFFIX_MARKS[f.name.slice(i2).toLowerCase()]);
+    }
+    const git = n.dirs.has('.git');
+    if(git || langs.size) hits.push({ rel, git, langs:[...langs] });
+    if(depth >= MAX_WALK_DEPTH) continue;
+    for(const d of n.dirs){
+      if(SKIP_DIRS.has(d) || d.startsWith('.')) continue;
+      queue.push({ rel: rel ? rel + '/' + d : d, depth: depth + 1 });
+    }
+  }
+
+  const projects = [];
+  const measureDeadline = Date.now() + MEASURE_BUDGET_MS;
+  for(const h of hits){
+    /* 兼容模式天然拿得到 size 与 mtime（File 对象自带），无需再遍历磁盘；仍设截止时间防极端清单 */
+    let size = 0, fileCount = 0, mtrunc = false, mtime = 0, readmeTxt = '';
+    const langMap = new Map();
+    const stack = [{ rel:h.rel, depth:0 }];
+    while(stack.length && !mtrunc){
+      if(Date.now() > measureDeadline){ mtrunc = true; break; }
+      const cur = stack.pop();
+      const n = tree.get(cur.rel);
+      if(!n) continue;
+      for(const f of n.files){
+        if(fileCount >= MAX_MEASURE){ mtrunc = true; break; }
+        fileCount++; size += f.size || 0;
+        if((f.mtime || 0) > mtime) mtime = f.mtime;
+        const i2 = f.name.lastIndexOf('.');
+        const lang = i2 > 0 ? EXT_LANG[f.name.slice(i2).toLowerCase()] : '';
+        if(lang) langMap.set(lang, (langMap.get(lang) || 0) + 1);
+      }
+      if(cur.depth >= 4) continue;
+      for(const d of n.dirs){
+        if(SKIP_DIRS.has(d) || d.startsWith('.')) continue;
+        stack.push({ rel: cur.rel ? cur.rel + '/' + d : d, depth: cur.depth + 1 });
+      }
+    }
+    /* README / package.json 是唯一需要真读文本的两个文件：用来出卡片预览与端口 */
+    const samples = [], ports = [];
+    const n0 = tree.get(h.rel);
+    if(n0 && Date.now() < measureDeadline){
+      const rd  = n0.files.find(f => /^readme(\.(md|markdown|txt|rst))?$/i.test(f.name) && f.size < 262144);
+      const pkg = n0.files.find(f => f.name === 'package.json' && f.size < 131072);
+      let txt = '', pkgTxt = '';
+      try { if(rd) txt = await rd.file.text(); } catch(e){}
+      try { if(pkg) pkgTxt = await pkg.file.text(); } catch(e){}
+      if(txt){ readmeTxt = txt.slice(0, 400); samples.push({ p:rd.name, t:txt.slice(0, 4096) }); }
+      if(pkgTxt) samples.push({ p:pkg.name, t:pkgTxt.slice(0, 4096) });
+      ports.push(...portsFromText(pkgTxt || txt || ''));
+    }
+    projects.push({
+      rel: h.rel,
+      name: h.rel ? h.rel.split('/').pop() : rootName,
+      path: joinRootPath(h.rel),
+      langs: pickLangs(h.langs, langMap),
+      category: h.git ? '本机扫描 · git' : '本机扫描',
+      sizeBytes: size, files: fileCount, truncated: mtrunc,
+      updated: new Date(mtime || Date.now()).toISOString().slice(0, 10),
+      git: h.git, samples, readme: readmeTxt, ports, live: null
+    });
+    setScanState('正在统计 ' + projects.length + '/' + hits.length + ' 个项目…');
+  }
+  projects.sort((a, b) => b.sizeBytes - a.sizeBytes);
+
+  flatFiles = list; flatRootName = rootName; pickFail = null;
+  scanRoot = null; pendingAuth = [];      // 兼容模式没有句柄，也就没有「续期」一说
+  scanRootName = rootName;
+  zeroScan = {
+    scannedAt: new Date().toISOString(), rootName,
+    rootPath: zeroScan.rootPath || '', mode:'flat', projects,
+    stats: { visited:stats.visited, depth:stats.depth, errors:0, truncated:stats.truncated, measured:projects.filter(p => !p.truncated).length }
+  };
+  store.write(LS.zero, zeroScan);
+  if(localPorts) applyPorts();
+  setScanState('');
+  buildIndex(); renderAll(); syncModeBadge();
+
+  const took = ((Date.now() - t0) / 1000).toFixed(1);
+  if(!projects.length){
+    toast('兼容模式扫描完成：该目录下没找到项目（已遍历 ' + stats.visited + ' 个目录，最深 ' + stats.depth + ' 层）。' +
+      '项目需含 .git 或工程标记文件（package.json / CMakeLists.txt / Cargo.toml / go.mod 等）；' +
+      '若项目在更深层，请改选更靠近项目的父目录。', 'warn');
+  } else if(stats.truncated){
+    toast('兼容模式扫描完成 · 发现 ' + projects.length + ' 个项目 · 用时 ' + took + 's（清单或遍历已达上限，结果可能不完整；建议改选更靠近项目的父目录）', 'warn');
+  } else {
+    toast('兼容模式扫描完成 · 发现 ' + projects.length + ' 个项目 · 用时 ' + took + 's · 可只读浏览，不能写盘', 'ok');
+  }
+}
+
+/* 兼容模式：用文件清单在内存里还原目录树（只读浏览） */
+/* 文件清单里的路径是相对「扫描根」的，而窗格里的 rel 是相对「项目根」的，两者要换算 */
+function flatAbs(pid, rel){
+  const zp = zeroById(pid);
+  const base = (zp && zp.rel) ? zp.rel : '';
+  return base ? (rel ? base + '/' + rel : base) : rel;
+}
+function flatListAt(rel){
+  const dirs = new Set(), files = [];
+  if(!flatFiles) return { dirs:[], files:[] };
+  const prefix = rel ? rel + '/' : '';
+  for(const [p, f] of flatFiles){
+    if(p.indexOf(prefix) !== 0) continue;
+    const rest = p.slice(prefix.length);
+    if(!rest) continue;
+    const i = rest.indexOf('/');
+    if(i < 0) files.push({ name:rest, size:f.size });
+    else dirs.add(rest.slice(0, i));
+  }
+  return {
+    dirs: [...dirs].sort((a, b) => a.localeCompare(b, 'zh')).map(n => ({ name:n })),
+    files: files.sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+  };
+}
+function flatFill(pid){
+  const host = document.querySelector('[data-flat-tree]');
+  if(!host) return;
+  const slot = +host.dataset.flatTree;
+  if(!flatFiles){
+    host.innerHTML = '<div class="empty" style="padding:14px;white-space:normal">' +
+      '兼容模式的只读浏览依赖本次会话的文件清单，刷新后已失效 · 到控制室点一次「兼容模式扫描」即可恢复</div>';
+    return;
+  }
+  const rel = (panesOfProject(pid)[slot] || {}).content || '';
+  const { dirs, files } = flatListAt(flatAbs(pid, rel));
+  host.innerHTML = dirs.concat(files).map(e => {
+    const isDir = e.size === undefined;
+    const full = rel ? rel + '/' + e.name : e.name;
+    return '<button class="tree-row" data-act="repo-' + (isDir ? 'nav' : 'open') + '" data-slot="' + slot + '" data-rel="' + esc(full) + '">' +
+      '<span class="ic">' + (isDir ? '▸' : '·') + '</span><span class="nm">' + esc(e.name) + (isDir ? '/' : '') + '</span>' +
+      (isDir ? '' : '<span class="sz">' + fmtBytes(e.size) + '</span>') + '</button>';
+  }).join('') || '<div class="empty" style="padding:14px">该目录为空</div>';
+  const rv = repoView[repoKey(pid, rel)];
+  if(rv && rv.file) flatOpen(pid, slot, rel ? rel + '/' + rv.file : rv.file);
+}
+async function flatOpen(pid, slot, rel){
+  const host = document.querySelector('[data-flat-file="' + slot + '"]');
+  if(!host) return;
+  const head = '<div class="file-head"><span class="fp">' + esc(rel) + '</span>' +
+    '<button class="mini-btn" data-act="repo-close" data-slot="' + slot + '">关闭</button></div>';
+  const f = flatFiles && flatFiles.get(flatAbs(pid, rel));
+  if(!f){ host.innerHTML = head + '<div class="note-line"><i>◇</i>文件不在本次清单内（刷新后需重扫一次）</div>'; return; }
+  if(f.size > 524288){
+    host.innerHTML = head + '<div class="note-line"><i>◇</i>文件 ' + fmtBytes(f.size) + ' 超过 512KB，不在窗格内打开</div>';
+    toast('文件过大，未在窗格内打开', 'warn');
+    return;
+  }
+  try {
+    const txt = await f.text();
+    host.innerHTML = head + '<pre class="code">' + esc(txt) + '</pre>' +
+      '<div class="pane-meta"><span>兼容模式只读浏览 · 不写盘</span><span>' + txt.length + ' 字符</span></div>';
+    toast('已读取 ' + rel + '（只读）', 'ok');
+  } catch(e){
+    host.innerHTML = head + '<div class="note-line"><i>◇</i>读取失败：' + esc(e.message || e) + '</div>';
+  }
+}
+
+/* ---- 端口试探（近似值：浏览器无法枚举本机端口，只探常见端口） ---- */
+const PROBE_PORTS = [3000,3001,3210,3080,3306,4000,4321,5000,5173,5174,5432,6379,7000,7331,7332,7333,
+  8000,8001,8080,8081,8443,8888,9000,9090,9200,11434,27017];
+async function probeLocalPorts(){
+  if(typeof fetch !== 'function'){ toast('当前环境不支持端口探测', 'warn'); return; }
+  const btn = document.getElementById('dirProbeBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '探测中…'; }
+  const hits = [];
+  await Promise.all(PROBE_PORTS.map(async port => {
+    let ctl = null, timer = null;
+    if(typeof AbortController === 'function'){ ctl = new AbortController(); timer = setTimeout(() => ctl.abort(), 900); }
+    try {
+      await fetch('http://127.0.0.1:' + port + '/', ctl ? { mode:'no-cors', cache:'no-store', signal:ctl.signal } : { mode:'no-cors', cache:'no-store' });
+      hits.push({ port, proc:'本机监听（近似）', address:'127.0.0.1' });
+    } catch(e){}
+    if(timer) clearTimeout(timer);
+  }));
+  hits.sort((a, b) => a.port - b.port);
+  localPorts = { scannedAt:new Date().toISOString(), ports:hits, attempted:PROBE_PORTS.length };
+  applyPorts();
+  renderAll();
+  if(btn){ btn.disabled = false; btn.textContent = '探测端口'; }
+  toast('端口探测完成 · 命中 ' + hits.length + ' 个（近似，浏览器无法枚举全端口）', hits.length ? 'ok' : 'warn');
+}
+function applyPorts(){
+  if(!localPorts) return;
+  const open = new Set(localPorts.ports.map(x => x.port));
+  (zeroScan.projects || []).forEach(sp => {
+    const hit = (sp.ports || []).find(pt => open.has(pt));
+    sp.live = hit ? { port:hit, proc:'本机监听（近似）' } : null;
+  });
+  store.write(LS.zero, zeroScan);
+}
+
+/* 零服务模式：把「扫描根 + 相对路径」解析成项目目录句柄，repo 窗格随即可读写 */
+async function ensureZeroHandle(pid){
+  if(SERVER || dirHandles[pid] || zeroPending[pid] || !scanRoot) return;
+  const zp = zeroProjects().find(p => p.id === pid);
+  if(!zp) return;
+  zeroPending[pid] = true;
+  try {
+    if(await permState(scanRoot, 'readwrite') !== 'granted') return;
+    let cur = scanRoot;
+    if(zp.rel) for(const seg of zp.rel.split('/')) cur = await cur.getDirectoryHandle(seg);
+    dirHandles[pid] = cur;
+    if(activeId === pid) renderSplit();
+  } catch(e){ /* 目录被移动或删除，降级为快照视图 */ }
+  finally { zeroPending[pid] = false; }
+}
+
+/* ---- 控制室「本机目录」区块 ---- */
+function renderDirBar(){
+  const el = document.getElementById('dirBar');
+  if(!el) return;
+  const cntEl = document.getElementById('dirAuthCount');
+  const name = scanRootName || zeroScan.rootName || '';
+  const isFlat = zeroScan.mode === 'flat';
+  const st = scanRoot ? 'granted' : (isFlat ? 'flat' : (pendingAuth.length ? 'prompt' : 'none'));
+  const stTxt = st === 'granted' ? '已授权 · 可读写'
+    : st === 'flat' ? '已扫描 · 只读（兼容模式）'
+    : (st === 'prompt' ? '需续期（点一次即恢复）' : '未授权');
+  const stCls = st === 'granted' ? 'var(--st-done)' : (st === 'prompt' ? 'var(--st-needs)' : 'var(--txt-mute)');
+  const n = (zeroScan.projects || []).length;
+  const when = zeroScan.scannedAt ? String(zeroScan.scannedAt).replace('T', ' ').slice(0, 19) : '—';
+  if(cntEl) cntEl.textContent = st === 'granted' ? '· 可读写' : (st === 'flat' ? '· 只读' : '· 只读快照');
+
+  el.innerHTML =
+    '<div class="dir-row"><span class="dir-k">状态</span>' +
+      '<span class="dir-v"><b style="color:' + stCls + '">' + esc(stTxt) + '</b>' +
+      (name ? '<span style="color:var(--txt-mute)"> · ' + esc(name) + '</span>' : '') + '</span></div>' +
+    (pickFail
+      ? '<div class="dir-row"><span class="dir-k">上次失败</span>' +
+          '<span class="dir-v" style="white-space:normal;overflow:visible"><span style="color:var(--st-needs)">' +
+          esc(pickFail.name ? pickFail.name + '：' : '') + esc(pickFail.msg) + '</span>' +
+          '<span style="color:var(--txt-mute)"> · 常见于选择 <code>C:\\</code> 这类系统不允许写入的位置。' +
+          '点下面的「以只读方式重选」或「兼容模式扫描」都能继续。</span></span></div>'
+      : '') +
+    (name
+      ? '<div class="dir-row"><span class="dir-k">根路径</span>' +
+          '<span class="dir-v"><input class="mono" data-field="dir-path" value="' + esc(zeroScan.rootPath || '') +
+            '" placeholder="可选：填绝对路径，让显示与复制更准确" spellcheck="false" autocomplete="off" ' +
+            'style="width:100%;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:8px;color:var(--txt);padding:5px 9px;font-size:11.5px" /></span></div>'
+      : '') +
+    '<div class="dir-row"><span class="dir-k">扫描结果</span>' +
+      '<span class="dir-v">' + (n ? '<b>' + n + '</b> 个项目 · 扫描于 ' + esc(when)
+        : (zeroScan.scannedAt
+            ? '0 个项目（已遍历 ' + ((zeroScan.stats && zeroScan.stats.visited) || 0) + ' 个目录，最深 ' + ((zeroScan.stats && zeroScan.stats.depth) || 0) + ' 层）· 扫描于 ' + esc(when)
+            : '尚未扫描')) +
+        (zeroScan.stats && zeroScan.stats.truncated
+          ? '<span style="color:var(--st-needs)"> · 已达扫描上限，结果可能不完整</span>' : '') + '</span></div>' +
+    '<div class="dir-row" id="dirStateRow"' + (scanStateMsg ? '' : ' style="display:none"') + '>' +
+      (scanStateMsg ? '<span class="dir-k">进度</span><span class="dir-v">' + esc(scanStateMsg) + '</span>' : '') + '</div>' +
+    '<div class="dir-row"><span class="dir-k">端口</span><span class="dir-v">' +
+      esc(localPorts ? localPorts.ports.length + ' 个监听（近似）' : '未探测') + '</span></div>' +
+    '<div class="dir-row"><span class="dir-k">操作</span><span class="dir-v" style="display:flex;gap:8px;flex-wrap:wrap;white-space:normal;overflow:visible">' +
+      (CAN_FS ? '<button class="btn small primary" data-act="dir-pick">' + (name ? '更换目录' : '选择本机目录') + '</button>'
+              : '<button class="btn small" disabled>当前环境不支持目录访问</button>') +
+      (CAN_FS && pickFail ? '<button class="btn small primary" data-act="dir-pick-ro">以只读方式重选</button>' : '') +
+      '<button class="btn small' + (CAN_FS ? '' : ' primary') + '" data-act="dir-flat" title="把目录的文件清单交给页面自己扫描：不需要任何权限，file:// 下也能用">兼容模式扫描</button>' +
+      (st === 'prompt' ? '<button class="btn small primary" data-act="dir-resume">续期授权</button>' : '') +
+      (name ? '<button class="btn small" data-act="' + (isFlat ? 'dir-flat' : 'dir-scan') + '" id="dirScanBtn">' + (isFlat ? '重新扫描（兼容模式）' : '重新扫描') + '</button>' : '') +
+      (name ? '<button class="btn small" data-act="dir-probe" id="dirProbeBtn">探测端口</button>' : '') +
+      (name ? '<button class="btn small" data-act="dir-clear">清除</button>' : '') +
+    '</span></div>' +
+    '<div class="dir-note">' + (isFlat
+      ? '当前结果来自<b>兼容模式扫描</b>：页面用目录枚举拿到文件清单后自行识别项目，' +
+        '<b>不需要任何权限、不需要 Node、不需要安装</b>，' + (flatFiles ? '仓库窗格可只读浏览。' : '') +
+        '代价是拿不到目录句柄，因此<b>不能直接写盘</b>，刷新后需要重新扫一次。'
+      : '零服务模式：目录句柄存在浏览器 IndexedDB 里，<b>不需要 Node、不需要安装</b>。' +
+        '刷新或换机后浏览器会把权限降级为「待确认」，点一次「续期授权」即恢复读写。') +
+      (n ? '当前扫描根下的项目已直接并入项目栏与本地检索窗格。' : '') +
+    '</div>' +
+    '<div class="dir-tip">' +
+      (CAN_FS
+        ? '<i>提示</i>：' + (SERVER ? '本地服务已接管读写，本机目录区块是可选第二通道。'
+            : '「选择本机目录」用浏览器原生目录选择器，需要一次可授予的权限；' +
+              '若某个位置（典型是 <code>C:\\</code> 盘根）不允许写入，选择会整体失败，' +
+              '此时点<b>「以只读方式重选」</b>即可；若连只读也被拦，改用<b>「兼容模式扫描」</b>——' +
+              '它只枚举文件清单，任何浏览器、任何地址（含 <code>file://</code>）都能用。')
+        : '<i>提示</i>：当前浏览器不支持原生目录访问，但<b>兼容模式扫描</b>依然可用（不需要该 API）。') +
+      ' 浏览器无法枚举本机全端口，端口探测只覆盖常见 ' + PROBE_PORTS.length + ' 个，结果为近似值；' +
+      '网页反代依赖本地服务，零服务模式下内联页会退化为直连 iframe。' +
+    '</div>';
+}
+
 /* ---------- 本地检索窗格的动作 ---------- */
 async function scanRefresh(slot){
-  if(!SERVER){ toast('实时重扫需要本地服务：双击「启动工作台.bat」后用 http://127.0.0.1 打开', 'warn'); return; }
+  if(!SERVER){
+    if(scanRoot){ await scanRootNow(); renderProjPane(slot); return; }
+    toast('实时重扫需先在控制室授权一个本机目录，或双击「启动工作台.bat」起本地服务', 'warn');
+    return;
+  }
   const btn = document.querySelector('[data-act="scan-refresh"][data-slot="' + slot + '"]');
   if(btn){ btn.disabled = true; btn.textContent = '扫描中…'; }
   try {
@@ -2449,6 +3305,13 @@ root.addEventListener('click', e => {
       toast('已移除自定义项目', 'warn');
       break;
     }
+    case 'dir-pick':      pickScanRoot(false); break;
+    case 'dir-pick-ro':   pickScanRoot(true); break;
+    case 'dir-flat':      pickFlatRoot(); break;
+    case 'dir-resume':    resumeScanRoot(); break;
+    case 'dir-scan':      scanRootNow(); break;
+    case 'dir-probe':     probeLocalPorts(); break;
+    case 'dir-clear':     clearScanRoot(); break;
   }
 });
 
@@ -2526,6 +3389,21 @@ document.getElementById('searchInput').addEventListener('input', e => {
   query = e.target.value.trim();
   renderControl();
 });
+
+/* 控制室「本机目录」区块：根路径是可选输入，填了能让显示路径与复制更准确 */
+document.getElementById('dirBar').addEventListener('change', e => {
+  const inp = e.target.closest && e.target.closest('[data-field="dir-path"]');
+  if(!inp) return;
+  zeroScan.rootPath = String(inp.value || '').trim();
+  (zeroScan.projects || []).forEach(sp => { sp.path = joinRootPath(sp.rel); });
+  store.write(LS.zero, zeroScan);
+  renderAll();
+  toast(zeroScan.rootPath ? '已按根路径重算显示路径' : '已清空根路径，改用「目录名/相对路径」显示');
+});
+
+/* 兼容模式扫描入口：webkitdirectory 选择器返回文件清单，交给页面自己识别项目 */
+const flatInput = document.getElementById('dirFlatInput');
+if(flatInput) flatInput.addEventListener('change', onFlatPicked);
 
 /* ============================================================
    添加项目弹窗
@@ -2633,6 +3511,7 @@ if(activeId && !presetOf[activeId]) presetOf[activeId] = 'l13';
 renderAll();
 if(view === 'workbench' && activeId) toast('已恢复上次的工作台：' + (projectById(activeId) || {}).alias);
 detectServer();
+restoreScanRoot();
 </script>
 </body>
 </html>

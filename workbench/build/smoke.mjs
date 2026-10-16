@@ -17,7 +17,7 @@ const check = (scenario, name, cond, detail) => {
   else { console.log('  ✗ ' + name + (detail ? ' — ' + detail : '')); failures.push(scenario + ' / ' + name); }
 };
 
-function buildContext(fetchStub) {
+function buildContext(fetchStub, extra) {
   const writes = [];
   const byId = new Map();
 
@@ -54,12 +54,16 @@ function buildContext(fetchStub) {
     navigator: {}, window: { addEventListener() {} }, alert() {}
   };
   ctx.window.document = document;
+  Object.assign(ctx, extra || {});
+  if (extra && extra.window) extra.window.document = document;
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   return { ctx, writes, getEl };
 }
 
 const flush = () => new Promise((r) => setImmediate(r));
+/* 假 IndexedDB 的每次事务都要跨几个宏任务才提交，多空转几轮再断言 */
+const settle = async () => { for (let i = 0; i < 6; i++) await flush(); };
 
 async function runScenario(label, fetchStub, server) {
   console.log('\n【' + label + '】');
@@ -195,8 +199,342 @@ const okFetch = () => Promise.resolve({
   })
 });
 
+/* ============================================================
+   零服务模式：假目录树 + 假 IndexedDB，真跑「授权 → 扫描 → 读写 → 刷新续用」
+   ============================================================ */
+const mkFile = (name, text, lastModified) => ({
+  kind: 'file', name,
+  getFile: async () => ({ name, size: text.length, lastModified: lastModified || 1750000000000, text: async () => text })
+});
+const mkDir = (name, children) => {
+  const map = new Map(children.map((c) => [c.name, c]));
+  return {
+    kind: 'directory', name,
+    entries: async function* () { for (const c of children) yield [c.name, c]; },
+    getDirectoryHandle: async (n) => {
+      const c = map.get(n);
+      if (!c || c.kind !== 'directory') throw new Error('not-a-directory: ' + n);
+      return c;
+    },
+    getFileHandle: async (n) => {
+      const c = map.get(n);
+      if (!c || c.kind !== 'file') throw new Error('not-a-file: ' + n);
+      return c;
+    }
+  };
+};
+
+const ZERO_ROOT = mkDir('MyProjects', [
+  mkDir('smart-car', [
+    mkFile('README.md', '# 智能小车\n\n基于 STM32F103 的两轮差速小车，含电机 PWM 驱动与编码器测速。\n'),
+    mkFile('CMakeLists.txt', 'project(smart_car)\n'),
+    mkDir('.git', [mkFile('HEAD', 'ref: refs/heads/main\n')])
+  ]),
+  mkDir('web-dash', [
+    mkFile('package.json', '{"scripts":{"dev":"vite --port 5173"}}'),
+    mkFile('README.md', '# 数据看板\n\nVite + Vue3 轻量看板，npm run dev 后落在 5173。\n')
+  ]),
+  mkDir('scratch', [mkFile('notes.txt', 'hello\n')]),
+  mkDir('node_modules', [mkDir('junk', [mkFile('package.json', '{}')])])
+]);
+
+/* 最小 IndexedDB 桩：句柄存进 Map，跨 context 可复用（模拟刷新后仍在）。
+   两个关键点必须贴近真实 IndexedDB：
+   ① transaction() 必须返回事务对象本身（oncomplete/onerror 挂在这个对象上），不能返回包装对象；
+   ② 提交用宏任务（setImmediate）触发——真实 oncomplete 发生在当前任务之后，
+      用微任务会在 vm 上下文里抢在同步赋值之前执行。 */
+function fakeIndexedDB() {
+  const store = new Map();
+  const later = (fn) => setImmediate(fn);
+  const mkDb = () => ({
+    objectStoreNames: { contains: () => true },
+    transaction: () => {
+      const tx = {};
+      const os = {
+        put: (v, k) => { store.set(k, v); later(() => tx.oncomplete && tx.oncomplete()); return { result: v }; },
+        get: (k) => { const rq = { result: store.get(k) }; later(() => tx.oncomplete && tx.oncomplete()); return rq; },
+        delete: (k) => { store.delete(k); later(() => tx.oncomplete && tx.oncomplete()); return { result: undefined }; }
+      };
+      tx.objectStore = () => os;
+      return tx;
+    }
+  });
+  return {
+    open: () => {
+      const req = {};
+      later(() => {
+        req.result = mkDb();
+        if (req.onupgradeneeded) req.onupgradeneeded();
+        if (req.onsuccess) req.onsuccess();
+      });
+      return req;
+    },
+    _store: store
+  };
+}
+
+/* 上下文里的顶层 const/let 不在 globalThis 上，用 runInContext 取 */
+const peek = (ctx, expr) => vm.runInContext(expr, ctx);
+
+const zeroFetch = (url) => (String(url).includes(':5173/')
+  ? Promise.resolve({ ok: true, status: 200 })
+  : Promise.reject(new Error('port closed')));
+
+async function runZeroScenario() {
+  const L = '零服务模式';
+  console.log('\n【零服务模式（本机目录授权 + 单页扫描）】');
+
+  const idb = fakeIndexedDB();
+  const ls = { _d: {}, getItem(k) { return k in this._d ? this._d[k] : null; }, setItem(k, v) { this._d[k] = v; }, removeItem(k) { delete this._d[k]; } };
+  const win = { addEventListener() {}, showDirectoryPicker: async () => ZERO_ROOT };
+
+  const { ctx, getEl } = buildContext(zeroFetch, { indexedDB: idb, localStorage: ls, window: win });
+  let err = null;
+  try { new vm.Script(src).runInContext(ctx, { timeout: 20000 }); } catch (e) { err = e; }
+  if (err) { console.log('  ✗ 运行时异常：' + err.message); failures.push(L + ' / 脚本启动'); return; }
+  check(L, '脚本启动（含 restoreScanRoot）', true);
+  await settle();   // 等启动时的 restoreScanRoot 走完 IndexedDB 读取
+
+  const base = ctx.allProjects().length;
+  check(L, '未授权时 dirBar 给出「选择本机目录」入口',
+    getEl('dirBar')._html.includes('选择本机目录') && getEl('dirBar')._html.includes('零服务模式'));
+  check(L, '未授权时不误报已授权', !getEl('dirBar')._html.includes('已授权 · 可读写'));
+
+  await ctx.pickScanRoot();
+  await settle();
+
+  const zs = ctx.zeroProjects();
+  check(L, '扫描出 2 个项目（无标记目录与 node_modules 已排除）', zs.length === 2, zs.map((p) => p.name).join(','));
+  const car = zs.find((p) => p.name === 'smart-car');
+  const dash = zs.find((p) => p.name === 'web-dash');
+  check(L, '.git 目录被认成项目并标记 git', !!car && car.git === true);
+  check(L, '工程标记文件推导语言标签', !!car && car.langs.indexOf('C/C++') >= 0, car ? car.langs.join('/') : '—');
+  check(L, 'package.json 里的声明端口被解析', !!dash && dash.ports.indexOf(5173) >= 0, dash ? dash.ports.join(',') : '—');
+  /* 预览按设计会滤掉 `# 标题` 行，取的是 README 正文首段 */
+  check(L, 'README 正文首段进入卡片预览', !!car && ctx.projPreview(car).indexOf('差速小车') >= 0,
+    car ? ctx.projPreview(car).slice(0, 30) : '—');
+  check(L, '扫描结果并入项目栏', ctx.allProjects().length === base + 2, base + ' → ' + ctx.allProjects().length);
+  check(L, '授权后 dirBar 变为「已授权 · 可读写」', getEl('dirBar')._html.includes('已授权 · 可读写'));
+  check(L, '模式徽章 = 本机目录 · 零服务读写', getEl('modeBadge')._html.includes('本机目录'));
+  check(L, '句柄已写入 IndexedDB', idbStoreSize(idb) > 0, String(idbStoreSize(idb)));
+
+  /* repo 窗格：扫描根 + 相对路径自动解析成目录句柄，无需再手选目录 */
+  ctx.openProject(car.id);
+  await settle();
+  const split = getEl('wbSplit')._html;
+  check(L, '零服务下 repo 窗格自动进入可读写模式',
+    split.includes('data-live-tree="0"') && split.includes('已连接真实目录'), split.includes('data-live-tree="0"') ? 'live' : 'snapshot');
+
+  /* 端口探测（近似）：只探常见端口，命中 5173 即标记该项目的运行状态 */
+  await ctx.probeLocalPorts();
+  await settle();
+  const lp = peek(ctx, 'localPorts');
+  check(L, '端口探测覆盖常见端口清单', !!lp && lp.attempted === 27, lp ? String(lp.attempted) : '—');
+  check(L, '命中端口回填到项目的 live 状态',
+    ctx.zeroProjects().filter((p) => p.live && p.live.port === 5173).length === 1);
+  check(L, '控制室端口条渲染探测结果', getEl('portsStrip')._html.includes(':5173'));
+
+  /* 模拟刷新：同一个 IndexedDB / localStorage，句柄与扫描结果都应复用 */
+  const { ctx: ctx2 } = buildContext(zeroFetch, { indexedDB: idb, localStorage: ls, window: win });
+  try { new vm.Script(src).runInContext(ctx2, { timeout: 20000 }); } catch (e) { err = e; }
+  if (err) { console.log('  ✗ 刷新后运行时异常：' + err.message); failures.push(L + ' / 刷新后启动'); return; }
+  await settle();
+  const g2 = (expr) => peek(ctx2, expr);
+  check(L, '刷新后从 localStorage 复用扫描结果（不重扫）', g2('zeroScan.projects.length') === 2, String(g2('zeroScan.projects.length')));
+  check(L, '刷新后从 IndexedDB 复用目录句柄并直接授权', !!g2('scanRoot'));
+  check(L, '刷新后控制室仍显示已授权', (() => { const el = ctx2.document.getElementById('dirBar'); return el && el._html.includes('已授权 · 可读写'); })());
+
+  /* 清除：授权与扫描结果一并清空，项目栏回落 */
+  await ctx.clearScanRoot();
+  await settle();
+  check(L, '清除后项目栏回落到原始数量', ctx.allProjects().length === base, String(ctx.allProjects().length));
+  check(L, '清除后 IndexedDB 里的句柄被移除', idbStoreSize(idb) === 0, String(idbStoreSize(idb)));
+}
+
+/* 假 IndexedDB 内部 Map 的条目数 */
+function idbStoreSize(idb) {
+  return idb._store ? idb._store.size : 0;
+}
+
+/* 回归：直接选中「单个项目文件夹」当扫描根时，根目录本身必须被认成项目 */
+async function runZeroRootScenario() {
+  const L = '零服务·直接选中项目文件夹';
+  console.log('\n【' + L + '】');
+  const SOLO = mkDir('solo-app', [
+    mkFile('package.json', '{"name":"solo-app","scripts":{"dev":"vite --port 4321"}}'),
+    mkFile('README.md', '# 单项目\n\n直接选中的项目文件夹本身应被识别。\n'),
+    mkDir('.git', [mkFile('HEAD', 'ref: refs/heads/main\n')])
+  ]);
+  const idb = fakeIndexedDB();
+  const ls = { _d: {}, getItem(k) { return k in this._d ? this._d[k] : null; }, setItem(k, v) { this._d[k] = v; }, removeItem(k) { delete this._d[k]; } };
+  const win = { addEventListener() {}, showDirectoryPicker: async () => SOLO };
+
+  const { ctx, getEl } = buildContext(zeroFetch, { indexedDB: idb, localStorage: ls, window: win });
+  let err = null;
+  try { new vm.Script(src).runInContext(ctx, { timeout: 20000 }); } catch (e) { err = e; }
+  if (err) { console.log('  ✗ 运行时异常：' + err.message); failures.push(L + ' / 脚本启动'); return; }
+  await settle();
+  const base = ctx.allProjects().length;
+
+  await ctx.pickScanRoot();
+  await settle();
+
+  const zs = ctx.zeroProjects();
+  check(L, '根目录本身被认成 1 个项目（rel 为空串）', zs.length === 1, zs.map((p) => p.name).join(','));
+  check(L, '根项目名取目录名', zs[0] && zs[0].name === 'solo-app', zs[0] ? zs[0].name : '—');
+  check(L, '根项目路径非空且不带多余分隔符', !!zs[0] && !!zs[0].path && !/[\\/]$/.test(zs[0].path), zs[0] ? zs[0].path : '—');
+  check(L, '根项目已并入项目栏', ctx.allProjects().length === base + 1, base + ' → ' + ctx.allProjects().length);
+  check(L, '扫描结果写入 dirBar 扫描行', getEl('dirBar')._html.includes('个项目 · 扫描于'));
+
+  if (zs.length === 1) {
+    ctx.openProject(zs[0].id);
+    await settle();
+    const split = getEl('wbSplit')._html;
+    check(L, '根项目 repo 窗格直接进入可读写模式',
+      split.includes('data-live-tree="0"') && split.includes('已连接真实目录'));
+  }
+}
+
+/* 回归：选中 C:\ 这类超大根时必须「几秒内给出明确结果」，而不是卡住不动、界面像没反应。
+   同时验证两点：① 遍历为广度优先——巨型子树排在前面也不会把预算吃光，后面的浅层项目照样能被发现；
+   ② 系统目录（Windows / Program Files / AppData）被直接跳过，不参与遍历。 */
+async function runZeroHugeRootScenario() {
+  const L = '零服务·超大根（C:\\ 场景）';
+  console.log('\n【' + L + '】');
+  const SUBS = Array.from({ length: 80 }, (_, i) => mkDir('sub' + String(i).padStart(2, '0'), [mkFile('notes.txt', 'x')]));
+  const TOPS = Array.from({ length: 40 }, (_, i) => mkDir('dir' + String(i).padStart(2, '0'), SUBS));
+  const BIG = mkDir('BigDrive', [
+    /* 巨型子树故意排在前面：深度优先会在这里耗光 2500 个目录的预算 */
+    ...TOPS,
+    /* 排在后面的浅层项目，只有广度优先才来得及发现 */
+    mkDir('zz-late-project', [mkFile('package.json', '{"name":"late"}'), mkDir('.git', [mkFile('HEAD', 'x')])]),
+    mkDir('Windows', [mkDir('System32', [mkDir('packaged', [mkFile('package.json', '{"name":"win-junk"}')])])]),
+    mkDir('Program Files', [mkDir('Vendor', [mkFile('package.json', '{"name":"vendor-junk"}')])]),
+    mkDir('AppData', [mkDir('Local', [mkDir('app-junk', [mkFile('package.json', '{"name":"app-junk"}')])])])
+  ]);
+  const idb = fakeIndexedDB();
+  const ls = { _d: {}, getItem(k) { return k in this._d ? this._d[k] : null; }, setItem(k, v) { this._d[k] = v; }, removeItem(k) { delete this._d[k]; } };
+  const win = { addEventListener() {}, showDirectoryPicker: async () => BIG };
+
+  const { ctx, getEl } = buildContext(zeroFetch, { indexedDB: idb, localStorage: ls, window: win });
+  let err = null;
+  try { new vm.Script(src).runInContext(ctx, { timeout: 30000 }); } catch (e) { err = e; }
+  if (err) { console.log('  ✗ 运行时异常：' + err.message); failures.push(L + ' / 脚本启动'); return; }
+  await settle();
+
+  const t = Date.now();
+  await ctx.pickScanRoot();
+  const elapsed = Date.now() - t;
+  await settle();
+
+  const stats = peek(ctx, 'zeroScan.stats') || {};
+  check(L, '扫描在预算内返回（未挂住）', elapsed < 8000, elapsed + 'ms');
+  check(L, '遍历数被硬上限截断', stats.visited === 2500, 'visited=' + stats.visited);
+  check(L, '结果标记为不完整', stats.truncated === true, String(stats.truncated));
+  check(L, 'dirBar 给出「已达扫描上限」明确提示', getEl('dirBar')._html.includes('已达扫描上限'));
+  const zs = ctx.zeroProjects();
+  const names = zs.map((p) => p.name).join(',') || '—';
+  check(L, '巨型子树排前面也不吃光预算（广度优先）· 后置浅层项目被发现',
+    zs.some((p) => p.name === 'zz-late-project'), names);
+  check(L, '系统目录 Windows 被跳过（内部项目未出现）', !zs.some((p) => p.name === 'packaged'), names);
+  check(L, '系统目录 Program Files 被跳过（内部项目未出现）', !zs.some((p) => p.name === 'Vendor'), names);
+  check(L, '系统目录 AppData 被跳过（内部项目未出现）', !zs.some((p) => p.name === 'app-junk'), names);
+}
+
+/* 兼容模式扫描：<input webkitdirectory> 的文件清单 → 虚拟目录树 → 项目识别 → 只读浏览。
+   这一条链路不依赖 showDirectoryPicker、不需要任何权限，是「选择目录失败」时的兜底通道，
+   所以本场景故意不提供 window.showDirectoryPicker，证明它确实不依赖该 API。 */
+const mkFlatFile = (rel, text, lastModified) => ({
+  name: rel.split('/').pop(), size: text.length, lastModified: lastModified || 1750000000000,
+  webkitRelativePath: rel, text: async () => text
+});
+
+async function runFlatScenario() {
+  const L = '兼容模式扫描';
+  console.log('\n【' + L + '（webkitdirectory 文件清单 · 无权限依赖）】');
+  const FILES = [
+    mkFlatFile('MyProjects/smart-car/README.md', '# 智能小车\n\n基于 STM32F103 的两轮差速小车，含电机 PWM 驱动与编码器测速。\n'),
+    mkFlatFile('MyProjects/smart-car/CMakeLists.txt', 'project(smart_car)\n'),
+    mkFlatFile('MyProjects/smart-car/src/main.c', 'int main(){return 0;}\n'),
+    mkFlatFile('MyProjects/smart-car/.git/HEAD', 'ref: refs/heads/main\n'),
+    mkFlatFile('MyProjects/web-dash/package.json', '{"scripts":{"dev":"vite --port 5173"}}'),
+    mkFlatFile('MyProjects/web-dash/README.md', '# 数据看板\n\nVite + Vue3 轻量看板。\n'),
+    mkFlatFile('MyProjects/scratch/notes.txt', 'hello\n'),
+    mkFlatFile('MyProjects/node_modules/junk/package.json', '{}')
+  ];
+  const idb = fakeIndexedDB();
+  const ls = { _d: {}, getItem(k) { return k in this._d ? this._d[k] : null; }, setItem(k, v) { this._d[k] = v; }, removeItem(k) { delete this._d[k]; } };
+  const win = { addEventListener() {} };   // 故意不给 showDirectoryPicker
+
+  const { ctx, getEl } = buildContext(zeroFetch, { indexedDB: idb, localStorage: ls, window: win });
+  let err = null;
+  try { new vm.Script(src).runInContext(ctx, { timeout: 20000 }); } catch (e) { err = e; }
+  if (err) { console.log('  ✗ 运行时异常：' + err.message); failures.push(L + ' / 脚本启动'); return; }
+  await settle();
+  const base = ctx.allProjects().length;
+
+  check(L, '无 showDirectoryPicker 时仍提供「兼容模式扫描」入口',
+    getEl('dirBar')._html.includes('兼容模式扫描') && !getEl('dirBar')._html.includes('data-act="dir-pick"'));
+  check(L, '未授权时不误报已授权', !getEl('dirBar')._html.includes('已授权 · 可读写'));
+
+  await ctx.onFlatPicked({ target: { files: FILES } });
+  await settle();
+
+  const zs = ctx.zeroProjects();
+  const names = zs.map((p) => p.name).join(',') || '—';
+  check(L, '从文件清单识别出 2 个项目（node_modules / 无标记目录已排除）', zs.length === 2, names);
+  const car = zs.find((p) => p.name === 'smart-car');
+  const dash = zs.find((p) => p.name === 'web-dash');
+  check(L, '.git 目录被认成项目并标记 git', !!car && car.git === true);
+  check(L, '工程标记文件推导语言标签', !!car && car.langs.indexOf('C/C++') >= 0, car ? car.langs.join('/') : '—');
+  check(L, 'package.json 里的声明端口被解析', !!dash && dash.ports.indexOf(5173) >= 0, dash ? dash.ports.join(',') : '—');
+  check(L, 'README 正文首段进入卡片预览', !!car && ctx.projPreview(car).indexOf('差速小车') >= 0,
+    car ? ctx.projPreview(car).slice(0, 30) : '—');
+  const rawCar = (peek(ctx, 'zeroScan.projects') || []).find((p) => p.name === 'smart-car') || {};
+  check(L, '体积与文件数来自 File 清单（无需读盘）', rawCar.sizeBytes > 0 && rawCar.files === 3,
+    rawCar.sizeBytes + 'B / ' + rawCar.files + ' 文件（.git 内部不计）');
+  check(L, '扫描结果并入项目栏', ctx.allProjects().length === base + 2, base + ' → ' + ctx.allProjects().length);
+  check(L, '扫描模式标记为 flat', peek(ctx, 'zeroScan.mode') === 'flat', String(peek(ctx, 'zeroScan.mode')));
+  check(L, 'dirBar 状态 = 已扫描 · 只读（兼容模式）', getEl('dirBar')._html.includes('只读（兼容模式）'));
+  check(L, '模式徽章 = 兼容模式 · 只读', getEl('modeBadge')._html.includes('兼容模式'));
+  check(L, '兼容模式不写 IndexedDB（没有句柄可存）', idbStoreSize(idb) === 0, String(idbStoreSize(idb)));
+  check(L, 'dirBar 说明写明不能写盘', getEl('dirBar')._html.includes('不能直接写盘'));
+
+  /* 只读浏览：文件清单还原出目录树，且只走内存、不需要句柄 */
+  const at = ctx.flatListAt('smart-car');
+  check(L, '目录树从清单还原（子目录 + 文件）',
+    at.dirs.map((d) => d.name).join(',') === '.git,src' && at.files.map((f) => f.name).join(',') === 'CMakeLists.txt,README.md',
+    at.dirs.map((d) => d.name).join(',') + ' | ' + at.files.map((f) => f.name).join(','));
+  check(L, '文件大小取自 File 对象', at.files.some((f) => f.name === 'README.md' && f.size > 0));
+  check(L, '深层目录可继续下钻', ctx.flatListAt('smart-car/src').files.map((f) => f.name).join(',') === 'main.c');
+  check(L, '根级目录列表可用', ctx.flatListAt('').dirs.map((d) => d.name).indexOf('smart-car') >= 0);
+
+  /* repo 窗格：兼容模式直接进入只读浏览，不再尝试解析目录句柄 */
+  ctx.openProject(car.id);
+  await settle();
+  const split = getEl('wbSplit')._html;
+  check(L, 'repo 窗格进入兼容模式只读', split.includes('data-flat-tree="0"') && split.includes('兼容模式 · 只读'));
+  check(L, 'repo 窗格提示不能写盘', split.includes('不能写盘'));
+  check(L, 'repo 窗格不再出现「连接目录」按钮', !split.includes('data-act="connect-dir"'));
+
+  /* 模拟刷新：项目列表要复用，但文件清单是会话级的，必须提示重扫一次 */
+  const { ctx: ctx2 } = buildContext(zeroFetch, { indexedDB: idb, localStorage: ls, window: win });
+  try { new vm.Script(src).runInContext(ctx2, { timeout: 20000 }); } catch (e) { err = e; }
+  if (err) { console.log('  ✗ 刷新后运行时异常：' + err.message); failures.push(L + ' / 刷新后启动'); return; }
+  await settle();
+  check(L, '刷新后复用扫描结果（不重扫）', peek(ctx2, 'zeroScan.projects.length') === 2, String(peek(ctx2, 'zeroScan.projects.length')));
+  check(L, '刷新后仍标记为 flat 模式', peek(ctx2, 'zeroScan.mode') === 'flat');
+  check(L, '刷新后文件清单失效（会话级，不落盘）', peek(ctx2, 'flatFiles') === null);
+  check(L, '刷新后控制室仍显示兼容模式状态',
+    (() => { const el = ctx2.document.getElementById('dirBar'); return el && el._html.includes('只读（兼容模式）'); })());
+}
+
 await runScenario('快照模式（file://）', rejectFetch, false);
 await runScenario('服务模式（/api/health 可用）', okFetch, true);
+await runZeroScenario();
+await runZeroRootScenario();
+await runZeroHugeRootScenario();
+await runFlatScenario();
 
 console.log('');
 if (failures.length) {
@@ -204,4 +542,4 @@ if (failures.length) {
   failures.forEach((f) => console.log('   · ' + f));
   process.exit(1);
 }
-console.log('✓ 两个场景全部跑通');
+console.log('✓ 全部场景跑通（快照 / 服务 / 零服务 / 单项目根 / 超大根 / 兼容模式）');
