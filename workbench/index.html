@@ -1,0 +1,2480 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>工作台 · 控制室</title>
+<style>
+  :root{
+    /* 冷调深色玻璃底（对齐 dsh-worktable 的 --wt-* 体系） */
+    --bg:#0a0d13;
+    --card:rgba(18,23,32,.34);
+    --panel:rgba(255,255,255,.032);
+    --panel-2:rgba(255,255,255,.055);
+    --line:rgba(255,255,255,.075);
+    --line-strong:rgba(255,255,255,.16);
+    --border:#2a3140;
+    --border-hover:#39445a;
+    --txt:#e6e8eb;
+    --txt-dim:#9aa4b2;
+    --txt-mute:#6e7683;
+    /* 强调色：克制的琥珀金（不使用紫蓝渐变） */
+    --amber:#f0b429;
+    --amber-2:#c98f1c;
+    --amber-soft:rgba(240,180,41,.12);
+    --amber-line:rgba(240,180,41,.30);
+    --st-idle:#6e7683;
+    --st-working:#f0b429;
+    --st-needs:#e8734a;
+    --st-done:#3fb950;
+    --grid-line:rgba(255,255,255,.045);
+    --mono:ui-monospace,"JetBrains Mono","Cascadia Mono",Consolas,"Liberation Mono",monospace;
+    --sans:"Inter",system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    --r:16px;
+    --ease:cubic-bezier(.22,.7,.3,1);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;font-family:var(--sans);color:var(--txt);font-size:14px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    background:var(--bg);
+  }
+  /* 控制室背景层：30px 蓝图网格 + 四团缓慢漂移的暖色光斑（对齐 dsh-worktable 的 consoleBg） */
+  .wt-bg{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;background:var(--bg)}
+  .wt-bg::after{
+    content:"";position:absolute;inset:0;
+    background-image:
+      linear-gradient(var(--grid-line) 1px,transparent 1px),
+      linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);
+    background-size:30px 30px;
+    -webkit-mask-image:radial-gradient(1300px 820px at 48% 0%,#000 0%,transparent 78%);
+    mask-image:radial-gradient(1300px 820px at 48% 0%,#000 0%,transparent 78%);
+  }
+  /* 光斑：56vmax 模糊圆 + screen 叠加，克制地只走暖色，不用紫蓝 */
+  .wt-blob{position:absolute;width:56vmax;height:56vmax;border-radius:50%;filter:blur(64px);mix-blend-mode:screen;will-change:transform}
+  .wt-b1{background:radial-gradient(circle,#f0b429,transparent 66%);top:-18%;left:-14%;opacity:.34;animation:wtBlob1 13s ease-in-out infinite alternate}
+  .wt-b2{background:radial-gradient(circle,#e8734a,transparent 66%);top:2%;right:-20%;opacity:.26;animation:wtBlob2 17s ease-in-out infinite alternate}
+  .wt-b3{background:radial-gradient(circle,#2fd4b0,transparent 66%);bottom:-22%;left:12%;opacity:.20;animation:wtBlob3 11s ease-in-out infinite alternate}
+  .wt-b4{background:radial-gradient(circle,#c98f1c,transparent 66%);bottom:-10%;right:2%;opacity:.28;animation:wtBlob4 15s ease-in-out infinite alternate}
+  @keyframes wtBlob1{from{transform:translate(0,0) scale(1)}to{transform:translate(12vw,8vh) scale(1.12)}}
+  @keyframes wtBlob2{from{transform:translate(0,0) scale(1)}to{transform:translate(-11vw,9vh) scale(1.10)}}
+  @keyframes wtBlob3{from{transform:translate(0,0) scale(1)}to{transform:translate(10vw,-7vh) scale(1.14)}}
+  @keyframes wtBlob4{from{transform:translate(0,0) scale(1)}to{transform:translate(-9vw,-8vh) scale(1.11)}}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.10);border-radius:8px;border:3px solid transparent;background-clip:content-box}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(240,180,41,.30);background-clip:content-box}
+  button,input,textarea,select{font-family:inherit}
+  .mono{font-family:var(--mono)}
+
+  /* ================= shell ================= */
+  .app{position:relative;z-index:1;display:flex;min-height:100vh}
+
+  /* ================= sidebar ================= */
+  .sidebar{
+    width:274px;flex:none;display:flex;flex-direction:column;
+    padding:18px 12px 14px;gap:12px;
+    height:100vh;position:sticky;top:0;
+    border-right:1px solid var(--line);
+    background:linear-gradient(180deg,rgba(255,255,255,.026),rgba(255,255,255,.004));
+  }
+  .brand{display:flex;align-items:center;gap:11px;padding:2px 6px 8px}
+  .brand-mark{
+    width:34px;height:34px;flex:none;border-radius:10px;display:grid;place-items:center;
+    background:linear-gradient(150deg,rgba(255,255,255,.14),rgba(255,255,255,.03));
+    border:1px solid rgba(255,255,255,.16);font-size:17px;line-height:1
+  }
+  .brand-name{font-size:14.5px;font-weight:650;letter-spacing:.2px}
+  .brand-sub{font-size:10.5px;color:var(--txt-mute);letter-spacing:.7px;text-transform:uppercase}
+  .brand-tools{margin-left:auto;display:flex;align-items:center;gap:2px}
+  .brand-tools button{
+    width:24px;height:24px;padding:0;display:grid;place-items:center;border:1px solid transparent;border-radius:7px;
+    background:transparent;color:var(--txt-mute);cursor:pointer;transition:.18s var(--ease)
+  }
+  .brand-tools button:hover{background:rgba(255,255,255,.07);border-color:var(--line-strong);color:var(--txt)}
+  .brand-tools svg{width:14px;height:14px}
+
+  .nav-label{
+    font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--txt-mute);
+    padding:0 10px;margin:6px 0 5px;display:flex;align-items:center;justify-content:space-between
+  }
+  .nav-label span{font-family:var(--mono);letter-spacing:0;text-transform:none}
+  .nav{display:flex;flex-direction:column;gap:4px}
+  .nav-item{
+    display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border-radius:11px;
+    border:1px solid transparent;background:transparent;color:var(--txt-dim);font-size:13.5px;font-weight:520;
+    cursor:pointer;text-align:left;transition:background .2s var(--ease),color .2s,border-color .2s,transform .2s var(--ease);
+  }
+  .nav-item:hover{background:rgba(255,255,255,.05);color:var(--txt)}
+  .nav-item:active{transform:scale(.985)}
+  .nav-item.active{background:rgba(240,180,41,.10);border-color:rgba(240,180,41,.26);color:#f5d68f}
+  .nav-item .ni-ico{width:17px;height:17px;flex:none;opacity:.85}
+  .nav-item .ni-count{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--txt-mute)}
+  .nav-item.active .ni-count{color:rgba(240,180,41,.85)}
+
+  /* 项目列表（左栏）：emoji + 名称 + 状态光 + 箭头，34px 行高 */
+  .plist{flex:1;min-height:80px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;padding-right:2px}
+  .pitem{
+    display:flex;align-items:center;gap:10px;width:100%;height:36px;box-sizing:border-box;
+    padding:0 10px;border-radius:9px;border:1px solid transparent;
+    background:rgba(255,255,255,.02);cursor:pointer;text-align:left;font:inherit;
+    transition:background .18s var(--ease),border-color .18s var(--ease),transform .18s var(--ease)
+  }
+  .pitem:hover{background:rgba(255,255,255,.055);border-color:var(--line-strong);transform:translateX(1px)}
+  .pitem.active{background:rgba(240,180,41,.10);border-color:rgba(240,180,41,.30)}
+  .pitem .pi-ico{flex:none;font-size:15px;line-height:1}
+  .pitem .pi-name{
+    flex:1;min-width:0;font-size:12.8px;font-weight:500;color:var(--txt-dim);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+  }
+  .pitem.active .pi-name{color:#f5d68f;font-weight:600}
+  .pitem .pi-arrow{flex:none;width:13px;height:13px;opacity:.3;transition:opacity .18s}
+  .pitem:hover .pi-arrow{opacity:.72}
+
+  /* 四态状态光 */
+  .light{
+    width:9px;height:9px;flex:none;border-radius:50%;border:0;padding:0;cursor:pointer;
+    transition:transform .2s var(--ease),box-shadow .2s
+  }
+  .light:hover{transform:scale(1.35)}
+  .light.idle{background:var(--st-idle);box-shadow:0 0 0 3px rgba(107,104,99,.16)}
+  .light.working{background:var(--st-working);box-shadow:0 0 0 3px rgba(240,180,41,.20),0 0 10px rgba(240,180,41,.7);animation:lpulse 2.1s ease-in-out infinite}
+  .light.needs-you{background:var(--st-needs);box-shadow:0 0 0 3px rgba(232,115,74,.20),0 0 10px rgba(232,115,74,.6);animation:lpulse 1.5s ease-in-out infinite}
+  .light.done{background:var(--st-done);box-shadow:0 0 0 3px rgba(95,211,154,.20),0 0 10px rgba(95,211,154,.55)}
+  @keyframes lpulse{0%,100%{opacity:1}50%{opacity:.42}}
+
+  .sidebar-foot{margin-top:auto;display:flex;flex-direction:column;gap:9px}
+  /* 底部统计玻璃盒 */
+  .foot-box{
+    display:flex;flex-direction:column;gap:1px;padding:10px 12px;border-radius:13px;
+    border:1px solid var(--line);
+    background:linear-gradient(135deg,rgba(255,255,255,.10),rgba(255,255,255,.015));
+    backdrop-filter:blur(8px) saturate(1.15);
+    -webkit-backdrop-filter:blur(8px) saturate(1.15)
+  }
+  .fb-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0;font-size:11.5px;color:var(--txt-mute)}
+  .fb-row b{font-family:var(--mono);font-size:12.5px;font-weight:600;color:var(--txt-dim);font-variant-numeric:tabular-nums}
+
+  /* 控制室入口：呼吸灯 + 高亮边框 */
+  .control-entry{
+    position:relative;display:flex;align-items:center;gap:10px;width:100%;
+    padding:11px 12px;border-radius:13px;cursor:pointer;overflow:hidden;
+    border:1px solid rgba(240,180,41,.36);
+    background:linear-gradient(135deg,rgba(240,180,41,.16),rgba(240,180,41,.03));
+    color:#f6da9c;font-size:13.5px;font-weight:600;
+    transition:transform .24s var(--ease),border-color .24s,background .24s;
+    animation:breathe 3.1s ease-in-out infinite;
+  }
+  .control-entry:hover{transform:translateY(-2px);border-color:rgba(240,180,41,.62)}
+  .control-entry:active{transform:translateY(0) scale(.985)}
+  .control-entry.active{background:linear-gradient(135deg,rgba(240,180,41,.24),rgba(240,180,41,.06))}
+  .control-entry .ce-ico{width:18px;height:18px;flex:none}
+  .control-entry .ce-txt{display:flex;flex-direction:column;line-height:1.25}
+  .control-entry .ce-txt small{font-size:10.5px;font-weight:500;color:rgba(246,218,156,.62);letter-spacing:.04em}
+  .control-entry .ce-arrow{margin-left:auto;opacity:.55}
+  .control-entry::after{
+    content:"";position:absolute;inset:0;border-radius:13px;pointer-events:none;
+    background:linear-gradient(105deg,transparent 30%,rgba(255,224,150,.14) 48%,transparent 66%);
+    transform:translateX(-120%);animation:sheen 4.6s ease-in-out infinite;
+  }
+  @keyframes breathe{
+    0%,100%{box-shadow:0 0 0 1px rgba(240,180,41,.12),0 0 0 rgba(240,180,41,0)}
+    50%{box-shadow:0 0 0 1px rgba(240,180,41,.34),0 0 26px -2px rgba(240,180,41,.36)}
+  }
+  @keyframes sheen{0%{transform:translateX(-120%)}42%,100%{transform:translateX(130%)}}
+  .pulse-dot{width:8px;height:8px;border-radius:50%;background:var(--amber);flex:none;animation:pulse 2.3s ease-out infinite}
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(240,180,41,.55)}
+    70%{box-shadow:0 0 0 9px rgba(240,180,41,0)}
+    100%{box-shadow:0 0 0 0 rgba(240,180,41,0)}
+  }
+
+  /* ================= main ================= */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  /* 顶栏：悬浮玻璃 Dock */
+  .topbar{
+    position:sticky;top:12px;z-index:20;
+    display:flex;align-items:center;justify-content:space-between;gap:20px;
+    margin:14px 24px 16px;padding:11px 16px;border-radius:15px;
+    border:1px solid rgba(255,255,255,.16);
+    background:rgba(255,255,255,.055);
+    box-shadow:0 8px 24px rgba(0,0,0,.34);
+    backdrop-filter:blur(14px) saturate(1.3);
+    -webkit-backdrop-filter:blur(14px) saturate(1.3);
+  }
+  .tb-title{display:flex;align-items:center;gap:10px;min-width:0}
+  .tb-title h1{margin:0;font-size:19px;font-weight:680;letter-spacing:-.01em;white-space:nowrap}
+  .eyebrow{
+    font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber);
+    border:1px solid var(--amber-line);border-radius:99px;padding:2px 9px;background:var(--amber-soft);white-space:nowrap
+  }
+  .tb-sub{margin:4px 0 0;font-size:12px;color:var(--txt-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tb-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;justify-content:flex-end}
+
+  .btn{
+    display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border-radius:10px;
+    border:1px solid var(--line-strong);background:var(--panel);color:var(--txt-dim);
+    font-size:12.5px;font-weight:560;cursor:pointer;white-space:nowrap;
+    transition:.2s var(--ease);
+  }
+  .btn:hover{background:var(--panel-2);color:var(--txt);border-color:rgba(255,255,255,.22);transform:translateY(-1px)}
+  .btn:active{transform:translateY(0) scale(.98)}
+  .btn.primary{border-color:var(--amber-line);color:#f7dd9f;background:linear-gradient(135deg,rgba(240,180,41,.20),rgba(240,180,41,.05))}
+  .btn.primary:hover{border-color:rgba(240,180,41,.55);box-shadow:0 6px 22px -10px rgba(240,180,41,.6)}
+  .btn.small{padding:6px 10px;font-size:11.5px;border-radius:9px}
+  .btn.ico{padding:7px;border-radius:9px}
+  .btn.danger:hover{color:#f0a08a;border-color:rgba(232,115,74,.42)}
+  .btn[disabled]{opacity:.42;cursor:not-allowed;transform:none}
+
+  .view{display:none;padding:0 24px 34px}
+  .view.active{display:block;animation:fadeUp .34s var(--ease)}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+
+  /* ================= stats ================= */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;margin:0 auto 16px;max-width:1064px}
+  .stat{
+    position:relative;overflow:hidden;padding:13px 15px 14px;border-radius:14px;
+    border:1px solid transparent;
+    background:
+      linear-gradient(135deg,rgba(255,255,255,.14) 0%,rgba(255,255,255,.05) 34%,rgba(255,255,255,.012) 64%,rgba(0,0,0,.05) 100%),
+      rgba(18,23,32,.30);
+    box-shadow:0 8px 22px rgba(0,0,0,.26),inset 0 1px 0 rgba(255,255,255,.10);
+    backdrop-filter:blur(8px) saturate(1.15);
+    -webkit-backdrop-filter:blur(8px) saturate(1.15);
+    transition:border-color .25s var(--ease),transform .25s var(--ease),box-shadow .25s var(--ease)
+  }
+  .stat::after{
+    content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+    background:conic-gradient(from 45deg,rgba(0,0,0,.34) 0deg,rgba(255,255,255,.42) 90deg,rgba(0,0,0,.34) 180deg,rgba(255,255,255,.42) 270deg,rgba(0,0,0,.34) 360deg);
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;
+    mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    mask-composite:exclude;
+    pointer-events:none;opacity:.45
+  }
+  .stat:hover{transform:translateY(-3px);box-shadow:0 16px 36px -20px #000,0 0 26px -12px rgba(240,180,41,.5)}
+  .stat:hover::after{background:conic-gradient(from 45deg,rgba(240,180,41,.2) 0deg,rgba(240,180,41,.8) 90deg,rgba(240,180,41,.2) 180deg,rgba(240,180,41,.8) 270deg,rgba(240,180,41,.2) 360deg)}
+  .stat-k{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-mute)}
+  .stat-v{font-family:var(--mono);font-size:24px;font-weight:600;letter-spacing:-.02em;margin-top:6px}
+  .stat-v .unit{font-size:12.5px;color:var(--txt-mute);margin-left:3px;font-weight:500}
+  .stat-note{margin-top:4px;font-size:11.5px;color:var(--txt-mute)}
+  .stat-v.gold{color:var(--amber)}
+  .stat-v.working{color:var(--st-working)}
+  .stat-v.needs{color:var(--st-needs)}
+  .stat-v.done{color:var(--st-done)}
+
+  .section-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:4px 0 12px}
+  .section-head h2{margin:0;font-size:13px;font-weight:600;letter-spacing:.02em;color:var(--txt-dim)}
+  .section-head h2 span{color:var(--txt-mute);font-weight:500;font-family:var(--mono);font-size:11.5px;margin-left:8px}
+  .hint{font-size:11.5px;color:var(--txt-mute)}
+
+  /* ================= 卡片网格（对齐 dsh-worktable 控制室） ================= */
+  /* 居中定宽轨道：246px 正方贴片，列数随视口收敛，控制室占 2×2 */
+  .grid{
+    --cols:4;--gap:64px;
+    display:grid;grid-template-columns:repeat(var(--cols),minmax(0,246px));
+    grid-auto-rows:auto;justify-content:center;align-items:start;gap:var(--gap);
+    width:100%;margin:clamp(32px,9vh,110px) auto 0;
+  }
+  @media (max-width:1660px){.grid{--cols:3}}
+  @media (max-width:1240px){.grid{--cols:2}}
+  @media (max-width:780px){.grid{--cols:1}}
+
+  .card{
+    position:relative;box-sizing:border-box;display:flex;flex-direction:column;gap:13px;
+    min-width:0;aspect-ratio:1;min-height:196px;padding:21px;
+    border-radius:16px;border:1px solid transparent;overflow:hidden;cursor:pointer;
+    /* 去磨砂（参考仓库第九/十轮定案）：不留 blur，30px 井字格才能透过来，读出「半透玻璃」 */
+    background:
+      linear-gradient(135deg,rgba(255,255,255,.20) 0%,rgba(255,255,255,.065) 30%,rgba(255,255,255,.012) 60%,rgba(0,0,0,.07) 100%),
+      rgba(18,23,32,.24);
+    box-shadow:0 10px 28px rgba(0,0,0,.30),inset 0 1px 0 rgba(255,255,255,.13);
+    transition:transform .16s var(--ease),box-shadow .16s var(--ease);
+  }
+  /* 玻璃边缘：锥形渐变 1px 环（左上/右下亮，右上/左下暗），遮罩挖空实现 */
+  .card::after{
+    content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+    background:conic-gradient(from 45deg,rgba(0,0,0,.40) 0deg,rgba(255,255,255,.55) 90deg,rgba(0,0,0,.40) 180deg,rgba(255,255,255,.55) 270deg,rgba(0,0,0,.40) 360deg);
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;
+    mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    mask-composite:exclude;
+    pointer-events:none;opacity:.5
+  }
+  .card:hover{transform:translateY(-2px);box-shadow:0 14px 32px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.09)}
+  .card:active{transform:translateY(0) scale(.995)}
+  .card:focus-visible{outline:2px solid var(--amber-line);outline-offset:3px}
+
+  /* 卡片内部：图标 + 名称 / 分隔线 / 状态行 / 内容预览 */
+  .c-head{display:flex;align-items:center;gap:13px;min-width:0}
+  .c-ico{flex:none;font-size:31px;line-height:1;font-family:var(--sans)}
+  .c-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:20px;font-weight:700;line-height:28px;letter-spacing:-.01em;color:var(--txt)}
+  .c-div{flex:none;height:1px;background:var(--line)}
+  .c-srow{display:flex;align-items:baseline;justify-content:space-between;gap:9px;min-width:0}
+  .c-status{flex:none;font-size:22px;font-weight:700;line-height:30px;color:var(--txt-dim)}
+  .c-status.idle{color:var(--txt-mute)}
+  .c-status.working{color:var(--amber)}
+  .c-status.needs-you{color:var(--st-needs)}
+  .c-status.done{color:var(--st-done)}
+  .c-meta{flex:none;font-family:var(--mono);font-size:13px;font-weight:600;line-height:30px;color:var(--txt-mute);font-variant-numeric:tabular-nums;white-space:nowrap}
+  /* 预览字号缩到 8.5px（参考仓库第六轮定案：给卡片留更多余地，同空间容纳更多内容） */
+  .c-preview{
+    display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;
+    font-size:8.5px;line-height:13px;color:var(--txt-mute);word-break:break-word
+  }
+  .c-preview.mute{font-style:italic;-webkit-line-clamp:2;font-size:9px}
+
+  .card .light{margin-left:auto;flex:none}
+
+  /* 状态光效：整卡霓虹描边光晕（完成=绿 / 待处理=橙） */
+  .card.glow-done{border-color:rgba(63,185,80,.85);box-shadow:0 0 8px rgba(63,185,80,.45),0 0 26px rgba(63,185,80,.26),inset 0 0 16px rgba(63,185,80,.07)}
+  .card.glow-needs{border-color:rgba(232,115,74,.9);box-shadow:0 0 8px rgba(232,115,74,.45),0 0 26px rgba(232,115,74,.26),inset 0 0 16px rgba(232,115,74,.08)}
+  .card.glow-done::after,.card.glow-needs::after{opacity:0}
+
+  /* 工作中：琥珀金彗星光环顺时针旋转 + 斜向扫光 */
+  @property --wt-angle{syntax:"<angle>";initial-value:0deg;inherits:false}
+  /* 环加厚到 3px 并贴卡边。参考仓库用的是 inset:-4px/padding:4px（外扩环），
+     但那要求卡片不裁剪；本实现 .card 有 overflow:hidden，外扩部分会被裁掉，
+     故改用 inset:0 的 3px 卡边环 —— 与参考截图呈现的「亮边 + 双层外发光」一致 */
+  .card.busy{box-shadow:0 0 10px rgba(240,180,41,.55),0 0 34px rgba(240,180,41,.40)}
+  .card.busy::before{
+    content:"";position:absolute;inset:0;border-radius:16px;padding:3px;pointer-events:none;
+    background:conic-gradient(from var(--wt-angle),
+      transparent 0deg,rgba(240,180,41,0) 22deg,#fff6d8 54deg,#f0b429 86deg,rgba(240,180,41,0) 126deg,transparent 205deg);
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;
+    mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    mask-composite:exclude;
+    animation:wtAngleSpin 1.4s linear infinite;
+    filter:drop-shadow(0 0 8px rgba(240,180,41,.9))
+  }
+  @keyframes wtAngleSpin{to{--wt-angle:360deg}}
+  .card.busy::after{opacity:0}
+  .wt-sweep{
+    position:absolute;inset:-30%;border-radius:inherit;pointer-events:none;z-index:-1;
+    background:linear-gradient(115deg,rgba(255,255,255,.01) 0%,rgba(255,255,255,.045) 30%,rgba(255,255,255,.12) 50%,rgba(255,255,255,.045) 70%,rgba(255,255,255,.01) 100%);
+    opacity:0;animation:wtSweep 3.2s ease-in-out infinite
+  }
+  @keyframes wtSweep{
+    0%{opacity:0;transform:translate(-12%,-12%)}
+    35%{opacity:1}55%{opacity:1}
+    92%,100%{opacity:0;transform:translate(12%,12%)}
+  }
+
+  /* 控制室卡片：2×2 大正方形，琥珀金玻璃底 */
+  .control-card{
+    grid-column:span 2;grid-row:span 2;aspect-ratio:1;gap:16px;
+    border-color:rgba(240,180,41,.26);
+    background:
+      radial-gradient(560px 260px at 6% -26%,rgba(240,180,41,.16),transparent 70%),
+      linear-gradient(135deg,rgba(255,255,255,.20) 0%,rgba(255,255,255,.06) 30%,rgba(255,255,255,.012) 60%,rgba(0,0,0,.07) 100%),
+      rgba(18,23,32,.24);
+  }
+  .control-card:hover{transform:translateY(-3px);border-color:rgba(240,180,41,.52);box-shadow:0 22px 50px -26px #000,0 0 46px -14px rgba(240,180,41,.5)}
+  .control-card .c-ico{font-size:38px}
+  .control-card .c-name{font-size:25px;line-height:34px}
+  .control-card .c-status{font-size:25px;line-height:34px}
+  .cc-badge{display:inline-flex;align-items:center;gap:7px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:#f6da9c;border:1px solid var(--amber-line);background:var(--amber-soft);padding:3px 10px;border-radius:99px;white-space:nowrap}
+  .cc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:0;flex:1;align-content:center}
+  .cc-cell{padding:14px 15px;border-radius:12px;border:1px solid var(--line);background:rgba(0,0,0,.24)}
+  .cc-cell .k{font-size:10.5px;letter-spacing:.06em;color:var(--txt-mute);white-space:nowrap}
+  .cc-cell .v{font-family:var(--mono);font-size:21px;font-weight:600;margin-top:6px;letter-spacing:-.02em}
+  .cc-cell .v.gold{color:var(--amber)}
+  .cc-cell .v.working{color:var(--st-working)}
+  .cc-cell .v.needs{color:var(--st-needs)}
+  .cc-cell .v.done{color:var(--st-done)}
+  .control-card .c-preview{margin-top:2px}
+
+  /* 新建卡片：玻璃底 + 虚线边，永远排在最后一位 */
+  .add-card{
+    justify-content:center;align-items:center;gap:10px;text-align:center;
+    border:1.5px dashed var(--border-hover);
+    background:radial-gradient(circle at 50% 42%,rgba(255,255,255,.09),rgba(255,255,255,0) 65%),rgba(18,23,32,.34);
+  }
+  .add-card::after{display:none}
+  .add-card:hover{border-color:rgba(240,180,41,.6);background:radial-gradient(circle at 50% 42%,rgba(240,180,41,.10),rgba(255,255,255,0) 65%),rgba(23,28,37,.45)}
+  .add-plus{font-size:34px;line-height:1;font-weight:400;color:var(--txt-dim)}
+  .add-card:hover .add-plus{color:var(--amber)}
+  .add-label{font-size:13.5px;font-weight:600;color:var(--txt-dim)}
+  .add-card:hover .add-label{color:var(--txt)}
+
+  .empty{grid-column:1/-1;padding:52px 0;text-align:center;font-size:12.5px;color:var(--txt-mute)}
+
+  /* 通用标签 / 容量条（控制室表格与本地检索共用） */
+  .tag{font-family:var(--mono);font-size:10.5px;padding:2.5px 7px;border-radius:6px;color:var(--txt-dim);background:rgba(255,255,255,.045);border:1px solid var(--line);white-space:nowrap}
+  .tag.gold{color:#e9c778;background:rgba(240,180,41,.08);border-color:rgba(240,180,41,.22)}
+  .sizebar{height:3px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden}
+  .sizebar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--amber-2),var(--amber));transition:width .6s var(--ease)}
+
+  /* ================= 分栏工作台 ================= */
+  .wb-bar{
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;
+    padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--panel)
+  }
+  .wb-crumb{display:flex;align-items:center;gap:9px;min-width:0;flex:1}
+  .wb-crumb b{font-size:13.5px;font-weight:620;white-space:nowrap}
+  .wb-crumb .p{font-family:var(--mono);font-size:10.5px;color:var(--txt-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .seg{display:inline-flex;border:1px solid var(--line-strong);border-radius:10px;overflow:hidden;background:rgba(0,0,0,.22)}
+  .seg button{
+    padding:6px 11px;font-size:11.5px;font-weight:560;color:var(--txt-mute);background:transparent;border:0;cursor:pointer;
+    border-right:1px solid var(--line);transition:.18s var(--ease);white-space:nowrap
+  }
+  .seg button:last-child{border-right:0}
+  .seg button:hover{background:rgba(255,255,255,.05);color:var(--txt-dim)}
+  .seg button.on{background:rgba(240,180,41,.14);color:#f7dd9f}
+  .seg button .k{font-family:var(--mono);font-size:9.5px;opacity:.7;margin-left:4px}
+
+  .pane-grid{display:grid;gap:12px;height:calc(100vh - 214px);min-height:460px}
+  .pane-grid[data-preset="full"]{grid-template-columns:1fr}
+  .pane-grid[data-preset="l2"]{grid-template-columns:1fr 1fr}
+  .pane-grid[data-preset="g4"]{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
+  .pane-grid[data-preset="l13"]{grid-template-columns:1fr 1fr;grid-template-rows:1.4fr 1fr}
+  .pane-grid[data-preset="l13"] .pane[data-slot="0"]{grid-column:span 2}
+  .pane-grid[data-preset="chat"]{grid-template-columns:1fr 1.25fr}
+  @media (max-width:900px){
+    .pane-grid{height:auto;min-height:0}
+    .pane-grid[data-preset="l2"],.pane-grid[data-preset="g4"],.pane-grid[data-preset="l13"],.pane-grid[data-preset="chat"]{grid-template-columns:1fr;grid-template-rows:auto}
+    .pane-grid[data-preset="l13"] .pane[data-slot="0"]{grid-column:span 1}
+  }
+
+  .pane{
+    display:flex;flex-direction:column;min-height:0;min-width:0;
+    border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
+    background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01));
+    transition:border-color .25s var(--ease),box-shadow .25s var(--ease)
+  }
+  .pane:hover{border-color:rgba(255,255,255,.16)}
+  .pane.focus{border-color:var(--amber-line);box-shadow:0 0 0 1px rgba(240,180,41,.10),0 18px 40px -30px rgba(240,180,41,.5)}
+  .pane-head{
+    display:flex;align-items:center;gap:9px;padding:8px 10px;flex:none;
+    border-bottom:1px solid var(--line);background:rgba(0,0,0,.20)
+  }
+  .pane-head .kind-chip{
+    display:inline-flex;align-items:center;gap:6px;font-size:10.5px;letter-spacing:.06em;
+    color:var(--txt-dim);border:1px solid var(--line);border-radius:7px;padding:2px 7px;background:rgba(255,255,255,.04);flex:none
+  }
+  .pane-head .kind-chip i{font-style:normal;color:var(--amber);font-size:11px}
+  .pane-title{
+    flex:1;min-width:40px;background:transparent;border:0;outline:0;color:var(--txt);
+    font-size:12.5px;font-weight:600;padding:3px 5px;border-radius:6px;transition:background .2s
+  }
+  .pane-title:hover{background:rgba(255,255,255,.045)}
+  .pane-title:focus{background:rgba(0,0,0,.35);box-shadow:0 0 0 2px rgba(240,180,41,.20)}
+  .pane-tools{display:flex;align-items:center;gap:5px;flex:none}
+  .mini-btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:5px;
+    height:24px;min-width:24px;padding:0 7px;border-radius:7px;border:1px solid var(--line);
+    background:rgba(255,255,255,.035);color:var(--txt-mute);font-size:11px;cursor:pointer;transition:.18s var(--ease)
+  }
+  .mini-btn:hover{color:var(--txt);border-color:var(--line-strong);background:rgba(255,255,255,.07)}
+  .mini-btn:active{transform:scale(.94)}
+  .pane-body{flex:1;min-height:0;overflow:auto;padding:11px 12px 13px}
+
+  .empty-slot{
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:11px;height:100%;
+    border:1px dashed rgba(255,255,255,.14);border-radius:12px;background:rgba(0,0,0,.14);padding:18px;text-align:center
+  }
+  .empty-slot p{margin:0;font-size:12px;color:var(--txt-mute)}
+  .kind-picker{display:flex;flex-wrap:wrap;gap:7px;justify-content:center}
+  .kind-picker button{
+    display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:9px;
+    border:1px solid var(--line-strong);background:var(--panel);color:var(--txt-dim);font-size:11.5px;cursor:pointer;
+    transition:.2s var(--ease)
+  }
+  .kind-picker button:hover{border-color:var(--amber-line);color:#f7dd9f;transform:translateY(-1px);background:rgba(240,180,41,.08)}
+  .kind-picker button i{font-style:normal;color:var(--amber)}
+
+  /* note */
+  .note-area{
+    width:100%;height:100%;min-height:150px;resize:none;border:0;outline:0;background:transparent;
+    color:var(--txt);font-size:13px;line-height:1.72;font-family:var(--sans)
+  }
+  .note-area::placeholder{color:var(--txt-mute)}
+  .pane-meta{display:flex;justify-content:space-between;gap:10px;font-size:10.5px;color:var(--txt-mute);font-family:var(--mono);margin-top:6px}
+
+  /* todo */
+  .todo-list{display:flex;flex-direction:column;gap:2px}
+  .todo-row{display:flex;align-items:flex-start;gap:9px;padding:6px 7px;border-radius:9px;transition:background .18s}
+  .todo-row:hover{background:rgba(255,255,255,.045)}
+  .todo-row input[type=checkbox]{
+    appearance:none;width:15px;height:15px;flex:none;margin-top:2px;border-radius:4px;cursor:pointer;
+    border:1px solid rgba(255,255,255,.24);background:rgba(0,0,0,.3);transition:.18s var(--ease);position:relative
+  }
+  .todo-row input[type=checkbox]:checked{background:rgba(95,211,154,.22);border-color:rgba(95,211,154,.55)}
+  .todo-row input[type=checkbox]:checked::after{
+    content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;
+    border:solid var(--st-done);border-width:0 2px 2px 0;transform:rotate(42deg)
+  }
+  .todo-row .tx{flex:1;font-size:12.8px;color:var(--txt-dim);word-break:break-word;cursor:pointer}
+  .todo-row.done .tx{color:var(--txt-mute);text-decoration:line-through}
+  .todo-row .del{opacity:0;transition:opacity .18s;flex:none}
+  .todo-row:hover .del{opacity:1}
+  .todo-add{display:flex;gap:7px;margin-top:9px}
+  .todo-add input{
+    flex:1;padding:7px 10px;border-radius:9px;border:1px solid var(--line-strong);
+    background:rgba(0,0,0,.30);color:var(--txt);font-size:12.5px;outline:0;transition:.2s
+  }
+  .todo-add input:focus{border-color:var(--amber-line);box-shadow:0 0 0 3px rgba(240,180,41,.09)}
+  .prog{height:4px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden;margin:11px 0 4px}
+  .prog i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--amber-2),var(--st-done));transition:width .5s var(--ease)}
+
+  /* link / web */
+  .url-row{display:flex;gap:7px;margin-bottom:9px}
+  .url-row input{
+    flex:1;padding:7px 10px;border-radius:9px;border:1px solid var(--line-strong);
+    background:rgba(0,0,0,.30);color:var(--txt);font-size:12px;font-family:var(--mono);outline:0;transition:.2s
+  }
+  .url-row input:focus{border-color:var(--amber-line);box-shadow:0 0 0 3px rgba(240,180,41,.09)}
+  .link-card{
+    display:flex;align-items:center;gap:11px;padding:13px;border-radius:12px;border:1px solid var(--line);
+    background:rgba(0,0,0,.20)
+  }
+  .link-card .dom{font-family:var(--mono);font-size:12px;color:var(--txt-dim);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .frame-wrap{position:relative;height:calc(100% - 44px);min-height:170px;border-radius:11px;overflow:hidden;border:1px solid var(--line);background:rgba(0,0,0,.35)}
+  .frame-wrap iframe{width:100%;height:100%;border:0;display:block;background:#fff}
+  .frame-fallback{
+    position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;
+    padding:18px;text-align:center;background:rgba(10,11,13,.92);color:var(--txt-mute);font-size:12px
+  }
+  .frame-fallback b{color:var(--txt-dim);font-size:12.5px}
+
+  /* repo */
+  .repo-bar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:9px}
+  .crumb{display:flex;align-items:center;gap:3px;flex-wrap:wrap;flex:1;min-width:0}
+  .crumb button{
+    background:transparent;border:0;color:var(--txt-dim);font-size:11.5px;font-family:var(--mono);
+    cursor:pointer;padding:3px 5px;border-radius:6px;transition:.18s
+  }
+  .crumb button:hover{background:rgba(240,180,41,.10);color:#f7dd9f}
+  .crumb .sep{color:var(--txt-mute);font-size:11px}
+  .tree{display:flex;flex-direction:column;gap:1px}
+  .tree-row{
+    display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:8px;
+    border:0;background:transparent;color:var(--txt-dim);font-size:12.5px;cursor:pointer;
+    text-align:left;width:100%;transition:background .16s var(--ease)
+  }
+  .tree-row:hover{background:rgba(240,180,41,.07);color:var(--txt)}
+  .tree-row.on{background:rgba(240,180,41,.13);color:#f7dd9f}
+  .tree-row .ic{width:15px;flex:none;text-align:center;color:var(--amber);font-size:11px}
+  .tree-row .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);font-size:12px}
+  .tree-row .sz{font-family:var(--mono);font-size:10.5px;color:var(--txt-mute);flex:none}
+  .file-view{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+  .file-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+  .file-head .fp{font-family:var(--mono);font-size:11px;color:var(--txt-dim);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  pre.code{
+    margin:0;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:rgba(0,0,0,.42);
+    font-family:var(--mono);font-size:11.5px;line-height:1.65;color:#cfcbc4;overflow:auto;max-height:340px;white-space:pre
+  }
+  .note-line{
+    display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;font-size:11.5px;color:var(--txt-mute);
+    border:1px solid var(--line);background:rgba(0,0,0,.18)
+  }
+  .note-line i{font-style:normal;color:var(--amber)}
+
+  /* ================= 模式徽章 ================= */
+  .mode-badge{
+    display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:99px;
+    font-size:11.5px;font-weight:560;cursor:pointer;user-select:none;white-space:nowrap;
+    border:1px solid var(--line-strong);background:rgba(0,0,0,.24);color:var(--txt-mute);
+    transition:.2s var(--ease)
+  }
+  .mode-badge i{font-style:normal;font-size:9px;line-height:1}
+  .mode-badge:hover{border-color:var(--line-strong);color:var(--txt-dim)}
+  .mode-badge.on{
+    border-color:var(--amber-line);color:#f7dd9f;
+    background:linear-gradient(135deg,rgba(240,180,41,.20),rgba(240,180,41,.05));
+    box-shadow:0 0 24px -14px rgba(240,180,41,.95)
+  }
+  .mode-badge.on i{color:var(--amber);animation:pulse 2.3s ease-out infinite}
+  .server-pill{
+    display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-family:var(--mono);
+    padding:3px 8px;border-radius:99px;border:1px solid rgba(95,211,154,.34);
+    color:#9fe3bd;background:rgba(95,211,154,.09)
+  }
+
+  /* ================= 本地检索窗格 ================= */
+  .pj-bar{display:flex;gap:7px;margin-bottom:8px}
+  .pj-q{
+    flex:1;min-width:0;padding:7px 10px;border-radius:9px;border:1px solid var(--line-strong);
+    background:rgba(0,0,0,.30);color:var(--txt);font-size:12px;outline:0;transition:.2s
+  }
+  .pj-q:focus{border-color:var(--amber-line);box-shadow:0 0 0 3px rgba(240,180,41,.09)}
+  .pj-seg{margin-bottom:8px}
+  .pj-stat{
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--txt-mute);
+    font-family:var(--mono);padding:6px 9px;border-radius:9px;border:1px solid var(--line);
+    background:rgba(0,0,0,.18);margin-bottom:9px
+  }
+  .pj-stat b{color:var(--txt-dim);font-weight:600}
+  .pj-stat .sp{flex:1;min-width:8px}
+  .pj-list{display:flex;flex-direction:column;gap:4px}
+  .pj-group{
+    display:flex;align-items:center;gap:7px;margin:9px 0 3px;
+    font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-mute)
+  }
+  .pj-group span{font-family:var(--mono);color:var(--amber);font-size:10px;letter-spacing:0}
+  .pj-row{
+    display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:9px;cursor:pointer;
+    border:1px solid transparent;background:rgba(255,255,255,.022);transition:.18s var(--ease)
+  }
+  .pj-row:hover{border-color:var(--amber-line);background:rgba(240,180,41,.06);transform:translateX(2px)}
+  .pj-row.run{border-color:rgba(95,211,154,.30)}
+  .pj-row .light{flex:none}
+  .pj-body{display:flex;flex-direction:column;min-width:0;flex:1}
+  .pj-name{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pj-path{font-size:10px;color:var(--txt-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pj-tags{display:flex;gap:4px;flex:none}
+  .pj-tags .tag{font-size:9.5px;padding:2px 6px}
+  .pj-size{font-family:var(--mono);font-size:10.5px;color:var(--txt-mute);flex:none;min-width:54px;text-align:right}
+
+  /* ================= AI 对话窗格 ================= */
+  /* 对话窗格不再用「100% - 104px」按工具栏高度硬算：改成 flex 列，
+     iframe 自动吃掉工具栏之外的全部高度，工具栏换行也不会把 iframe 挤没 */
+  .pane-body.chat-body{display:flex;flex-direction:column;gap:7px;overflow:hidden;padding:10px 11px 12px}
+  .chat-bar{flex-wrap:wrap;margin-bottom:0}
+  .chat-bar select{
+    flex:none;max-width:158px;padding:7px 9px;border-radius:9px;border:1px solid var(--line-strong);
+    background:rgba(0,0,0,.30);color:var(--txt-dim);font-size:11.5px;outline:0;cursor:pointer;transition:.2s
+  }
+  .chat-bar select:hover{border-color:var(--amber-line);color:var(--txt)}
+  .chat-bar input{flex:1 1 150px;min-width:0}
+  .chat-bar .btn{flex:none;white-space:nowrap}
+  .chat-wrap{flex:1 1 auto;height:auto;min-height:220px}
+  .frame-fallback .fb-row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:3px}
+
+  /* ================= 控制室 ================= */
+  .ports-strip{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+  .port-chip{
+    display:inline-flex;align-items:center;gap:8px;padding:7px 11px;border-radius:10px;
+    border:1px solid var(--line);background:var(--panel);font-size:11.5px;color:var(--txt-dim);transition:.2s var(--ease)
+  }
+  .port-chip:hover{border-color:var(--line-strong);transform:translateY(-2px);color:var(--txt)}
+  .port-chip b{font-family:var(--mono);color:var(--amber);font-weight:600}
+  .port-chip span{font-family:var(--mono);font-size:11px;color:var(--txt-mute)}
+
+  .table-wrap{border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:linear-gradient(180deg,rgba(255,255,255,.032),rgba(255,255,255,.008))}
+  .tbl-scroll{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;min-width:1060px}
+  thead th{
+    position:sticky;top:0;z-index:2;text-align:left;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--txt-mute);font-weight:600;padding:10px 13px;background:rgba(16,17,20,.94);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);white-space:nowrap
+  }
+  tbody tr{border-bottom:1px solid rgba(255,255,255,.045);transition:background .18s}
+  tbody tr:last-child{border-bottom:0}
+  tbody tr:hover{background:rgba(240,180,41,.045)}
+  tbody td{padding:11px 13px;vertical-align:middle;font-size:12.8px}
+  .cell-name{display:flex;align-items:center;gap:10px;min-width:186px}
+  .sq{
+    width:26px;height:26px;flex:none;border-radius:8px;display:grid;place-items:center;
+    font-family:var(--mono);font-size:10px;font-weight:700;color:var(--amber);
+    background:rgba(240,180,41,.12);border:1px solid rgba(240,180,41,.22)
+  }
+  .cell-name .nm{font-weight:580;white-space:nowrap}
+  .cell-name .sm{font-size:11px;color:var(--txt-mute);font-family:var(--mono)}
+  .cell-path{font-family:var(--mono);font-size:11px;color:var(--txt-mute);max-width:250px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .port-pill{
+    display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;padding:3px 8px;border-radius:7px;
+    border:1px solid rgba(95,211,154,.32);background:rgba(95,211,154,.10);color:#8ee9b6
+  }
+  .occupancy{font-family:var(--mono);font-size:12px;color:var(--txt-dim)}
+  .occupancy.idle{color:var(--txt-mute)}
+  .disk-cell{min-width:126px}
+  .disk-cell .n{font-family:var(--mono);font-size:12px;color:var(--txt-dim)}
+  .row-actions{display:flex;gap:6px;justify-content:flex-end}
+  .empty{padding:32px;text-align:center;color:var(--txt-mute);font-size:12.5px}
+  .state-cell{display:flex;align-items:center;gap:8px;cursor:pointer;white-space:nowrap}
+  .state-cell .lb{font-size:11.5px;color:var(--txt-dim)}
+
+  .search{
+    display:flex;align-items:center;gap:9px;flex:1;min-width:210px;max-width:400px;padding:8px 12px;
+    border-radius:11px;border:1px solid var(--line-strong);background:var(--panel);transition:border-color .2s,background .2s
+  }
+  .search:focus-within{border-color:var(--amber-line);background:rgba(240,180,41,.05)}
+  .search input{flex:1;background:transparent;border:0;outline:0;color:var(--txt);font-size:13px}
+  .search input::placeholder{color:var(--txt-mute)}
+  .cr-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:13px;flex-wrap:wrap}
+
+  /* ================= modal ================= */
+  .scrim{position:fixed;inset:0;z-index:60;display:none;place-items:center;background:rgba(6,7,9,.62);backdrop-filter:blur(5px)}
+  .scrim.show{display:grid;animation:fade .22s var(--ease)}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .modal{
+    width:min(440px,92vw);border-radius:16px;border:1px solid var(--line-strong);
+    background:linear-gradient(180deg,#15161a,#101114);
+    box-shadow:0 40px 90px -40px #000,0 0 0 1px rgba(240,180,41,.10);padding:20px;animation:pop .28s var(--ease)
+  }
+  @keyframes pop{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:none}}
+  .modal h3{margin:0 0 3px;font-size:15px}
+  .modal p{margin:0 0 16px;font-size:12px;color:var(--txt-mute)}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-mute);margin-bottom:6px}
+  .field input{
+    width:100%;padding:9px 11px;border-radius:10px;border:1px solid var(--line-strong);
+    background:rgba(0,0,0,.35);color:var(--txt);font-size:13px;outline:0;transition:.2s
+  }
+  .field input:focus{border-color:var(--amber-line);box-shadow:0 0 0 3px rgba(240,180,41,.10)}
+  .modal-foot{display:flex;justify-content:flex-end;gap:9px;margin-top:18px}
+
+  /* ================= toast ================= */
+  .toasts{position:fixed;right:22px;bottom:22px;z-index:80;display:flex;flex-direction:column;gap:9px;align-items:flex-end}
+  .toast{
+    display:flex;align-items:center;gap:10px;min-width:200px;max-width:360px;padding:11px 14px;border-radius:12px;
+    border:1px solid var(--line-strong);border-left:3px solid var(--amber);
+    background:rgba(19,20,24,.94);backdrop-filter:blur(12px);color:var(--txt);font-size:12.5px;
+    box-shadow:0 22px 50px -24px #000;animation:toastIn .3s var(--ease)
+  }
+  .toast.ok{border-left-color:var(--st-done)}
+  .toast.warn{border-left-color:var(--st-needs)}
+  .toast.out{animation:toastOut .3s var(--ease) forwards}
+  @keyframes toastIn{from{opacity:0;transform:translateX(18px) scale(.96)}to{opacity:1;transform:none}}
+  @keyframes toastOut{to{opacity:0;transform:translateX(18px) scale(.96)}}
+
+  @media (max-width:820px){
+    .app{flex-direction:column}
+    .sidebar{width:100%;height:auto;position:static;border-right:0;border-bottom:1px solid var(--line)}
+    .plist{max-height:230px}
+    .sidebar-foot{margin-top:6px}
+    .topbar,.view{padding-left:16px;padding-right:16px}
+    .stats{grid-template-columns:repeat(2,1fr)}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important}
+  }
+</style>
+</head>
+<body>
+
+<div class="wt-bg" aria-hidden="true">
+  <i class="wt-blob wt-b1"></i>
+  <i class="wt-blob wt-b2"></i>
+  <i class="wt-blob wt-b3"></i>
+  <i class="wt-blob wt-b4"></i>
+</div>
+
+<div class="app">
+  <!-- ============ 左栏 ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">🧰</div>
+      <div>
+        <div class="brand-name">工作台</div>
+        <div class="brand-sub">Workbench</div>
+      </div>
+      <div class="brand-tools">
+        <button data-act="focus-search" title="搜索项目" aria-label="搜索项目">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.6"/><path d="m20 20-4.3-4.3"/></svg>
+        </button>
+        <button data-act="refresh" title="重扫本机项目" aria-label="重扫本机项目">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.4 12a8.4 8.4 0 1 1-2.46-5.94"/><path d="M20.6 4.2v4.6h-4.6"/></svg>
+        </button>
+        <button data-act="add-project" title="添加项目" aria-label="添加项目">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div>
+      <div class="nav-label">视图</div>
+      <nav class="nav">
+        <button class="nav-item" data-view="workbench">
+          <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+            <rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/>
+            <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>
+          </svg>
+          <span>项目工作台</span>
+          <span class="ni-count" id="navCount">0</span>
+        </button>
+      </nav>
+    </div>
+
+    <div>
+      <div class="nav-label">项目 <span id="plistCount">0</span></div>
+      <div class="plist" id="plist"></div>
+    </div>
+
+    <div class="sidebar-foot">
+      <div class="foot-box">
+        <div class="fb-row"><span>进行中</span><b><span id="miniWorking">0</span> / <span id="miniTotal">0</span></b></div>
+        <div class="fb-row"><span>磁盘占用</span><b id="miniDisk">—</b></div>
+        <div class="fb-row"><span>快照</span><b id="miniSnap">—</b></div>
+      </div>
+
+      <button class="control-entry" id="controlEntry" data-view="control">
+        <span class="pulse-dot"></span>
+        <svg class="ce-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <circle cx="12" cy="12" r="8.4"/><circle cx="12" cy="12" r="3.2"/>
+          <path d="M12 3.6v3M12 17.4v3M3.6 12h3M17.4 12h3"/>
+        </svg>
+        <span class="ce-txt"><span>控制室</span><small>CONTROL ROOM</small></span>
+        <svg class="ce-arrow" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ============ 主区 ============ -->
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <div class="tb-title">
+          <h1 id="viewTitle">项目工作台</h1>
+          <span class="eyebrow" id="viewEyebrow">Workspace</span>
+        </div>
+        <p class="tb-sub" id="viewSub">加载中…</p>
+      </div>
+      <div class="tb-actions" id="tbActions">
+        <span class="mode-badge" id="modeBadge" data-act="mode-help" title="检测本地服务中…"><i>◇</i>检测中…</span>
+        <button class="btn" data-act="refresh">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20.4 12a8.4 8.4 0 1 1-2.46-5.94"/><path d="M20.6 4.2v4.6h-4.6"/>
+          </svg><span>刷新视图</span>
+        </button>
+        <button class="btn primary" data-act="add-project">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          <span>添加项目</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- 视图一：工作台（卡片网格 / 分栏工作台 双范式） -->
+    <section class="view active" id="view-workbench">
+      <div id="wbGrid">
+        <div class="grid" id="cardGrid"></div>
+      </div>
+      <div id="wbSplit" style="display:none"></div>
+    </section>
+
+    <!-- 视图二：控制室 -->
+    <section class="view" id="view-control">
+      <div class="stats" id="crStats"></div>
+
+      <div class="section-head">
+        <h2>本机监听端口 <span id="portCount">—</span></h2>
+        <div class="hint">快照采集 · 与项目匹配的已标注</div>
+      </div>
+      <div class="ports-strip" id="portsStrip"></div>
+
+      <div class="section-head">
+        <h2>本地项目列表 <span id="crCount">—</span></h2>
+        <div class="hint">点状态光切换四态 · 点「打开」进入分栏工作台</div>
+      </div>
+      <div class="cr-toolbar">
+        <label class="search">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="6.6"/><path d="m20 20-4.3-4.3"/></svg>
+          <input id="searchInput" type="search" placeholder="搜索项目名 / 路径 / 语言…" autocomplete="off" />
+        </label>
+        <div class="seg" id="stateFilter"></div>
+      </div>
+      <div class="table-wrap">
+        <div class="tbl-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th style="min-width:200px">项目</th>
+                <th>语言标签</th>
+                <th style="min-width:210px">路径</th>
+                <th style="min-width:132px">状态</th>
+                <th style="min-width:120px">运行 / 端口</th>
+                <th style="min-width:96px">占用</th>
+                <th style="min-width:146px">磁盘</th>
+                <th style="min-width:78px">文件</th>
+                <th style="text-align:right;min-width:132px">操作</th>
+              </tr>
+            </thead>
+            <tbody id="crBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- 添加项目 -->
+<div class="scrim" id="scrim">
+  <div class="modal" role="dialog" aria-modal="true">
+    <h3>添加自定义项目</h3>
+    <p>只写入本机浏览器 localStorage，不会改动磁盘上的任何文件。</p>
+    <div class="field"><label>项目名称</label><input id="fName" placeholder="例如：智能小车固件" autocomplete="off" /></div>
+    <div class="field"><label>目录路径</label><input id="fPath" placeholder="C:\projects\smart-car" autocomplete="off" class="mono" /></div>
+    <div class="field"><label>语言标签（逗号分隔）</label><input id="fLangs" placeholder="C, C++, ESP-IDF" autocomplete="off" /></div>
+    <div class="modal-foot">
+      <button class="btn" data-act="close-modal">取消</button>
+      <button class="btn primary" data-act="confirm-add">添加到工作台</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+/* ============================================================
+   快照数据（由本机扫描生成，非示例数据）
+   ============================================================ */
+const DATA = {"snapshot":"2026-10-16 19:00 · 公开演示版（示例数据）","projects":[{"id":"smart-car-fw","name":"smart-car-fw","alias":"智能小车固件","path":"D:\\projects\\smart-car-fw","langs":["C","C++","STM32","Makefile"],"category":"嵌入式","sizeBytes":48234496,"sizeMB":46,"git":true,"updated":"2026-09-28","files":812,"exists":true,"nested":false},{"id":"vision-demo","name":"vision-demo","alias":"视觉识别 Demo","path":"D:\\projects\\vision-demo","langs":["Python","OpenCV","PyTorch"],"category":"AI","sizeBytes":133169152,"sizeMB":127,"git":true,"updated":"2026-10-08","files":356,"exists":true,"nested":false,"live":{"port":8000,"pid":20412,"proc":"python","memMB":186},"declaredPorts":[8000]},{"id":"web-dashboard","name":"web-dashboard","alias":"数据看板","path":"D:\\projects\\web-dashboard","langs":["TypeScript","Vue","Vite"],"category":"前端","sizeBytes":52428800,"sizeMB":50,"git":true,"updated":"2026-10-12","files":264,"exists":true,"nested":false,"live":{"port":5173,"pid":17890,"proc":"node","memMB":142},"declaredPorts":[5173]},{"id":"blog-site","name":"blog-site","alias":"个人博客","path":"D:\\projects\\blog-site","langs":["Astro","MDX","CSS"],"category":"前端","sizeBytes":18874368,"sizeMB":18,"git":true,"updated":"2026-09-15","files":141,"exists":true,"nested":false},{"id":"script-toolbox","name":"script-toolbox","alias":"脚本工具箱","path":"D:\\projects\\script-toolbox","langs":["Python","PowerShell"],"category":"工具","sizeBytes":4194304,"sizeMB":4,"git":false,"updated":"2026-08-22","files":57,"exists":true,"nested":false},{"id":"esp-weather","name":"esp-weather","alias":"ESP32 气象站","path":"D:\\projects\\esp-weather","langs":["C++","ESP-IDF"],"category":"嵌入式","sizeBytes":96468992,"sizeMB":92,"git":true,"updated":"2026-07-30","files":903,"exists":true,"nested":false}],"trees":{"smart-car-fw":{"tree":[["src",1,0],["src/main.c",0,18342],["src/motor.c",0,7412],["include",1,0],["include/motor.h",0,1204],["CMakeLists.txt",0,642],["README.md",0,2140]],"samples":[{"p":"README.md","t":"# 智能小车固件\n\n基于 STM32F103 的两轮差速小车，含电机 PWM 驱动、编码器测速与串口调试协议。\n\n## 目录\n- `src/` 驱动与主循环\n- `include/` 头文件\n\n## 构建\n```sh\nmake -j8\n```\n"}]},"vision-demo":{"tree":[["app",1,0],["app/server.py",0,9214],["app/detect.py",0,14380],["models",1,0],["models/yolov8n.onnx",0,12451840],["requirements.txt",0,318],["README.md",0,3620]],"samples":[{"p":"README.md","t":"# 视觉识别 Demo\n\n本地起一个 FastAPI 服务，浏览器上传图片即返回检测框。默认监听 `8000`。\n\n```bash\npip install -r requirements.txt\npython app/server.py\n```\n"}]},"web-dashboard":{"tree":[["src",1,0],["src/main.ts",0,2841],["src/App.vue",0,7412],["src/components",1,0],["src/components/ChartCard.vue",0,5120],["package.json",0,812],["vite.config.ts",0,604],["README.md",0,1860]],"samples":[{"p":"README.md","t":"# 数据看板\n\nVite + Vue3 的轻量看板，`npm run dev` 后默认落在 `5173`。\n\n数据源可切换为本地 JSON 或远端接口。\n"}]},"blog-site":{"tree":[["src",1,0],["src/pages",1,0],["src/pages/index.astro",0,2410],["src/content",1,0],["src/content/hello.mdx",0,1120],["astro.config.mjs",0,512],["README.md",0,980]],"samples":[{"p":"README.md","t":"# 个人博客\n\nAstro 静态站点，文章写在 `src/content/` 下的 MDX 里，构建产物可直接丢到静态托管。\n"}]},"script-toolbox":{"tree":[["scripts",1,0],["scripts/rename.py",0,2140],["scripts/backup.ps1",0,1680],["README.md",0,1420]],"samples":[{"p":"README.md","t":"# 脚本工具箱\n\n零依赖小脚本合集：批量重命名、目录备份、日志切片。\n\n每个脚本都在文件头写了用法注释。\n"}]},"esp-weather":{"tree":[["main",1,0],["main/app_main.c",0,11240],["main/sensor.c",0,6420],["components",1,0],["components/bme280",1,0],["sdkconfig",0,4820],["README.md",0,2740]],"samples":[{"p":"README.md","t":"# ESP32 气象站\n\nESP-IDF 工程，BME280 采集温湿度气压，MQTT 上报。\n\n```bash\nidf.py build flash monitor\n```\n"}]}},"ports":[{"port":5173,"pid":17890,"proc":"node","memMB":142,"address":"127.0.0.1"},{"port":8000,"pid":20412,"proc":"python","memMB":186,"address":"127.0.0.1"},{"port":5432,"pid":9120,"proc":"postgres","memMB":64,"address":"127.0.0.1"}],"aiPresets":[{"name":"本机 Open WebUI","url":"http://localhost:3000"},{"name":"本机 LobeChat","url":"http://localhost:3210"},{"name":"本机 LibreChat","url":"http://localhost:3080"},{"name":"DeepSeek","url":"https://chat.deepseek.com"},{"name":"豆包","url":"https://www.doubao.com/chat"},{"name":"ChatGPT","url":"https://chatgpt.com"}]};
+
+/* ============================================================
+   常量
+   ============================================================ */
+const KINDS = {
+  note:        { label:'随手记',   icon:'✎', desc:'自由文本，自动保存' },
+  todo:        { label:'待办清单', icon:'☑', desc:'勾选式任务列表' },
+  link:        { label:'外链',     icon:'↗', desc:'一个可跳转的网址' },
+  repo:        { label:'仓库',     icon:'▤', desc:'目录树 + 文件内容' },
+  projects:    { label:'本地检索', icon:'⊞', desc:'检索本机项目并加入工作台' },
+  chat:        { label:'AI 对话',  icon:'✦', desc:'窗格内嵌 AI 网页' },
+  web:         { label:'网页',     icon:'◫', desc:'内嵌本地服务预览' },
+  placeholder: { label:'预留位',   icon:'◇', desc:'空窗格' }
+};
+const KIND_ORDER = ['repo','projects','todo','note','link','web','chat','placeholder'];
+
+const STATES = {
+  'idle':      { label:'待命',   cls:'idle' },
+  'working':   { label:'进行中', cls:'working' },
+  'needs-you': { label:'待处理', cls:'needs-you' },
+  'done':      { label:'已完成', cls:'done' }
+};
+const STATE_ORDER = ['idle','working','needs-you','done'];
+
+const PRESETS = {
+  full: { label:'单窗',     k:'1',  slots:1 },
+  l2:   { label:'左右',     k:'2',  slots:2 },
+  l13:  { label:'顶部大窗', k:'1+2',slots:3 },
+  g4:   { label:'田字',     k:'2×2',slots:4 },
+  chat: { label:'对话',     k:'1+AI',slots:2 }
+};
+const PRESET_ORDER = ['full','l2','l13','g4','chat'];
+const MAX_SLOTS = 4;
+
+/* AI 对话预设：优先用构建期注入 / 本地服务返回的列表 */
+const FALLBACK_AI_PRESETS = [
+  { name:'本机 Open WebUI', url:'http://localhost:3000' },
+  { name:'本机 LobeChat',   url:'http://localhost:3210' },
+  { name:'DeepSeek',        url:'https://chat.deepseek.com' }
+];
+let AI_PRESETS = (DATA && Array.isArray(DATA.aiPresets) && DATA.aiPresets.length)
+  ? DATA.aiPresets.slice() : FALLBACK_AI_PRESETS.slice();
+
+const LS = {
+  view:'wt2.view', active:'wt2.active', status:'wt2.status', preset:'wt2.preset',
+  panes:'wt2.panes', custom:'wt2.custom', filter:'wt2.filter'
+};
+
+/* ============================================================
+   状态
+   ============================================================ */
+const store = {
+  read(k, fb){ try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch(e){ return fb; } },
+  write(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
+};
+
+let view        = store.read(LS.view, 'workbench');
+let activeId    = store.read(LS.active, null);
+let status      = store.read(LS.status, {});      // { pid: 'idle'|'working'|'needs-you'|'done' }
+let presetOf    = store.read(LS.preset, {});      // { pid: 'l13' }
+let panesOf     = store.read(LS.panes, {});       // { pid: [pane x4] }
+let custom      = store.read(LS.custom, []);
+let stateFilter = store.read(LS.filter, 'all');
+let query       = '';
+let repoView    = {};   // { 'pid|rel' : {file: path|null} }  —— 会话内，不持久化
+
+const dirHandles = {};  // { pid: FileSystemDirectoryHandle } —— 会话内
+
+let SERVER = false;     // 是否跑在本地服务下（可读写文件）；启动时探测 /api/health
+let scanCache = null;   // { scannedAt, roots, projects } —— /api/scan 的结果，会话内
+let projQuery = '';     // 本地检索窗格的搜索词（不持久化）
+let projGroup = 'flat'; // 'flat' | 'lang' | 'cat'
+let projFilter = 'all'; // 'all' | 'running' | 'new'
+
+/* ============================================================
+   工具
+   ============================================================ */
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function allProjects(){ return DATA.projects.concat(custom); }
+function projectById(id){ return allProjects().find(p => p.id === id) || null; }
+function initials(p){ const s = (p.alias || p.name || '?').replace(/[^\w\u4e00-\u9fa5]/g,''); return (s.slice(0,2) || 'PR').toUpperCase(); }
+function shortPath(p, n){
+  const full = p.path || '';
+  if(full.length <= 44) return full;
+  const parts = full.split('\\').filter(Boolean);
+  if(parts.length < 3) return full;
+  const isDrive = /^[A-Za-z]:$/.test(parts[0]);
+  return (isDrive ? parts[0] + '\\' : '') + '…\\' + parts.slice(-(n || 2)).join('\\');
+}
+function fmtSize(mb){
+  if(!mb) return '—';
+  if(mb >= 1024) return (mb/1024).toFixed(2) + ' GB';
+  if(mb < 1) return (mb*1024).toFixed(0) + ' KB';
+  return mb.toFixed(1) + ' MB';
+}
+function fmtBytes(n){
+  if(!n) return '0';
+  if(n >= 1048576) return (n/1048576).toFixed(1) + ' MB';
+  if(n >= 1024) return (n/1024).toFixed(1) + ' KB';
+  return n + ' B';
+}
+function stOf(pid){ return status[pid] || 'idle'; }
+function stLabel(pid){ return STATES[stOf(pid)].label; }
+
+/* 项目图标：按分类优先，其次按主语言推断 */
+const CAT_EMOJI = { '嵌入式':'🔌','上位机':'🖥️','练习':'📚','工具':'🛠️','扩展':'🧩','脚本':'📜','前端':'🌐','后端':'⚙️','数据':'📊','文档':'📄' };
+function projEmoji(p){
+  if(CAT_EMOJI[p.category]) return CAT_EMOJI[p.category];
+  const l = (p.langs || [])[0] || '';
+  if(/ESP|STM32|Arduino|C\+\+|^C$/i.test(l)) return '🔌';
+  if(/Python/i.test(l)) return '🐍';
+  if(/Node|JavaScript|TypeScript|Vue|React/i.test(l)) return '🌐';
+  if(/PowerShell|Batch|Shell/i.test(l)) return '📜';
+  if(/HTML|CSS/i.test(l)) return '🎨';
+  return '📁';
+}
+
+/* 相对时间：以快照时刻为基准 */
+function relTime(d){
+  if(!d) return '';
+  const a = Date.parse(String(d).slice(0,10) + 'T00:00:00');
+  if(isNaN(a)) return String(d);
+  const b = Date.parse(String(DATA.snapshot || '').slice(0,10) + 'T00:00:00');
+  const base = isNaN(b) ? Date.now() : b;
+  const days = Math.round((base - a) / 86400000);
+  if(days <= 0) return '今天';
+  if(days === 1) return '昨天';
+  if(days < 30) return days + ' 天前';
+  const mo = Math.floor(days / 30);
+  return mo < 12 ? mo + ' 个月前' : Math.floor(mo / 12) + ' 年前';
+}
+
+/* 卡片预览：优先取 README 正文首段，退化到语言/规模摘要 */
+function projPreview(p){
+  const set = DATA.trees[p.id];
+  const list = (set && set.samples) || [];
+  const readme = list.find(s => /(^|\/)readme\.(md|markdown|txt|rst)$/i.test(s.p));
+  const pick = readme || list.find(s => s.t && s.t.trim().length > 24) || list[0];
+  if(pick && pick.t){
+    const clean = cleanPreviewText(pick.t);
+    if(clean.length > 24) return clean.slice(0, 220);
+  }
+  return '';
+}
+
+/* 预览清洗：先剥代码围栏与行内代码，再滤掉标记行，最后压缩空白（对齐参考仓库 cleanPreviewText） */
+function cleanPreviewText(raw){
+  return String(raw)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .split(/\r?\n/)
+    .filter(l => { const s = l.trim(); return s && !/^[|+\-=*_#>]/.test(s) && !/^https?:\/\//.test(s); })
+    .join(' ')
+    .replace(/[*_~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function projSummary(p){
+  return [(p.langs || []).slice(0,3).join(' · '), p.files ? p.files + ' 文件' : '',
+          p.git ? 'git' : '', fmtSize(p.sizeMB)].filter(Boolean).join(' · ');
+}
+
+function lightHTML(pid, extra){
+  const s = stOf(pid);
+  return '<button class="light ' + s + '" data-act="cycle-status" data-pid="' + esc(pid) +
+         '" title="' + STATES[s].label + ' · 点击切换" aria-label="状态：' + STATES[s].label + '"' + (extra || '') + '></button>';
+}
+function diskTotalMB(){
+  return DATA.projects.filter(p => !p.nested).concat(custom).reduce((s,p) => s + (p.sizeMB || 0), 0);
+}
+function countByState(){
+  const c = { idle:0, working:0, 'needs-you':0, done:0 };
+  allProjects().forEach(p => { c[stOf(p.id)]++; });
+  return c;
+}
+
+/* ============================================================
+   Toast
+   ============================================================ */
+const toasts = document.getElementById('toasts');
+const TICON = { info:'◆', ok:'✓', warn:'!' };
+function toast(msg, kind){
+  kind = kind || 'info';
+  const el = document.createElement('div');
+  el.className = 'toast ' + (kind === 'info' ? '' : kind);
+  el.innerHTML = '<span>' + TICON[kind] + '</span><span>' + esc(msg) + '</span>';
+  toasts.appendChild(el);
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, 2800);
+}
+
+/* ============================================================
+   目录树索引（把扁平快照转成嵌套结构）
+   ============================================================ */
+const TREE = {};
+function buildIndex(){
+  for(const pid in DATA.trees){
+    const flat = DATA.trees[pid].tree || [];
+    const root = { name:'', dirs:new Map(), files:new Map() };
+    for(const node of flat){
+      const p = node[0], isDir = node[1] === 1, size = node[2] || 0;
+      const parts = p.split('/');
+      const name = parts.pop();
+      let cur = root;
+      for(const seg of parts){
+        if(!cur.dirs.has(seg)) cur.dirs.set(seg, { name:seg, dirs:new Map(), files:new Map() });
+        cur = cur.dirs.get(seg);
+      }
+      if(isDir){ if(!cur.dirs.has(name)) cur.dirs.set(name, { name, dirs:new Map(), files:new Map() }); }
+      else cur.files.set(name, { name, size });
+    }
+    TREE[pid] = root;
+  }
+}
+function nodeAt(pid, rel){
+  let cur = TREE[pid];
+  if(!cur) return null;
+  if(!rel) return cur;
+  for(const seg of rel.split('/')){
+    if(!cur.dirs.has(seg)) return null;
+    cur = cur.dirs.get(seg);
+  }
+  return cur;
+}
+function listAt(pid, rel){
+  const n = nodeAt(pid, rel);
+  if(!n) return { dirs:[], files:[] };
+  return {
+    dirs: [...n.dirs.values()].sort((a,b) => a.name.localeCompare(b.name, 'zh')),
+    files: [...n.files.values()].sort((a,b) => a.name.localeCompare(b.name, 'zh'))
+  };
+}
+function sampleOf(pid, rel){
+  const set = DATA.trees[pid];
+  if(!set) return null;
+  const hit = (set.samples || []).find(s => s.p === rel);
+  return hit ? hit.t : null;
+}
+
+/* ============================================================
+   本地检索（窗格 projects 的数据层）
+   ============================================================ */
+function normPath(s){ return String(s || '').replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase(); }
+
+/** 已登记项目 + 扫描到但未登记的项目，合成一张统一列表 */
+function projUniverse(){
+  const rows = [], seen = new Set();
+  allProjects().forEach(p => {
+    seen.add(normPath(p.path));
+    rows.push({
+      pid:p.id, name:p.name, alias:p.alias || p.name, path:p.path, langs:p.langs || [],
+      sizeBytes:(p.sizeMB || 0) * 1048576, files:p.files || 0, updated:p.updated || '',
+      live:p.live || null, registered:true, category:p.category || '未分类'
+    });
+  });
+  if(scanCache && Array.isArray(scanCache.projects)){
+    scanCache.projects.forEach(sp => {
+      if(seen.has(normPath(sp.path))) return;
+      rows.push({
+        pid:null, name:sp.name, alias:sp.name, path:sp.path, langs:sp.langs || [],
+        sizeBytes:sp.sizeBytes || 0, files:sp.files || 0, updated:sp.updated || '',
+        live:null, registered:false, category:'新发现', git:!!sp.git
+      });
+    });
+  }
+  return rows;
+}
+
+function projFiltered(){
+  let rows = projUniverse();
+  if(projFilter === 'running') rows = rows.filter(r => r.live);
+  else if(projFilter === 'new') rows = rows.filter(r => !r.registered);
+  const q = projQuery.trim().toLowerCase();
+  if(q) rows = rows.filter(r => (r.alias + ' ' + r.name + ' ' + r.path + ' ' + (r.langs || []).join(' ')).toLowerCase().includes(q));
+  return rows;
+}
+
+function projGrouped(rows){
+  if(projGroup === 'flat') return [{ key:'', rows }];
+  const keyOf = projGroup === 'lang'
+    ? (r => (r.langs || [])[0] || '其他语言')
+    : (r => r.category || '未分类');
+  const map = new Map();
+  rows.forEach(r => { const k = keyOf(r); if(!map.has(k)) map.set(k, []); map.get(k).push(r); });
+  return [...map.entries()].map(([key, rs]) => ({ key, rows:rs }));
+}
+
+function projStatHTML(hit, total, running){
+  return '<span>命中 <b>' + hit + '</b> / 共 ' + total + '</span>' +
+    '<span>运行中 <b>' + running + '</b></span>' +
+    '<span class="sp"></span>' +
+    '<span>' + (SERVER ? '索引：本地服务实时重扫' : '索引：内置快照 ' + esc(DATA.snapshot)) + '</span>' +
+    (scanCache ? '<span>· 重扫于 ' + esc(String(scanCache.scannedAt || '').slice(11, 19)) + '</span>' : '');
+}
+
+function projRowHTML(r){
+  const tags = (r.langs || []).slice(0, 2).map(l => '<span class="tag">' + esc(l) + '</span>').join('') +
+    (r.live ? '<span class="tag gold">:' + r.live.port + '</span>' : '') +
+    (!r.registered ? '<span class="tag gold">新</span>' : '');
+  return '<div class="pj-row' + (r.live ? ' run' : '') + '"' +
+      (r.registered ? ' data-act="proj-open" data-pid="' + esc(r.pid) + '" title="点开进入分栏工作台"' : '') + '>' +
+    (r.registered ? lightHTML(r.pid) : '<span class="light idle" style="pointer-events:none;opacity:.5"></span>') +
+    '<span class="pj-body"><span class="pj-name" title="' + esc(r.alias) + '">' + esc(r.alias) + '</span>' +
+      '<span class="pj-path" title="' + esc(r.path) + '">' + esc(shortPath(r, 2)) + '</span></span>' +
+    '<span class="pj-tags">' + tags + '</span>' +
+    '<span class="pj-size">' + fmtBytes(r.sizeBytes) + '</span>' +
+    (!r.registered ? '<button class="btn small primary" data-act="proj-add" data-path="' + esc(r.path) +
+      '" data-name="' + esc(r.name) + '" data-langs="' + esc((r.langs || []).join(',')) +
+      '" data-size="' + r.sizeBytes + '" data-files="' + r.files + '" data-updated="' + esc(r.updated) +
+      '" data-git="' + (r.git ? '1' : '0') + '">加入</button>' : '') +
+  '</div>';
+}
+
+function projListHTML(){
+  const rows = projFiltered();
+  if(!rows.length) return '<div class="empty" style="padding:16px">没有匹配的项目</div>';
+  return projGrouped(rows).map(g =>
+    (g.key ? '<div class="pj-group">' + esc(g.key) + ' <span>' + g.rows.length + '</span></div>' : '') +
+    g.rows.map(projRowHTML).join('')
+  ).join('');
+}
+
+/** 只重画该窗格内的列表与统计，不整页重渲染（避免丢输入焦点） */
+function renderProjPane(slot){
+  const host = document.querySelector('[data-proj-list="' + slot + '"]');
+  if(!host) return;
+  host.innerHTML = projListHTML();
+  const stat = document.querySelector('[data-proj-stat="' + slot + '"]');
+  if(stat){
+    const universe = projUniverse();
+    stat.innerHTML = projStatHTML(projFiltered().length, universe.length, universe.filter(r => r.live).length);
+  }
+  const total = projUniverse();
+  const newN = total.filter(r => !r.registered).length;
+  const runN = total.filter(r => r.live).length;
+  const counts = { all:total.length, running:runN, new:newN };
+  Object.keys(counts).forEach(k => {
+    const btn = document.querySelector('[data-act="proj-filter"][data-slot="' + slot + '"][data-filter="' + k + '"] .k');
+    if(btn) btn.textContent = counts[k];
+  });
+}
+
+/* ============================================================
+   窗格
+   ============================================================ */
+function defaultPanes(p){
+  const pkgish = (p.langs || []).some(l => /Node|JavaScript|TypeScript/i.test(l));
+  return [
+    { kind:'repo',  title:'仓库', content:'' },
+    { kind:'todo',  title:'待办', content:[
+        { t:'通读 ' + (p.alias || p.name) + ' 的目录结构', done:false },
+        { t:'确认构建/运行方式', done:false }
+      ] },
+    { kind:'note',  title:'随手记', content:'' },
+    { kind:'web',   title:'服务预览', content: pkgish ? 'http://localhost:5173' : 'http://localhost:8080' }
+  ];
+}
+function panesOfProject(pid){
+  if(!panesOf[pid] || !Array.isArray(panesOf[pid]) || panesOf[pid].length !== MAX_SLOTS){
+    const p = projectById(pid);
+    panesOf[pid] = p ? defaultPanes(p) : [
+      { kind:'placeholder', title:'预留位', content:null },
+      { kind:'placeholder', title:'预留位', content:null },
+      { kind:'placeholder', title:'预留位', content:null },
+      { kind:'placeholder', title:'预留位', content:null }
+    ];
+  }
+  return panesOf[pid];
+}
+function presetOfProject(pid){ return PRESETS[presetOf[pid]] ? (presetOf[pid] || 'l13') : 'l13'; }
+function persistPanes(){ store.write(LS.panes, panesOf); }
+
+/* ============================================================
+   渲染：左栏项目列表
+   ============================================================ */
+function renderPlist(){
+  const list = allProjects();
+  document.getElementById('plist').innerHTML = list.map(p =>
+    '<div class="pitem' + (p.id === activeId ? ' active' : '') +
+      '" data-act="open-project" data-pid="' + esc(p.id) + '" title="' + esc(p.path) + '">' +
+      '<span class="pi-ico" aria-hidden="true">' + projEmoji(p) + '</span>' +
+      '<span class="pi-name">' + esc(p.alias) + '</span>' +
+      lightHTML(p.id) +
+      '<svg class="pi-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>' +
+    '</div>'
+  ).join('');
+  document.getElementById('plistCount').textContent = list.length;
+  document.getElementById('navCount').textContent = list.length;
+}
+
+/* ============================================================
+   渲染：顶部统计条
+   ============================================================ */
+function statTile(k, v, unit, cls, note){
+  return '<div class="stat"><div class="stat-k">' + esc(k) + '</div>' +
+    '<div class="stat-v ' + (cls || '') + '">' + v + '<span class="unit">' + esc(unit || '') + '</span></div>' +
+    '<div class="stat-note">' + esc(note || '') + '</div></div>';
+}
+function statsHTML(full){
+  const c = countByState();
+  const total = allProjects().length;
+  const disk = diskTotalMB();
+  const running = DATA.projects.filter(p => p.live).length;
+  const tiles = [
+    statTile('进行中', c.working, '/ ' + total, 'working', c.working ? '有 ' + c.working + ' 个项目在推进' : '暂无进行中的项目'),
+    statTile('待处理', c['needs-you'], '个', 'needs', c['needs-you'] ? '需要你介入' : '没有卡住的事项'),
+    statTile('总项目数', total, '个', '', DATA.projects.length + ' 个扫描项 · ' + custom.length + ' 个自定义'),
+    statTile('磁盘占用', (disk/1024).toFixed(2), 'GB', 'gold', '仅统计顶层项目，排除嵌套目录')
+  ];
+  if(full){
+    tiles.push(statTile('已完成', c.done, '个', 'done', '四态状态光汇总'));
+    tiles.push(statTile('运行中服务', running, '个', '', '本机监听端口匹配到 ' + DATA.ports.length + ' 条'));
+  }
+  return tiles.join('');
+}
+
+/* ============================================================
+   渲染：卡片网格（正方形玻璃贴片，对齐参考仓库控制室）
+   ============================================================ */
+function ccCell(k, v, cls){
+  return '<div class="cc-cell"><div class="k">' + esc(k) + '</div><div class="v ' + (cls || '') + '">' + v + '</div></div>';
+}
+function renderCards(){
+  const cs = countByState();
+  const total = allProjects().length;
+  const liveN = DATA.projects.filter(p => p.live).length;
+
+  const controlCard =
+    '<article class="card control-card" data-act="goto-control" tabindex="0" title="控制室 · 本机项目总控">' +
+      '<div class="c-head">' +
+        '<span class="c-ico" aria-hidden="true">🎛️</span>' +
+        '<span class="c-name">控制室</span>' +
+        '<span class="cc-badge"><span class="pulse-dot"></span>LIVE</span>' +
+      '</div>' +
+      '<div class="c-div"></div>' +
+      '<div class="c-srow">' +
+        '<span class="c-status ' + (cs.working ? 'working' : 'idle') + '">' + (cs.working ? '进行中' : '待命') + '</span>' +
+        '<span class="c-meta">' + total + ' 个项目</span>' +
+      '</div>' +
+      '<div class="cc-grid">' +
+        ccCell('进行中', cs.working, 'working') +
+        ccCell('待处理', cs['needs-you'], 'needs') +
+        ccCell('已完成', cs.done, 'done') +
+        ccCell('总项目', total, '') +
+        ccCell('运行中', liveN, '') +
+        ccCell('磁盘', (diskTotalMB()/1024).toFixed(2) + ' <span style="font-size:11px;color:var(--txt-mute)">GB</span>', 'gold') +
+      '</div>' +
+      '<div class="c-preview mute">快照 ' + esc(DATA.snapshot) + ' · 点卡片查看端口监听与项目明细</div>' +
+    '</article>';
+
+  const cards = allProjects().map(p => {
+    const st = stOf(p.id);
+    const cls = 'card project-card' +
+      (st === 'working' ? ' busy' : '') +
+      (st === 'done' ? ' glow-done' : '') +
+      (st === 'needs-you' ? ' glow-needs' : '');
+    const meta = p.live ? (':' + p.live.port) : relTime(p.updated);
+    const pv = projPreview(p);
+    return '<article class="' + cls + '" data-act="open-project" data-pid="' + esc(p.id) +
+        '" tabindex="0" title="' + esc(p.alias + ' · ' + p.path) + '">' +
+      (st === 'working' ? '<span class="wt-sweep" aria-hidden="true"></span>' : '') +
+      '<div class="c-head">' +
+        '<span class="c-ico" aria-hidden="true">' + projEmoji(p) + '</span>' +
+        '<span class="c-name">' + esc(p.alias) + '</span>' +
+        lightHTML(p.id) +
+      '</div>' +
+      '<div class="c-div"></div>' +
+      '<div class="c-srow">' +
+        '<span class="c-status ' + st + '">' + esc(STATES[st].label) + '</span>' +
+        (meta ? '<span class="c-meta">' + esc(meta) + '</span>' : '') +
+      '</div>' +
+      '<div class="c-preview' + (pv ? '' : ' mute') + '">' + esc(pv || projSummary(p)) + '</div>' +
+    '</article>';
+  }).join('');
+
+  const addCard =
+    '<article class="card add-card" data-act="add-project" tabindex="0" role="button" title="添加自定义项目">' +
+      '<span class="add-plus" aria-hidden="true">＋</span>' +
+      '<span class="add-label">添加项目</span>' +
+    '</article>';
+
+  document.getElementById('cardGrid').innerHTML =
+    controlCard + cards + addCard + (total ? '' : '<div class="empty">还没有项目，点「添加项目」加入工作台</div>');
+
+  const wbCount = document.getElementById('wbCount');
+  if(wbCount) wbCount.textContent = '· ' + total + ' 个项目';
+}
+
+/* ============================================================
+   渲染：分栏工作台
+   ============================================================ */
+function renderSplit(){
+  const p = projectById(activeId);
+  const host = document.getElementById('wbSplit');
+  if(!p){ host.innerHTML = ''; return; }
+  const preset = presetOfProject(p.id);
+  const slots = PRESETS[preset].slots;
+  const panes = panesOfProject(p.id);
+
+  const seg = PRESET_ORDER.map(k =>
+    '<button class="' + (k === preset ? 'on' : '') + '" data-act="set-preset" data-preset="' + k + '" title="' + PRESETS[k].label + '">' +
+      esc(PRESETS[k].label) + '<span class="k">' + esc(PRESETS[k].k) + '</span></button>'
+  ).join('');
+
+  const bar =
+    '<div class="wb-bar">' +
+      '<button class="btn small" data-act="close-project">← 全部项目</button>' +
+      '<div class="wb-crumb">' + lightHTML(p.id) + '<b>' + esc(p.alias) + '</b>' +
+        '<span class="p mono" title="' + esc(p.path) + '">' + esc(shortPath(p, 3)) + '</span></div>' +
+      '<div class="seg">' + seg + '</div>' +
+      '<button class="btn small" data-act="copy-path" data-pid="' + esc(p.id) + '">复制路径</button>' +
+      '<button class="btn small" data-act="reset-panes" data-pid="' + esc(p.id) + '">重置窗格</button>' +
+    '</div>';
+
+  const cells = [];
+  for(let i = 0; i < MAX_SLOTS; i++){
+    if(i >= slots){
+      cells.push('<div class="pane" data-slot="' + i + '" style="opacity:.34"><div class="pane-body" style="display:grid;place-items:center">' +
+        '<div class="empty-slot" style="border-style:solid;border-color:var(--line)"><p>该布局不显示此窗格</p>' +
+        '<p class="hint">切到「田字」可容纳 4 个窗格</p></div></div></div>');
+      continue;
+    }
+    cells.push(renderPane(panes[i], i, p.id));
+  }
+
+  host.innerHTML = bar + '<div class="pane-grid" data-preset="' + preset + '">' + cells.join('') + '</div>';
+  if(SERVER) srvFill(p.id);
+  else if(dirHandles[p.id]) surviveLive(p.id);
+}
+
+function renderPane(pane, slot, pid){
+  const k = KINDS[pane.kind] ? pane.kind : 'placeholder';
+  const head =
+    '<div class="pane-head">' +
+      '<span class="kind-chip"><i>' + KINDS[k].icon + '</i>' + esc(KINDS[k].label) + '</span>' +
+      '<input class="pane-title" value="' + esc(pane.title || KINDS[k].label) + '" data-field="pane-title" data-slot="' + slot + '" spellcheck="false" />' +
+      '<span class="pane-tools">' + lightHTML(pid) +
+        '<button class="mini-btn" data-act="pane-kind" data-slot="' + slot + '" data-kind="' + k + '" title="切换窗格类型">⋯</button>' +
+        '<button class="mini-btn" data-act="clear-pane" data-slot="' + slot + '" title="清空窗格">✕</button>' +
+      '</span>' +
+    '</div>';
+  return '<section class="pane" data-slot="' + slot + '">' + head +
+         '<div class="pane-body' + (k === 'chat' ? ' chat-body' : '') + '">' + paneBody(pane, slot, pid) + '</div></section>';
+}
+
+function paneBody(pane, slot, pid){
+  const k = pane.kind;
+  if(k === 'placeholder') return kindPicker(slot);
+  if(k === 'note'){
+    const txt = pane.content || '';
+    return '<textarea class="note-area" data-field="note" data-slot="' + slot + '" placeholder="随手记点什么…内容会自动保存到本机浏览器">' + esc(txt) + '</textarea>' +
+           '<div class="pane-meta"><span>自动保存</span><span data-count="' + slot + '">' + txt.length + ' 字符</span></div>';
+  }
+  if(k === 'todo'){
+    const items = Array.isArray(pane.content) ? pane.content : [];
+    const doneN = items.filter(i => i.done).length;
+    const pct = items.length ? Math.round(doneN / items.length * 100) : 0;
+    return '<div class="prog"><i style="width:' + pct + '%"></i></div>' +
+      '<div class="pane-meta" style="margin-top:2px"><span>' + doneN + ' / ' + items.length + ' 已完成</span><span>' + pct + '%</span></div>' +
+      '<div class="todo-list" style="margin-top:8px">' +
+        (items.length ? items.map((it, i) =>
+          '<div class="todo-row' + (it.done ? ' done' : '') + '">' +
+            '<input type="checkbox" data-act="todo-toggle" data-slot="' + slot + '" data-idx="' + i + '"' + (it.done ? ' checked' : '') + ' />' +
+            '<span class="tx" data-act="todo-toggle" data-slot="' + slot + '" data-idx="' + i + '">' + esc(it.t) + '</span>' +
+            '<button class="mini-btn del" data-act="todo-del" data-slot="' + slot + '" data-idx="' + i + '" title="删除">✕</button>' +
+          '</div>').join('') : '<div class="empty" style="padding:14px">还没有待办</div>') +
+      '</div>' +
+      '<div class="todo-add"><input data-field="todo-new" data-slot="' + slot + '" placeholder="添加一项，回车确认" /><button class="btn small" data-act="todo-add" data-slot="' + slot + '">添加</button></div>';
+  }
+  if(k === 'link'){
+    const url = pane.content || '';
+    let dom = '';
+    try { dom = url ? new URL(url).host : ''; } catch(e){ dom = ''; }
+    return '<div class="url-row"><input data-field="link-url" data-slot="' + slot + '" value="' + esc(url) + '" placeholder="https://…" spellcheck="false" />' +
+        '<button class="btn small primary" data-act="open-url" data-slot="' + slot + '">打开</button></div>' +
+      (url ? '<div class="link-card"><span class="dom">' + esc(dom || url) + '</span>' +
+        '<button class="mini-btn" data-act="copy-text" data-text="' + esc(url) + '">复制</button></div>' : '') +
+      '<div class="pane-meta" style="margin-top:10px"><span>在新标签页打开</span></div>';
+  }
+  if(k === 'web'){
+    const url = pane.content || 'http://localhost:5173';
+    return '<div class="url-row"><input data-field="web-url" data-slot="' + slot + '" value="' + esc(url) + '" placeholder="http://localhost:5173" spellcheck="false" />' +
+        '<button class="btn small" data-act="reload-frame" data-slot="' + slot + '">重载</button>' +
+        '<button class="btn small primary" data-act="open-url" data-slot="' + slot + '">新标签</button></div>' +
+      '<div class="frame-wrap">' +
+        '<iframe data-frame="' + slot + '" src="' + esc(url) + '" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals" referrerpolicy="no-referrer"></iframe>' +
+        '<div class="frame-fallback" data-fallback="' + slot + '"><b>这里显示本地服务</b>' +
+          '<span>先启动项目的开发服务，再点「重载」。若一直空白，多为该服务未运行或禁止被内嵌。</span>' +
+          '<button class="btn small" data-act="hide-fallback" data-slot="' + slot + '" data-fallback="' + slot + '">仍然显示</button></div>' +
+      '</div>';
+  }
+  if(k === 'projects') return projectsBody(slot);
+  if(k === 'chat') return chatBody(pane, slot, pid);
+  if(k === 'repo') return repoBody(pane, slot, pid);
+  return kindPicker(slot);
+}
+
+/* ---------- projects 窗格：本地检索 ---------- */
+function projectsBody(slot){
+  const universe = projUniverse();
+  const running = universe.filter(r => r.live).length;
+  const newN = universe.filter(r => !r.registered).length;
+  const segBtn = (act, key, cur, label, n) =>
+    '<button class="' + (cur === key ? 'on' : '') + '" data-act="' + act + '" data-slot="' + slot +
+    '" data-' + (act === 'proj-group' ? 'group' : 'filter') + '="' + key + '">' + label +
+    '<span class="k">' + n + '</span></button>';
+
+  return '<div class="pj-bar">' +
+      '<input class="pj-q" data-field="proj-q" data-slot="' + slot + '" value="' + esc(projQuery) +
+        '" placeholder="搜索项目名 / 路径 / 语言…" spellcheck="false" autocomplete="off" />' +
+      '<button class="btn small" data-act="scan-refresh" data-slot="' + slot + '"' +
+        (SERVER ? '' : ' title="实时重扫需要本地服务"') + '>刷新索引</button>' +
+    '</div>' +
+    '<div class="seg pj-seg">' +
+      segBtn('proj-filter', 'all', projFilter, '全部', universe.length) +
+      segBtn('proj-filter', 'running', projFilter, '运行中', running) +
+      segBtn('proj-filter', 'new', projFilter, '未登记', newN) +
+    '</div>' +
+    '<div class="pj-stat" data-proj-stat="' + slot + '">' + projStatHTML(projFiltered().length, universe.length, running) + '</div>' +
+    '<div class="seg pj-seg">' +
+      segBtn('proj-group', 'flat', projGroup, '平铺', universe.length) +
+      segBtn('proj-group', 'lang', projGroup, '按语言', universe.length) +
+      segBtn('proj-group', 'cat', projGroup, '按类别', universe.length) +
+    '</div>' +
+    '<div class="pj-list" data-proj-list="' + slot + '">' + projListHTML() + '</div>';
+}
+
+/* URL 规范化：去引号空格并补协议。本机/内网地址默认 http，其余默认 https，
+   这样输入 "localhost:3210" 这类裸地址不用再手写协议 */
+function normalizeUrl(raw){
+  let u = String(raw == null ? '' : raw).trim().replace(/^["'<]+|["'>]+$/g, '');
+  if(!u) return '';
+  if(!/^[a-z][a-z0-9+.-]*:\/\//i.test(u)){
+    const host = u.split('/')[0].split(':')[0].toLowerCase();
+    const local = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0'
+      || /^192\.168\./.test(host) || /^10\./.test(host) || /\.local$/.test(host);
+    u = (local ? 'http://' : 'https://') + u;
+  }
+  return u;
+}
+
+/* ---------- chat 窗格：AI 对话 ---------- */
+function chatBody(pane, slot, pid){
+  const url = normalizeUrl(pane.content || (AI_PRESETS[0] ? AI_PRESETS[0].url : ''));
+  const opts = AI_PRESETS.map(pr =>
+    '<option value="' + esc(pr.url) + '"' + (pr.url === url ? ' selected' : '') + '>' + esc(pr.name) + '</option>').join('');
+  const note = SERVER
+    ? '<div class="note-line"><i>●</i>服务模式：可先探测站点是否允许内嵌；仍打不开时点「新标签」</div>'
+    : '<div class="note-line"><i>◇</i>快照模式：无法探测可嵌入性，长时间空白多为站点禁止内嵌（X-Frame-Options / CSP）</div>';
+
+  return '<div class="url-row chat-bar">' +
+      '<select data-act="chat-preset" data-slot="' + slot + '" title="AI 预设">' + opts + '</select>' +
+      '<input data-field="chat-url" data-slot="' + slot + '" value="' + esc(url) +
+        '" placeholder="http://localhost:3000 或 https://…" spellcheck="false" autocomplete="off" />' +
+      '<button class="btn small" data-act="chat-reload" data-slot="' + slot + '">载入</button>' +
+      '<button class="btn small primary" data-act="chat-open" data-slot="' + slot + '">新标签</button>' +
+      '<button class="btn small" data-act="copy-context" data-pid="' + esc(pid) + '">复制项目上下文</button>' +
+    '</div>' + note +
+    '<div class="frame-wrap chat-wrap">' +
+      '<iframe data-frame="chat-' + slot + '" src="' + esc(url) + '" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals" allow="clipboard-write" referrerpolicy="no-referrer"></iframe>' +
+      '<div class="frame-fallback" data-fallback="chat-' + slot + '">' +
+        '<b>第三方网页 AI 通常不允许被内嵌</b>' +
+        '<span>登录型云 AI（DeepSeek / 豆包 / ChatGPT）多会以 X-Frame-Options 或 CSP 拒绝内嵌，且本工作台不会接管登录态。推荐改用本机自托管的 AI 前端（Ollama + Open WebUI、LobeChat、LibreChat）。</span>' +
+        '<span class="fb-row">' +
+          '<button class="btn small" data-act="hide-fallback" data-fallback="chat-' + slot + '">仍然显示内嵌页</button>' +
+          '<button class="btn small primary" data-act="chat-open" data-slot="' + slot + '">在新标签打开</button>' +
+        '</span>' +
+      '</div>' +
+    '</div>';
+}
+
+function kindPicker(slot){
+  return '<div class="empty-slot"><p>这个窗格还是空的</p>' +
+    '<div class="kind-picker">' + KIND_ORDER.map(k =>
+      '<button data-act="pane-kind" data-slot="' + slot + '" data-kind="' + k + '"><i>' + KINDS[k].icon + '</i>' + esc(KINDS[k].label) + '</button>'
+    ).join('') + '</div>' +
+    '<p class="hint">选一种模块填充它</p></div>';
+}
+
+/* ---------- repo 窗格 ---------- */
+function repoKey(pid, rel){ return pid + '|' + rel; }
+function repoBody(pane, slot, pid){
+  const p = projectById(pid);
+  const rel = pane.content || '';
+  const handle = dirHandles[pid];
+  const mode = SERVER ? 'server' : (handle ? 'live' : 'snapshot');
+  const rv = repoView[repoKey(pid, rel)] || {};
+  const sel = rv.file || null;
+
+  const bar =
+    '<div class="repo-bar">' +
+      '<div class="crumb">' + crumbHTML(pid, rel, mode) + '</div>' +
+      (mode === 'server'
+        ? '<span class="server-pill"><i>●</i>服务端读写</span>'
+        : '<button class="mini-btn" data-act="connect-dir" data-pid="' + esc(pid) + '" title="连接真实目录后可读写文件">' + (handle ? '已连接' : '连接目录') + '</button>') +
+      '<button class="mini-btn" data-act="copy-text" data-text="' + esc(p ? p.path : '') + '">复制根路径</button>' +
+      (rel ? '<button class="mini-btn" data-act="repo-nav" data-slot="' + slot + '" data-rel="' + esc(rel.split('/').slice(0,-1).join('/')) + '">↑ 上级</button>' : '') +
+    '</div>';
+
+  const note = mode === 'server'
+    ? '<div class="note-line"><i>●</i>本地服务已接管：无需点选目录，可直接读取并保存文件</div>'
+    : mode === 'live'
+      ? '<div class="note-line"><i>●</i>已连接真实目录，可直接读取并保存文件</div>'
+      : '<div class="note-line"><i>◇</i>快照浏览模式（只读）· 想要直接读写磁盘文件，双击「启动工作台.bat」起本地服务</div>';
+
+  let body = '';
+  if(mode === 'server'){
+    body = '<div class="tree" data-srv-tree="' + slot + '"><div class="empty" style="padding:14px">正在读取目录…</div></div>' +
+           '<div class="file-view" data-srv-file="' + slot + '"></div>';
+  } else if(mode === 'live'){
+    body = '<div class="tree" data-live-tree="' + slot + '"><div class="empty" style="padding:14px">正在读取目录…</div></div>' +
+           '<div class="file-view" data-live-file="' + slot + '"></div>';
+  } else {
+    const { dirs, files } = listAt(pid, rel);
+    body = '<div class="tree">' +
+      (dirs.length || files.length
+        ? dirs.map(d => treeRow(d.name, true, 0, rel, slot)).join('') + files.map(f => treeRow(f.name, false, f.size, rel, slot)).join('')
+        : '<div class="empty" style="padding:14px">该目录在快照中为空</div>') +
+      '</div>' +
+      (sel ? filePreview(pid, rel, sel, slot) : '');
+  }
+  return bar + note + body;
+}
+
+/* ---------- repo 窗格：服务模式（走 /api/tree 与 /api/file） ---------- */
+async function srvJson(path){
+  const res = await fetch(path, { cache:'no-store' });
+  let data = null;
+  try { data = await res.json(); } catch(e){ data = null; }
+  if(!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
+  return data;
+}
+
+async function srvFill(pid){
+  const hosts = document.querySelectorAll('[data-srv-tree]');
+  if(!hosts.length) return;
+  const panes = panesOfProject(pid);
+  for(const host of hosts){
+    const slot = +host.dataset.srvTree;
+    const rel = (panes[slot] && panes[slot].content) || '';
+    try {
+      const j = await srvJson('/api/tree?project=' + encodeURIComponent(pid) + '&path=' + encodeURIComponent(rel));
+      const rows = (j.dirs || []).map(d =>
+          '<button class="tree-row" data-act="srv-nav" data-slot="' + slot + '" data-rel="' + esc(d.path) + '">' +
+          '<span class="ic">▸</span><span class="nm">' + esc(d.name) + '/</span></button>').join('') +
+        (j.files || []).map(f =>
+          '<button class="tree-row" data-act="srv-open" data-slot="' + slot + '" data-rel="' + esc(f.path) + '">' +
+          '<span class="ic">·</span><span class="nm">' + esc(f.name) + '</span><span class="sz">' + fmtBytes(f.size) + '</span></button>').join('');
+      host.innerHTML = rows ||
+        '<div class="empty" style="padding:14px">该目录为空' + (j.truncated ? '（已截断，仅显示前 400 项）' : '') + '</div>';
+      const rv = repoView[repoKey(pid, rel)];
+      if(rv && rv.file) srvOpen(pid, slot, rel, rv.file);
+    } catch(e){
+      host.innerHTML = '<div class="empty" style="padding:14px">读取失败：' + esc(e.message || e) + '</div>';
+    }
+  }
+}
+
+async function srvOpen(pid, slot, dir, name){
+  const rel = dir ? dir + '/' + name : name;
+  const host = document.querySelector('[data-srv-file="' + slot + '"]');
+  if(!host) return;
+  repoView[repoKey(pid, dir)] = { file:name };
+  try {
+    const j = await srvJson('/api/file?project=' + encodeURIComponent(pid) + '&path=' + encodeURIComponent(rel));
+    if(j.binary){
+      host.innerHTML = '<div class="file-head"><span class="fp">' + esc(rel) + ' · ' + fmtBytes(j.bytes) + '</span>' +
+        '<button class="mini-btn" data-act="srv-close" data-slot="' + slot + '">关闭</button></div>' +
+        '<div class="note-line"><i>◇</i>这是二进制文件，不在窗格内打开。用「复制路径」交给编辑器处理。</div>';
+      toast('二进制文件，未在窗格内打开', 'warn');
+      return;
+    }
+    host.innerHTML = '<div class="file-head"><span class="fp">' + esc(rel) + ' · ' + fmtBytes(j.bytes) +
+        (j.truncated ? '（仅载入前 512KB）' : '') + '</span>' +
+      (j.truncated ? '' : '<button class="btn small primary" data-act="srv-save" data-slot="' + slot + '" data-rel="' + esc(rel) + '">保存</button>') +
+      '<button class="mini-btn" data-act="srv-close" data-slot="' + slot + '">关闭</button></div>' +
+      '<textarea class="note-area" style="min-height:200px;font-family:var(--mono);font-size:11.5px" data-srv-text="' + slot + '">' + esc(j.content) + '</textarea>' +
+      '<div class="pane-meta"><span>' + (j.truncated ? '文件过大，已禁用保存以免截断原文' : '直接写回磁盘 · 服务端已校验路径在项目根内') + '</span><span>' + j.content.length + ' 字符</span></div>';
+    toast('已读取 ' + rel, 'ok');
+  } catch(e){
+    host.innerHTML = '<div class="file-view"><div class="note-line"><i>◇</i>读取失败：' + esc(e.message || e) + '</div></div>';
+    toast('读取失败：' + (e.message || e), 'warn');
+  }
+}
+
+async function srvSave(slot, rel, btn){
+  const ta = document.querySelector('[data-srv-text="' + slot + '"]');
+  if(!ta || !activeId) return;
+  try {
+    const res = await fetch('/api/file', {
+      method:'POST',
+      headers:{ 'content-type':'application/json' },
+      body: JSON.stringify({ project:activeId, path:rel, content:ta.value })
+    });
+    let data = null;
+    try { data = await res.json(); } catch(e){ data = null; }
+    if(!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
+    toast('已写入磁盘：' + rel + ' · ' + fmtBytes(data.bytes), 'ok');
+    if(btn) btn.textContent = '已保存';
+  } catch(e){
+    toast('写入失败：' + (e.message || e), 'warn');
+  }
+}
+
+function crumbHTML(pid, rel, mode){
+  const p = projectById(pid);
+  const segs = rel ? rel.split('/') : [];
+  let out = '<button data-act="repo-nav" data-slot="" data-rel="">' + esc(p ? p.name : '') + '</button>';
+  let acc = '';
+  segs.forEach((s, i) => {
+    acc = acc ? acc + '/' + s : s;
+    out += '<span class="sep">/</span><button data-act="repo-nav" data-rel="' + esc(i === segs.length - 1 ? '' : acc) + '" data-navrel="' + esc(acc) + '">' + esc(s) + '</button>';
+  });
+  return out;
+}
+
+function treeRow(name, isDir, size, rel, slot){
+  const full = rel ? rel + '/' + name : name;
+  return '<button class="tree-row" data-act="repo-' + (isDir ? 'nav' : 'open') + '" data-slot="' + slot + '" data-rel="' + esc(full) + '">' +
+    '<span class="ic">' + (isDir ? '▸' : '·') + '</span>' +
+    '<span class="nm">' + esc(name) + (isDir ? '/' : '') + '</span>' +
+    (isDir ? '' : '<span class="sz">' + fmtBytes(size) + '</span>') +
+    '</button>';
+}
+
+function filePreview(pid, rel, file, slot){
+  const p = projectById(pid);
+  const full = rel ? rel + '/' + file : file;
+  const txt = sampleOf(pid, full);
+  const abs = (p ? p.path : '') + '\\' + full.split('/').join('\\');
+  const head = '<div class="file-head"><span class="fp" title="' + esc(abs) + '">' + esc(full) + '</span>' +
+    '<button class="mini-btn" data-act="copy-text" data-text="' + esc(abs) + '">复制路径</button>' +
+    '<button class="mini-btn" data-act="repo-close" data-slot="' + slot + '">关闭</button></div>';
+  if(txt === null || txt === undefined){
+    return '<div class="file-view">' + head +
+      '<div class="note-line"><i>◇</i>该文件未内嵌预览（快照只收录 ≤ 4KB 的文本文件）。点「复制路径」用编辑器打开。</div></div>';
+  }
+  return '<div class="file-view">' + head +
+    '<pre class="code">' + esc(txt) + '</pre>' +
+    '<div class="pane-meta"><span>快照内嵌内容 · 已截断至 4KB</span><span>' + txt.length + ' 字符</span></div></div>';
+}
+
+/* ============================================================
+   渲染：控制室
+   ============================================================ */
+function renderControl(){
+  document.getElementById('crStats').innerHTML = statsHTML(true);
+
+  const usedPorts = new Set(DATA.projects.filter(p => p.live).map(p => p.live.port));
+  document.getElementById('portsStrip').innerHTML = DATA.ports.map(pt =>
+    '<div class="port-chip"><b>:' + pt.port + '</b><span>' + esc(pt.proc) + '</span><span>· ' + pt.memMB + ' MB</span>' +
+    (usedPorts.has(pt.port) ? '<span style="color:var(--st-done)">· 已匹配项目</span>' : '') + '</div>'
+  ).join('');
+  document.getElementById('portCount').textContent = '· ' + DATA.ports.length + ' 个';
+
+  document.getElementById('stateFilter').innerHTML =
+    '<button class="' + (stateFilter === 'all' ? 'on' : '') + '" data-act="filter-state" data-state="all">全部<span class="k">' + allProjects().length + '</span></button>' +
+    STATE_ORDER.map(s => '<button class="' + (stateFilter === s ? 'on' : '') + '" data-act="filter-state" data-state="' + s + '">' +
+      STATES[s].label + '<span class="k">' + countByState()[s] + '</span></button>').join('');
+
+  const maxSize = Math.max(1, ...allProjects().map(p => p.sizeMB || 0));
+  let list = allProjects();
+  if(stateFilter !== 'all') list = list.filter(p => stOf(p.id) === stateFilter);
+  if(query){
+    const q = query.toLowerCase();
+    list = list.filter(p => (p.name + ' ' + p.alias + ' ' + p.path + ' ' + (p.langs || []).join(' ')).toLowerCase().includes(q));
+  }
+
+  document.getElementById('crBody').innerHTML = list.length ? list.map(p => {
+    const w = Math.max(3, Math.round((p.sizeMB / maxSize) * 100));
+    const live = p.live;
+    return '<tr data-pid="' + esc(p.id) + '">' +
+      '<td><div class="cell-name"><span class="sq">' + esc(initials(p)) + '</span>' +
+        '<span><span class="nm">' + esc(p.alias) + '</span><br><span class="sm">' + esc(p.name) + '</span></span></div></td>' +
+      '<td>' + (p.langs || []).map(l => '<span class="tag">' + esc(l) + '</span>').join(' ') + '</td>' +
+      '<td><div class="cell-path mono" title="' + esc(p.path) + '">' + esc(shortPath(p)) + '</div></td>' +
+      '<td><div class="state-cell" data-act="cycle-status" data-pid="' + esc(p.id) + '">' + lightHTML(p.id) + '<span class="lb">' + stLabel(p.id) + '</span></div></td>' +
+      '<td>' + (live ? '<span class="port-pill"><span style="width:6px;height:6px;border-radius:50%;background:#5fd39a"></span>:' + live.port + ' · ' + esc(live.proc) + '</span>'
+                      : '<span class="occupancy idle">未监听</span>') + '</td>' +
+      '<td><span class="occupancy' + (live ? '' : ' idle') + '">' + (live ? live.memMB + ' MB' : '—') + '</span></td>' +
+      '<td class="disk-cell"><div class="n">' + fmtSize(p.sizeMB) + '</div><div class="sizebar"><i style="width:' + w + '%"></i></div></td>' +
+      '<td><span class="occupancy">' + (p.files || 0) + '</span></td>' +
+      '<td><div class="row-actions">' +
+        '<button class="btn small primary" data-act="open-project" data-pid="' + esc(p.id) + '">打开</button>' +
+        '<button class="mini-btn" data-act="copy-text" data-text="' + esc(p.path) + '" title="复制路径">⧉</button>' +
+        (p.custom ? '<button class="mini-btn" data-act="remove-custom" data-pid="' + esc(p.id) + '" title="移除">✕</button>' : '') +
+      '</div></td></tr>';
+  }).join('') : '<tr><td colspan="9"><div class="empty">没有匹配的项目</div></td></tr>';
+
+  document.getElementById('crCount').textContent = '· ' + list.length + ' 条';
+}
+
+/* ============================================================
+   渲染入口
+   ============================================================ */
+function renderAll(){
+  const total = allProjects().length;
+  const c = countByState();
+  document.getElementById('miniWorking').textContent = c.working;
+  document.getElementById('miniTotal').textContent = total;
+  document.getElementById('miniDisk').textContent = (diskTotalMB()/1024).toFixed(2) + ' GB';
+  const snapEl = document.getElementById('miniSnap');
+  if(snapEl) snapEl.textContent = String(DATA.snapshot || '').slice(5) || '—';
+  renderPlist();
+  renderCards();
+  renderControl();
+  if(activeId) renderSplit();
+  syncView();
+  syncModeBadge();
+}
+
+/* ============================================================
+   运行模式（快照只读 / 本地服务可读写）
+   ============================================================ */
+function syncModeBadge(){
+  const el = document.getElementById('modeBadge');
+  if(!el) return;
+  el.className = 'mode-badge' + (SERVER ? ' on' : '');
+  const port = (typeof location !== 'undefined' && location.port) ? ':' + location.port : '';
+  el.innerHTML = SERVER ? '<i>●</i>本地服务 · 可读写' : '<i>◇</i>快照模式 · 只读';
+  el.title = SERVER
+    ? '本地服务已接管' + port + '，仓库窗格可直接读写磁盘文件'
+    : '快照模式为只读：双击「启动工作台.bat」起本地服务后即可读写文件';
+}
+
+function detectServer(){
+  syncModeBadge();
+  if(typeof location !== 'undefined' && location.protocol === 'file:') return;
+  if(typeof fetch !== 'function') return;
+  let ctl = null, timer = null;
+  if(typeof AbortController === 'function'){ ctl = new AbortController(); timer = setTimeout(() => ctl.abort(), 900); }
+  Promise.resolve(fetch('/api/health', ctl ? { signal:ctl.signal } : {}))
+    .then(res => (res && res.ok) ? res.json() : null)
+    .then(j => {
+      if(!j || !j.ok) return;
+      SERVER = true;
+      if(Array.isArray(j.aiPresets) && j.aiPresets.length) AI_PRESETS = j.aiPresets.slice();
+      syncModeBadge();
+      if(activeId) renderSplit();
+      toast('已连接本地服务 · 仓库窗格可直接读写文件', 'ok');
+    })
+    .catch(() => {})
+    .then(() => { if(timer) clearTimeout(timer); });
+}
+
+function syncView(){
+  document.querySelectorAll('.view').forEach(s => s.classList.toggle('active', s.id === 'view-' + view));
+  document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  const meta = view === 'control'
+    ? { t:'控制室', e:'Control Room' }
+    : { t: activeId ? (projectById(activeId) || {}).alias || '分栏工作台' : '项目工作台', e: activeId ? 'Split Workbench' : 'Workspace' };
+  document.getElementById('viewTitle').textContent = meta.t;
+  document.getElementById('viewEyebrow').textContent = meta.e;
+  const c = countByState();
+  document.getElementById('viewSub').textContent = view === 'control'
+    ? '快照 ' + DATA.snapshot + ' · ' + allProjects().length + ' 个项目 · 进行中 ' + c.working + ' · 待处理 ' + c['needs-you'] + ' · 磁盘 ' + (diskTotalMB()/1024).toFixed(2) + ' GB'
+    : '快照 ' + DATA.snapshot + ' · ' + allProjects().length + ' 个项目 · 磁盘 ' + (diskTotalMB()/1024).toFixed(2) + ' GB · 点卡片进入分栏工作台';
+  const g = document.getElementById('wbGrid'), s = document.getElementById('wbSplit');
+  const split = view === 'workbench' && !!activeId;
+  g.style.display = split ? 'none' : '';
+  s.style.display = split ? '' : 'none';
+  const wbStats = document.getElementById('wbStats');
+  if(wbStats) wbStats.innerHTML = statsHTML(false);
+}
+
+function setView(v){
+  view = v;
+  store.write(LS.view, v);
+  if(v === 'workbench' && activeId === null) { /* 保持卡片网格 */ }
+  syncView();
+  toast(v === 'control' ? '已进入控制室' : '已切换到项目工作台');
+}
+
+/* ============================================================
+   交互
+   ============================================================ */
+function cycleStatus(pid){
+  const cur = stOf(pid);
+  const next = STATE_ORDER[(STATE_ORDER.indexOf(cur) + 1) % STATE_ORDER.length];
+  status[pid] = next;
+  store.write(LS.status, status);
+  renderAll();
+  toast((projectById(pid) || {}).alias + ' → ' + STATES[next].label, next === 'done' ? 'ok' : (next === 'needs-you' ? 'warn' : 'info'));
+}
+
+function openProject(pid){
+  if(!projectById(pid)) return;
+  activeId = pid;
+  store.write(LS.active, pid);
+  if(!panesOf[pid]) panesOfProject(pid);
+  if(!presetOf[pid]) presetOf[pid] = 'l13';
+  view = 'workbench';
+  store.write(LS.view, view);
+  renderAll();
+  const p = projectById(pid);
+  toast('已进入 ' + p.alias + ' · 布局 ' + PRESETS[presetOfProject(pid)].label);
+}
+
+function closeProject(){
+  activeId = null;
+  store.write(LS.active, null);
+  renderAll();
+  toast('已回到全部项目');
+}
+
+function setPreset(k){
+  if(!PRESETS[k] || !activeId) return;
+  presetOf[activeId] = k;
+  store.write(LS.preset, presetOf);
+  let auto = false;
+  if(k === 'chat'){
+    const panes = panesOfProject(activeId);
+    if(panes[1] && panes[1].kind === 'placeholder'){
+      panes[1] = { kind:'chat', title: KINDS.chat.label, content: AI_PRESETS[0] ? AI_PRESETS[0].url : '' };
+      persistPanes();
+      auto = true;
+    }
+  }
+  renderAll();
+  toast('布局切换为「' + PRESETS[k].label + '」 · ' + PRESETS[k].slots + ' 个窗格' + (auto ? ' · 右侧已放入 AI 对话' : ''));
+}
+
+function setPaneKind(slot, kind){
+  if(!activeId || !KINDS[kind]) return;
+  const panes = panesOfProject(activeId);
+  const old = panes[slot];
+  let content;
+  if(kind === 'note') content = '';
+  else if(kind === 'todo') content = [];
+  else if(kind === 'link') content = 'https://';
+  else if(kind === 'web') content = 'http://localhost:5173';
+  else if(kind === 'repo') content = '';
+  else if(kind === 'projects') content = null;
+  else if(kind === 'chat') content = (AI_PRESETS[0] ? AI_PRESETS[0].url : '');
+  else content = null;
+  panes[slot] = { kind, title: KINDS[kind].label, content };
+  persistPanes();
+  renderSplit();
+  toast('窗格 ' + (slot + 1) + ' → ' + KINDS[kind].label);
+}
+
+function clearPane(slot){
+  if(!activeId) return;
+  const panes = panesOfProject(activeId);
+  panes[slot] = { kind:'placeholder', title:'预留位', content:null };
+  persistPanes();
+  renderSplit();
+  toast('已清空窗格 ' + (slot + 1), 'warn');
+}
+
+function resetPanes(){
+  if(!activeId) return;
+  panesOf[activeId] = defaultPanes(projectById(activeId));
+  persistPanes();
+  renderSplit();
+  toast('已重置本项目窗格', 'warn');
+}
+
+function repoNav(slot, rel){
+  if(!activeId) return;
+  const panes = panesOfProject(activeId);
+  panes[slot].content = rel || '';
+  persistPanes();
+  delete repoView[repoKey(activeId, rel || '')];
+  renderSplit();
+}
+
+function repoOpen(slot, rel){
+  if(!activeId) return;
+  const key = repoKey(activeId, rel);
+  repoView[key] = { file: rel.split('/').pop() };
+  renderSplit();
+  const txt = sampleOf(activeId, rel);
+  toast(txt ? '已载入 ' + rel + ' 的快照内容' : rel + ' 未内嵌预览（点复制路径用编辑器打开）', txt ? 'ok' : 'warn');
+}
+
+function repoClose(slot){
+  if(!activeId) return;
+  const panes = panesOfProject(activeId);
+  delete repoView[repoKey(activeId, panes[slot].content || '')];
+  renderSplit();
+}
+
+function todoToggle(slot, idx){
+  if(!activeId) return;
+  const pane = panesOfProject(activeId)[slot];
+  if(pane.kind !== 'todo' || !pane.content[idx]) return;
+  pane.content[idx].done = !pane.content[idx].done;
+  persistPanes();
+  renderSplit();
+}
+function todoDel(slot, idx){
+  if(!activeId) return;
+  const pane = panesOfProject(activeId)[slot];
+  pane.content.splice(idx, 1);
+  persistPanes();
+  renderSplit();
+}
+function todoAdd(slot, text){
+  if(!activeId || !text.trim()) return;
+  const pane = panesOfProject(activeId)[slot];
+  pane.content.push({ t: text.trim(), done:false });
+  persistPanes();
+  renderSplit();
+  toast('已添加待办：' + text.trim(), 'ok');
+}
+
+function copyText(text, label){
+  const done = () => toast(label || '已复制到剪贴板', 'ok');
+  const fail = () => toast('复制失败，请手动选择', 'warn');
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done, () => legacy());
+  } else legacy();
+  function legacy(){
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch(e){ fail(); }
+    ta.remove();
+  }
+}
+
+function openUrl(url){
+  if(!url){ toast('请先填写网址', 'warn'); return; }
+  const w = window.open(url, '_blank', 'noopener');
+  if(w) toast('已在新标签打开 ' + url, 'ok');
+  else toast('浏览器拦截了新标签，请允许弹出窗口', 'warn');
+}
+
+/* ---------- 连接真实目录（File System Access API） ---------- */
+async function connectDir(pid){
+  if(SERVER){ toast('本地服务已接管读写，无需再连接目录', 'ok'); return; }
+  const fileProto = typeof location !== 'undefined' && location.protocol === 'file:';
+  if(!window.showDirectoryPicker){
+    toast('当前浏览器不支持目录访问（需 Chrome / Edge 86+）', 'warn');
+    return;
+  }
+  try {
+    const handle = await window.showDirectoryPicker({ mode:'readwrite', id:'wt-' + pid });
+    dirHandles[pid] = handle;
+    toast('已连接目录 ' + handle.name + ' · 可读写', 'ok');
+    renderSplit();
+  } catch(e){
+    if(e && e.name === 'AbortError'){ toast('已取消选择目录'); return; }
+    const why = fileProto
+      ? 'file:// 不是安全上下文，浏览器直接拦掉了目录选择器 —— 这不是本页的 bug。'
+      : '浏览器拒绝了目录选择器：' + (e && e.message ? e.message : e);
+    toast(why + ' 解决办法：双击「启动工作台.bat」，用 http://127.0.0.1 打开即可零点击读写文件。', 'warn');
+  }
+}
+
+async function surviveLive(pid){
+  const host = document.querySelector('[data-live-tree]');
+  if(!host) return;
+  const handle = dirHandles[pid];
+  const panes = panesOfProject(pid);
+  const slot = +host.dataset.liveTree;
+  const rel = panes[slot].content || '';
+  try {
+    let cur = handle;
+    for(const seg of (rel ? rel.split('/') : [])){
+      cur = await cur.getDirectoryHandle(seg);
+    }
+    const dirs = [], files = [];
+    for await (const [name, h] of cur.entries()){
+      if(name === '.git' || name === 'node_modules') continue;
+      if(h.kind === 'directory') dirs.push({ name, dir:true });
+      else { let size = 0; try { size = (await h.getFile()).size; } catch(e){} files.push({ name, dir:false, size }); }
+    }
+    dirs.sort((a,b) => a.name.localeCompare(b.name, 'zh'));
+    files.sort((a,b) => a.name.localeCompare(b.name, 'zh'));
+    host.innerHTML = dirs.concat(files).map(e =>
+      '<button class="tree-row" data-act="live-' + (e.dir ? 'nav' : 'open') + '" data-pid="' + esc(pid) + '" data-slot="' + slot + '" data-rel="' + esc(rel ? rel + '/' + e.name : e.name) + '">' +
+      '<span class="ic">' + (e.dir ? '▸' : '·') + '</span><span class="nm">' + esc(e.name) + (e.dir ? '/' : '') + '</span>' +
+      (e.dir ? '' : '<span class="sz">' + fmtBytes(e.size) + '</span>') + '</button>').join('') ||
+      '<div class="empty" style="padding:14px">空目录</div>';
+  } catch(e){
+    host.innerHTML = '<div class="empty" style="padding:14px">读取失败：' + esc(e.message || e) + '</div>';
+  }
+}
+
+async function liveOpen(pid, slot, rel){
+  const handle = dirHandles[pid];
+  if(!handle) return;
+  try {
+    let cur = handle;
+    const segs = rel.split('/');
+    const name = segs.pop();
+    for(const seg of segs) cur = await cur.getDirectoryHandle(seg);
+    const fh = await cur.getFileHandle(name);
+    const file = await fh.getFile();
+    if(file.size > 524288){ toast('文件超过 512KB，不在窗格内打开', 'warn'); return; }
+    const text = await file.text();
+    const host = document.querySelector('[data-live-file]');
+    if(!host) return;
+    host.innerHTML = '<div class="file-head"><span class="fp">' + esc(rel) + ' · ' + fmtBytes(file.size) + '</span>' +
+      '<button class="btn small primary" data-act="live-save" data-pid="' + esc(pid) + '" data-rel="' + esc(rel) + '">保存</button></div>' +
+      '<textarea class="note-area" style="min-height:210px;font-family:var(--mono);font-size:11.5px" data-live-text>' + esc(text) + '</textarea>';
+    toast('已读取 ' + rel, 'ok');
+  } catch(e){ toast('读取失败：' + (e.message || e), 'warn'); }
+}
+
+async function liveSave(pid, rel, btn){
+  const handle = dirHandles[pid];
+  const ta = document.querySelector('[data-live-text]');
+  if(!handle || !ta) return;
+  try {
+    let cur = handle;
+    const segs = rel.split('/');
+    const name = segs.pop();
+    for(const seg of segs) cur = await cur.getDirectoryHandle(seg);
+    const fh = await cur.getFileHandle(name, { create:true });
+    const w = await fh.createWritable();
+    await w.write(ta.value);
+    await w.close();
+    toast('已写入磁盘：' + rel, 'ok');
+    if(btn) btn.textContent = '已保存';
+  } catch(e){ toast('写入失败：' + (e.message || e), 'warn'); }
+}
+
+/* ---------- 本地检索窗格的动作 ---------- */
+async function scanRefresh(slot){
+  if(!SERVER){ toast('实时重扫需要本地服务：双击「启动工作台.bat」后用 http://127.0.0.1 打开', 'warn'); return; }
+  const btn = document.querySelector('[data-act="scan-refresh"][data-slot="' + slot + '"]');
+  if(btn){ btn.disabled = true; btn.textContent = '扫描中…'; }
+  try {
+    scanCache = await srvJson('/api/scan');
+    toast('索引已刷新 · 发现 ' + ((scanCache.projects || []).length) + ' 个项目', 'ok');
+  } catch(e){
+    toast('重扫失败：' + (e.message || e), 'warn');
+  }
+  if(btn){ btn.disabled = false; btn.textContent = '刷新索引'; }
+  renderProjPane(slot);
+}
+
+function addFromScan(path, name, langs, sizeBytes, files, updated, git){
+  if(!path){ toast('该项目没有可用路径，无法加入', 'warn'); return; }
+  custom.push({
+    id:'custom-' + Date.now(), name, alias:name, path,
+    langs: langs ? langs.split(',').filter(Boolean) : ['Other'],
+    category:'扫描加入',
+    sizeMB: Math.round(((Number(sizeBytes) || 0) / 1048576) * 10) / 10,
+    files: Number(files) || 0,
+    git: git === '1',
+    updated: updated || new Date().toISOString().slice(0, 10),
+    custom:true
+  });
+  store.write(LS.custom, custom);
+  renderAll();
+  toast('已加入工作台：' + name, 'ok');
+}
+
+/* ---------- AI 对话窗格的动作 ---------- */
+function fbSet(key, title, detail, show){
+  const fb = document.querySelector('[data-fallback="' + key + '"]');
+  if(!fb) return;
+  if(title){
+    const slot = key.replace(/^chat-/, '');
+    fb.innerHTML = '<b>' + esc(title) + '</b><span>' + esc(detail) + '</span>' +
+      '<span class="fb-row"><button class="btn small" data-act="hide-fallback" data-fallback="' + esc(key) + '">仍然显示内嵌页</button>' +
+      '<button class="btn small primary" data-act="chat-open" data-slot="' + esc(slot) + '">在新标签打开</button></span>';
+  }
+  fb.style.display = show ? 'flex' : 'none';
+}
+
+async function chatReload(slot){
+  if(!activeId) return;
+  const pane = panesOfProject(activeId)[slot];
+  const url = normalizeUrl((pane && pane.content) || '');
+  const key = 'chat-' + slot;
+  const frame = document.querySelector('[data-frame="' + key + '"]');
+  if(!url){ toast('请先填写 AI 地址', 'warn'); return; }
+  if(pane) pane.content = url;
+  const inp = document.querySelector('[data-field="chat-url"][data-slot="' + slot + '"]');
+  if(inp && inp.value !== url) inp.value = url;
+
+  if(!SERVER){
+    if(frame) frame.src = url;
+    fbSet(key, '可能被站点拒绝内嵌', '快照模式无法探测可嵌入性。若长时间空白，多为该站点设置了 X-Frame-Options 或 CSP。', true);
+    toast('已载入 ' + url + ' · 若空白请点「新标签」');
+    return;
+  }
+
+  fbSet(key, '正在探测…', url, true);
+  try {
+    const j = await srvJson('/api/probe?url=' + encodeURIComponent(url));
+    if(!j.ok){ fbSet(key, '站点返回 HTTP ' + j.status, '上游拒绝了请求，请确认地址可访问，或改用「新标签」打开。', true); return; }
+    if(!j.embeddable){ fbSet(key, '该地址不是网页', 'content-type 为 ' + (j.contentType || '未知') + '，无法作为网页内嵌。', true); return; }
+    /* 探测已发现封锁头就直接给兜底，不要先假装成功、再让用户对着空白页发呆 */
+    if(j.frameBlock){
+      if(frame) frame.src = url;
+      fbSet(key, '该站点声明了禁止内嵌', j.frameBlock + '。内嵌大概率是空白页，建议改用「新标签」或本机自托管的 AI 前端。', true);
+      return;
+    }
+    if(frame) frame.src = url;
+    fbSet(key, '', '', false);
+    toast('已内嵌 ' + url, 'ok');
+  } catch(e){
+    fbSet(key, '探测失败', String(e.message || e), true);
+  }
+}
+
+function copyContext(pid){
+  const p = projectById(pid);
+  if(!p){ toast('没有可复制的项目', 'warn'); return; }
+  const { dirs, files } = listAt(pid, '');
+  const lines = [
+    '## 项目：' + (p.alias || p.name) + '（' + p.name + '）',
+    '- 路径：' + p.path,
+    '- 语言：' + ((p.langs || []).join(', ') || '—'),
+    '- 类别 / 体积 / 更新：' + (p.category || '—') + ' / ' + fmtSize(p.sizeMB) + ' / ' + (p.updated || '—'),
+    '- 运行中端口：' + (p.live ? ':' + p.live.port + ' · ' + p.live.proc : '未监听'),
+    '### 目录结构（快照摘要）',
+    '```',
+    dirs.slice(0, 14).map(d => d.name + '/').join('\n') || '（无子目录）'
+  ];
+  if(files.length) lines.push(files.slice(0, 10).map(f => f.name).join('\n'));
+  lines.push('```');
+  copyText(lines.join('\n'), '已复制项目上下文 · 粘贴到 AI 对话框即可');
+}
+
+/* ============================================================
+   事件委托
+   ============================================================ */
+const root = document.body;
+
+root.addEventListener('click', e => {
+  const nav = e.target.closest('[data-view]');
+  if(nav){ setView(nav.dataset.view); return; }
+
+  const el = e.target.closest('[data-act]');
+  if(!el) return;
+  const a = el.dataset.act;
+  const slot = el.dataset.slot === undefined || el.dataset.slot === '' ? null : +el.dataset.slot;
+
+  switch(a){
+    case 'cycle-status': e.stopPropagation(); cycleStatus(el.dataset.pid); break;
+    case 'open-project':  e.stopPropagation(); openProject(el.dataset.pid); break;
+    case 'close-project': closeProject(); break;
+    case 'goto-control':  setView('control'); break;
+    case 'focus-search': {
+      setView('control');
+      setTimeout(() => { const i = document.getElementById('searchInput'); if(i && i.focus) i.focus(); }, 40);
+      break;
+    }
+    case 'set-preset':    setPreset(el.dataset.preset); break;
+    case 'pane-kind':     setPaneKind(slot, el.dataset.kind); break;
+    case 'clear-pane':    clearPane(slot); break;
+    case 'reset-panes':   resetPanes(); break;
+    case 'todo-toggle':   todoToggle(slot, +el.dataset.idx); break;
+    case 'todo-del':      todoDel(slot, +el.dataset.idx); break;
+    case 'todo-add': {
+      const inp = document.querySelector('[data-field="todo-new"][data-slot="' + slot + '"]');
+      if(inp){ todoAdd(slot, inp.value); }
+      break;
+    }
+    case 'copy-path':     copyText((projectById(el.dataset.pid) || {}).path || ''); break;
+    case 'copy-text':     copyText(el.dataset.text || ''); break;
+    case 'open-url': {
+      const pane = panesOfProject(activeId)[slot];
+      openUrl(pane.content || '');
+      break;
+    }
+    case 'reload-frame': {
+      const f = document.querySelector('[data-frame="' + slot + '"]');
+      const fb = document.querySelector('[data-fallback="' + slot + '"]');
+      if(fb) fb.style.display = 'flex';
+      if(f){ const pane = panesOfProject(activeId)[slot]; f.src = pane.content || ''; }
+      toast('已重载内嵌页面');
+      break;
+    }
+    case 'hide-fallback': {
+      const key = el.dataset.fallback !== undefined ? el.dataset.fallback : String(slot);
+      const fb = document.querySelector('[data-fallback="' + key + '"]');
+      if(fb) fb.style.display = 'none';
+      toast('已隐藏提示层 · 若空白说明服务未运行或禁止内嵌');
+      break;
+    }
+    case 'repo-nav':      repoNav(slot === null ? (el.dataset.navrel !== undefined ? repoSlotOf(el) : 0) : slot, el.dataset.rel || ''); break;
+    case 'repo-open':     repoOpen(slot, el.dataset.rel); break;
+    case 'repo-close':    repoClose(slot); break;
+    case 'connect-dir':   connectDir(el.dataset.pid); break;
+    case 'live-nav': {
+      const pid = el.dataset.pid, s = +el.dataset.slot;
+      panesOfProject(pid)[s].content = el.dataset.rel;
+      persistPanes();
+      renderSplit();
+      break;
+    }
+    case 'live-open':     liveOpen(el.dataset.pid, +el.dataset.slot, el.dataset.rel); break;
+    case 'live-save':     liveSave(el.dataset.pid, el.dataset.rel, el); break;
+    case 'srv-nav': {
+      const s = +el.dataset.slot;
+      panesOfProject(activeId)[s].content = el.dataset.rel || '';
+      persistPanes();
+      renderSplit();
+      break;
+    }
+    case 'srv-open': {
+      const s = +el.dataset.slot;
+      const rel = el.dataset.rel || '';
+      const parts = rel.split('/');
+      const name = parts.pop();
+      srvOpen(activeId, s, parts.join('/'), name);
+      break;
+    }
+    case 'srv-save':      srvSave(+el.dataset.slot, el.dataset.rel, el); break;
+    case 'srv-close': {
+      const s = +el.dataset.slot;
+      delete repoView[repoKey(activeId, panesOfProject(activeId)[s].content || '')];
+      const host = document.querySelector('[data-srv-file="' + s + '"]');
+      if(host) host.innerHTML = '';
+      break;
+    }
+    case 'proj-open':     openProject(el.dataset.pid); break;
+    case 'proj-add':      addFromScan(el.dataset.path, el.dataset.name, el.dataset.langs, el.dataset.size, el.dataset.files, el.dataset.updated, el.dataset.git); break;
+    case 'proj-group':    projGroup = el.dataset.group; renderProjPane(+el.dataset.slot); break;
+    case 'proj-filter':   projFilter = el.dataset.filter; renderProjPane(+el.dataset.slot); break;
+    case 'scan-refresh':  scanRefresh(+el.dataset.slot); break;
+    case 'chat-reload':   chatReload(+el.dataset.slot); break;
+    case 'chat-open': {
+      const pane = panesOfProject(activeId)[+el.dataset.slot];
+      openUrl((pane && pane.content) || '');
+      break;
+    }
+    case 'copy-context':  copyContext(el.dataset.pid); break;
+    case 'mode-help':
+      if(SERVER) toast('本地服务已接管文件读写 · 仓库窗格无需点选目录', 'ok');
+      else toast('快照模式只读：双击「启动工作台.bat」起本地服务后即可读写文件', 'warn');
+      break;
+    case 'filter-state':
+      stateFilter = el.dataset.state;
+      store.write(LS.filter, stateFilter);
+      renderControl();
+      toast(stateFilter === 'all' ? '已显示全部状态' : '筛选：' + STATES[stateFilter].label);
+      break;
+    case 'refresh':
+      toast('视图已刷新 · 数据来自本地扫描快照 ' + DATA.snapshot, 'ok');
+      renderAll();
+      break;
+    case 'add-project':   openModal(); break;
+    case 'close-modal':   closeModal(); break;
+    case 'confirm-add':   confirmAdd(); break;
+    case 'remove-custom': {
+      custom = custom.filter(x => x.id !== el.dataset.pid);
+      store.write(LS.custom, custom);
+      if(activeId === el.dataset.pid) closeProject();
+      renderAll();
+      toast('已移除自定义项目', 'warn');
+      break;
+    }
+  }
+});
+
+function repoSlotOf(el){
+  const pane = el.closest('.pane');
+  return pane ? +pane.dataset.slot : 0;
+}
+
+/* 卡片悬停光斑 */
+root.addEventListener('mousemove', e => {
+  const card = e.target.closest('.card');
+  if(!card) return;
+  const r = card.getBoundingClientRect();
+  card.style.setProperty('--mx', (e.clientX - r.left) + 'px');
+  card.style.setProperty('--my', (e.clientY - r.top) + 'px');
+});
+
+/* 键盘可达 */
+root.addEventListener('keydown', e => {
+  if((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('project-card')){
+    e.preventDefault(); openProject(e.target.dataset.pid); return;
+  }
+  const inp = e.target.closest && e.target.closest('[data-field="todo-new"]');
+  if(inp && e.key === 'Enter'){ e.preventDefault(); todoAdd(+inp.dataset.slot, inp.value); inp.value = ''; return; }
+  if(e.key === 'Escape' && document.getElementById('scrim').classList.contains('show')) closeModal();
+});
+
+/* 输入：不整页重渲染，避免丢焦点 */
+let saveTimer = null;
+function schedulePersist(){ clearTimeout(saveTimer); saveTimer = setTimeout(persistPanes, 350); }
+
+root.addEventListener('input', e => {
+  const el = e.target.closest('[data-field]');
+  if(!el || !activeId) return;
+  const slot = +el.dataset.slot, field = el.dataset.field;
+  const pane = panesOfProject(activeId)[slot];
+  if(!pane) return;
+  if(field === 'proj-q'){ projQuery = el.value; renderProjPane(slot); return; }
+  if(field === 'pane-title') pane.title = el.value;
+  else if(field === 'note'){
+    pane.content = el.value;
+    const c = document.querySelector('[data-count="' + slot + '"]');
+    if(c) c.textContent = el.value.length + ' 字符';
+  }
+  else if(field === 'link-url'){ pane.content = el.value; }
+  else if(field === 'web-url'){
+    pane.content = el.value;
+  }
+  else if(field === 'chat-url'){ pane.content = el.value; }
+  schedulePersist();
+});
+
+root.addEventListener('change', e => {
+  const sel = e.target.closest('[data-act="chat-preset"]');
+  if(sel && sel.tagName === 'SELECT' && activeId){
+    const slot = +sel.dataset.slot;
+    const pane = panesOfProject(activeId)[slot];
+    if(pane && pane.kind === 'chat'){
+      pane.content = sel.value;
+      persistPanes();
+      const inp = document.querySelector('[data-field="chat-url"][data-slot="' + slot + '"]');
+      if(inp) inp.value = sel.value;
+      chatReload(slot);
+    }
+    return;
+  }
+  const el = e.target.closest('[data-act="todo-toggle"]');
+  if(el && el.tagName === 'INPUT') todoToggle(+el.dataset.slot, +el.dataset.idx);
+});
+
+document.getElementById('searchInput').addEventListener('input', e => {
+  query = e.target.value.trim();
+  renderControl();
+});
+
+/* ============================================================
+   添加项目弹窗
+   ============================================================ */
+const scrim = document.getElementById('scrim');
+function openModal(){ scrim.classList.add('show'); document.getElementById('fName').focus(); }
+function closeModal(){ scrim.classList.remove('show'); }
+scrim.addEventListener('click', e => { if(e.target === scrim) closeModal(); });
+['fName','fPath','fLangs'].forEach(k => {
+  document.getElementById(k).addEventListener('keydown', e => { if(e.key === 'Enter') confirmAdd(); });
+});
+function confirmAdd(){
+  const name = document.getElementById('fName').value.trim();
+  const path = document.getElementById('fPath').value.trim();
+  const langs = document.getElementById('fLangs').value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  if(!name){ toast('请填写项目名称', 'warn'); return; }
+  const id = 'custom-' + Date.now();
+  custom.push({
+    id, name, alias:name, path: path || '（未填写路径）',
+    langs: langs.length ? langs : ['Other'], category:'自定义',
+    sizeMB:0, git:false, updated: new Date().toISOString().slice(0,10), files:0, custom:true
+  });
+  store.write(LS.custom, custom);
+  ['fName','fPath','fLangs'].forEach(k => { document.getElementById(k).value = ''; });
+  closeModal();
+  toast('已添加项目 ' + name, 'ok');
+  renderAll();
+}
+
+/* ============================================================
+   启动
+   ============================================================ */
+buildIndex();
+if(activeId && !projectById(activeId)) activeId = null;
+if(activeId && !presetOf[activeId]) presetOf[activeId] = 'l13';
+renderAll();
+if(view === 'workbench' && activeId) toast('已恢复上次的工作台：' + (projectById(activeId) || {}).alias);
+detectServer();
+</script>
+</body>
+</html>

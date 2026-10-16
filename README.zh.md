@@ -4,12 +4,13 @@
 
 本仓库是开源项目 [`Aisland-SJL/dsh-worktable`](https://github.com/Aisland-SJL/dsh-worktable)（MIT）在 **TraeCode IDE 上的独立复刻实现**。复刻范围为 **C1「视觉骨架派」**：抽屉 + 布局预设 + 外观主题 + 工程配套。功能设计参考上游，代码为独立编写。
 
-仓库同时产出**两个形态**，互不影响：
+仓库同时产出**三个形态**，互不影响：
 
 | 产物 | 载体 | 说明 |
 |---|---|---|
 | TraeCode 扩展 | `.vsix` | 根目录的 `src/` `out/` `media/`，即下文全部内容 |
 | TraeWork 工作台 | Skill + 单文件 HTML | 见 [`traework/`](traework/README.md)：Skill 管数据、HTML 做视觉 |
+| workbench 单文件工作台 | 自包含 HTML + 本地服务 | 见 [`workbench/`](workbench/README.md)：快照数据内嵌进单文件，双击即开，另附零依赖本地服务 |
 
 TraeWork **不支持**导入 `.vsix`，其扩展面是面向任务场景的插件 / Skill，没有自定义 UI 容器，
 因此工作台在 TraeWork 侧换了形态实现（数据走 CLI，视觉走自包含 HTML）。

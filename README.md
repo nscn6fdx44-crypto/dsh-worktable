@@ -6,12 +6,13 @@ Turn your projects into a sidebar app drawer, with a dockable split workspace an
 
 This repository is an independent re-implementation for **TraeCode IDE** of the open-source project [`Aisland-SJL/dsh-worktable`](https://github.com/Aisland-SJL/dsh-worktable) (MIT). Scope is limited to **C1 "visual skeleton"**: drawer + layout presets + theme system + engineering tooling. The feature design is inspired by upstream; the code is written independently.
 
-The repository ships **two artifacts** that do not interfere with each other:
+The repository ships **three artifacts** that do not interfere with each other:
 
 | Artifact | Carrier | Where |
 |---|---|---|
 | TraeCode extension | `.vsix` | `src/` `out/` `media/` at the repo root — everything documented below |
 | TraeWork worktable | Skill + single-file HTML | See [`traework/`](traework/README.md): the Skill manages data, the HTML does the visuals |
+| Single-file workbench | Self-contained HTML + local service | See [`workbench/`](workbench/README.md): snapshot data baked into one HTML file, plus a zero-dependency local service |
 
 TraeWork **cannot** import `.vsix`. Its extension surface is a task-scoped plugin / Skill with no custom UI container, so the worktable takes a different shape there (data via CLI, visuals via a self-contained HTML file).
 

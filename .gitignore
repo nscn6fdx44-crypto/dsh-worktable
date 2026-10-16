@@ -11,3 +11,8 @@ media/worktable.css
 
 # TraeWork 工作台的本地数据：记录的是本机项目绝对路径，属本地实例数据，不入库
 .worktable/
+
+# workbench/ 的本地实例数据：内嵌本机真实路径，同样不入库
+workbench/workbench.html
+workbench/workbench.registry.json
+workbench/build/data/

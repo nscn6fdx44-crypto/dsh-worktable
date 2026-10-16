@@ -1,5 +1,17 @@
 # 变更日志
 
+## workbench（未发布）
+
+新增仓库的**第三个产物**：`workbench/` —— 把工作台压成「**自包含单文件 HTML** + **零依赖本地服务**」，面向「不装扩展、不装 Skill，打开就能用」的场景。
+
+- `workbench/index.html`：产物，公开版单文件（虚构示例数据），同时作为 GitHub Pages 入口
+- `workbench/serve.mjs`：独立本地服务，零依赖 Node；提供项目文件读写、端口探测、重扫与网页反代
+- `workbench/build/`：模板 + 构建 + 校验链（`build-public.mjs` / `verify.mjs` / `smoke.mjs` / `serve.test.mjs`）
+- 与 `traework/` 功能同源、形态不同：`traework/` 走「Skill 管数据 + 渲染管线」，本目录走「快照数据内嵌单文件」
+- 扫描根一律由 `os.homedir()` 推导，不写死用户名，仓库可公开
+- 隐私：个人版产物（内嵌本机真实路径）为 `workbench/workbench.html` 与 `workbench.registry.json`，已在 `.gitignore` 排除
+- `workbench/` 已进 `.vscodeignore`，不混入扩展 `.vsix`
+
 ## v0.2.0-traework
 
 新增仓库的**第二个产物**：面向 **TraeWork** 的工作台（`traework/`），形态为「Skill 管数据 + 单文件 HTML 做视觉」。
