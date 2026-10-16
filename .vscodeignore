@@ -14,3 +14,5 @@ out/shared/**
 AGENTS.md
 esbuild.mjs
 tsconfig.json
+index.html
+.nojekyll
