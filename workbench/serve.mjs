@@ -18,7 +18,7 @@ import {
   statSync, writeFileSync
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, extname, join, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -99,13 +99,17 @@ class HttpError extends Error {
 /* ============================================================
    登记表
    ============================================================ */
+function registryPath() {
+  return process.env.WB_REGISTRY || REGISTRY_PATH;
+}
+
 function loadRegistry() {
-  const registryPath = process.env.WB_REGISTRY || REGISTRY_PATH;
-  if (!existsSync(registryPath)) {
+  const registryPath_ = registryPath();
+  if (!existsSync(registryPath_)) {
     return { projects: [], scanRoots: DEFAULT_SCAN_ROOTS, aiPresets: DEFAULT_AI_PRESETS };
   }
   try {
-    const raw = JSON.parse(readFileSync(registryPath, "utf8").replace(/^\uFEFF/, ""));
+    const raw = JSON.parse(readFileSync(registryPath_, "utf8").replace(/^\uFEFF/, ""));
     return {
       projects: Array.isArray(raw.projects) ? raw.projects : [],
       scanRoots: Array.isArray(raw.scanRoots) && raw.scanRoots.length ? raw.scanRoots : DEFAULT_SCAN_ROOTS,
@@ -114,6 +118,26 @@ function loadRegistry() {
   } catch (error) {
     throw new HttpError(500, `登记表解析失败：${error.message}`);
   }
+}
+
+/** 登记一个自定义项目目录，让 repo 窗格能读写它。
+    只增不删：移除项目只影响界面，登记表保持完整，以便随时恢复。 */
+function registerProject({ id, name, path }) {
+  if (!id || typeof id !== "string") throw new HttpError(400, "缺少项目 id");
+  const abs = typeof path === "string" ? path.trim() : "";
+  if (!abs) throw new HttpError(400, "缺少项目路径");
+  if (!isAbsolute(abs)) throw new HttpError(400, "目录路径必须是绝对路径");
+  if (!existsSync(abs)) throw new HttpError(404, `路径不存在：${abs}`, "not-found");
+  if (!statSync(abs).isDirectory()) throw new HttpError(400, `不是目录：${abs}`, "not-a-directory");
+
+  const registry = loadRegistry();
+  const entry = { id, name: name || basename(abs), path: abs, langs: detectLangs(abs) };
+  const idx = registry.projects.findIndex((p) => p.id === id);
+  if (idx >= 0) registry.projects[idx] = { ...registry.projects[idx], ...entry };
+  else registry.projects.push(entry);
+
+  writeFileSync(registryPath(), JSON.stringify(registry, null, 2), "utf8");
+  return entry;
 }
 
 function projectRoot(registry, projectId) {
@@ -516,6 +540,13 @@ async function handle(req, res) {
     try { payload = JSON.parse(raw); } catch { throw new HttpError(400, "请求体不是合法 JSON"); }
     const root = projectRoot(registry, payload?.project);
     return sendJson(res, 200, writeTextFile(root, payload?.path ?? "", payload?.content));
+  }
+
+  if (url.pathname === "/api/register" && req.method === "POST") {
+    const raw = await readBody(req);
+    let payload;
+    try { payload = JSON.parse(raw); } catch { throw new HttpError(400, "请求体不是合法 JSON"); }
+    return sendJson(res, 200, { ok: true, project: registerProject(payload ?? {}) });
   }
 
   if (url.pathname === "/api/scan") {

@@ -132,6 +132,44 @@
   .pitem .pi-arrow{flex:none;width:13px;height:13px;opacity:.3;transition:opacity .18s}
   .pitem:hover .pi-arrow{opacity:.72}
 
+  /* 项目栏：多选删除 + 自定义添加 */
+  .nl-tools{display:flex;gap:4px;align-items:center}
+  .nl-btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:4px;height:20px;padding:0 7px;
+    border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--txt-mute);
+    cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:.04em;
+    transition:background .18s var(--ease),color .18s,border-color .18s
+  }
+  .nl-btn:hover{background:rgba(255,255,255,.08);color:var(--txt);border-color:var(--line-strong)}
+  .nl-btn.on{background:rgba(240,180,41,.14);border-color:rgba(240,180,41,.38);color:#f5d68f}
+  .nl-btn svg{width:11px;height:11px;flex:none}
+  .plist .pi-check{
+    flex:none;width:14px;height:14px;border-radius:4.5px;border:1px solid var(--line-strong);
+    background:rgba(255,255,255,.03);position:relative;transition:background .16s,border-color .16s
+  }
+  .plist.selecting .pitem:hover .pi-check{border-color:rgba(240,180,41,.5)}
+  .pitem.sel{background:rgba(240,180,41,.13);border-color:rgba(240,180,41,.36)}
+  .pitem.sel .pi-check{background:rgba(240,180,41,.9);border-color:rgba(240,180,41,.9)}
+  .pitem.sel .pi-check::after{
+    content:'';position:absolute;left:3.5px;top:.8px;width:4px;height:7.6px;
+    border:solid #241a05;border-width:0 1.8px 1.8px 0;transform:rotate(43deg)
+  }
+  .plist.selecting .pitem .pi-arrow{display:none}
+  .selbar{
+    display:none;align-items:center;gap:5px;margin:0 0 6px;padding:6px 7px;border-radius:9px;
+    border:1px solid rgba(240,180,41,.24);background:rgba(240,180,41,.06)
+  }
+  .selbar.show{display:flex}
+  .selbar .sb-info{flex:1;min-width:0;font-family:var(--mono);font-size:10.5px;color:var(--txt-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .selbar .btn{height:22px;padding:0 9px;font-size:11px;border-radius:7px}
+  .selbar .btn.armed{background:rgba(232,115,74,.32);border-color:rgba(232,115,74,.7);color:#ffd9cc}
+  .restore-bar{
+    display:none;align-items:center;gap:6px;margin:0 0 6px;padding:5px 8px;border-radius:9px;
+    border:1px dashed var(--line-strong);background:rgba(255,255,255,.02)
+  }
+  .restore-bar.show{display:flex}
+  .restore-bar span{flex:1;min-width:0;font-family:var(--mono);font-size:10.5px;color:var(--txt-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
   /* 四态状态光 */
   .light{
     width:9px;height:9px;flex:none;border-radius:50%;border:0;padding:0;cursor:pointer;
@@ -790,7 +828,25 @@
     </div>
 
     <div>
-      <div class="nav-label">项目 <span id="plistCount">0</span></div>
+      <div class="nav-label">
+        <span style="letter-spacing:.14em">项目 <span id="plistCount">0</span></span>
+        <span class="nl-tools">
+          <button class="nl-btn" data-act="add-project" title="添加自定义项目">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>添加
+          </button>
+          <button class="nl-btn" id="selToggle" data-act="toggle-select" title="多选删除">多选</button>
+        </span>
+      </div>
+      <div class="selbar" id="selbar">
+        <span class="sb-info" id="selInfo">勾选要移除的项目</span>
+        <button class="btn small" data-act="sel-all">全选</button>
+        <button class="btn small" data-act="sel-none">清空</button>
+        <button class="btn small danger" id="selDel" data-act="sel-delete">移除</button>
+      </div>
+      <div class="restore-bar" id="restoreBar">
+        <span id="restoreInfo"></span>
+        <button class="btn small" data-act="restore-removed">全部恢复</button>
+      </div>
       <div class="plist" id="plist"></div>
     </div>
 
@@ -894,7 +950,7 @@
 <div class="scrim" id="scrim">
   <div class="modal" role="dialog" aria-modal="true">
     <h3>添加自定义项目</h3>
-    <p>只写入本机浏览器 localStorage，不会改动磁盘上的任何文件。</p>
+    <p>只写入本机浏览器 localStorage，不会改动磁盘上的任何文件；填了绝对路径且已连本地服务时，会把该目录登记进服务以便仓库窗格读写。</p>
     <div class="field"><label>项目名称</label><input id="fName" placeholder="例如：智能小车固件" autocomplete="off" /></div>
     <div class="field"><label>目录路径</label><input id="fPath" placeholder="C:\projects\smart-car" autocomplete="off" class="mono" /></div>
     <div class="field"><label>语言标签（逗号分隔）</label><input id="fLangs" placeholder="C, C++, ESP-IDF" autocomplete="off" /></div>
@@ -957,7 +1013,7 @@ let AI_PRESETS = (DATA && Array.isArray(DATA.aiPresets) && DATA.aiPresets.length
 
 const LS = {
   view:'wt2.view', active:'wt2.active', status:'wt2.status', preset:'wt2.preset',
-  panes:'wt2.panes', custom:'wt2.custom', filter:'wt2.filter'
+  panes:'wt2.panes', custom:'wt2.custom', filter:'wt2.filter', removed:'wt2.removed'
 };
 
 /* ============================================================
@@ -974,7 +1030,11 @@ let status      = store.read(LS.status, {});      // { pid: 'idle'|'working'|'ne
 let presetOf    = store.read(LS.preset, {});      // { pid: 'l13' }
 let panesOf     = store.read(LS.panes, {});       // { pid: [pane x4] }
 let custom      = store.read(LS.custom, []);
+let removed     = store.read(LS.removed, []);   // 已从项目栏移除的扫描项目 id
 let stateFilter = store.read(LS.filter, 'all');
+let selectMode  = false;                        // 项目栏多选态（不持久化）
+let selected    = new Set();                    // 多选中的项目 id（不持久化）
+let armedDelete = false;                        // 移除二次确认（不持久化）
 let query       = '';
 let repoView    = {};   // { 'pid|rel' : {file: path|null} }  —— 会话内，不持久化
 
@@ -990,7 +1050,7 @@ let projFilter = 'all'; // 'all' | 'running' | 'new'
    工具
    ============================================================ */
 function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function allProjects(){ return DATA.projects.concat(custom); }
+function allProjects(){ return DATA.projects.concat(custom).filter(p => removed.indexOf(p.id) < 0); }
 function projectById(id){ return allProjects().find(p => p.id === id) || null; }
 function initials(p){ const s = (p.alias || p.name || '?').replace(/[^\w\u4e00-\u9fa5]/g,''); return (s.slice(0,2) || 'PR').toUpperCase(); }
 function shortPath(p, n){
@@ -1081,7 +1141,7 @@ function lightHTML(pid, extra){
          '" title="' + STATES[s].label + ' · 点击切换" aria-label="状态：' + STATES[s].label + '"' + (extra || '') + '></button>';
 }
 function diskTotalMB(){
-  return DATA.projects.filter(p => !p.nested).concat(custom).reduce((s,p) => s + (p.sizeMB || 0), 0);
+  return allProjects().filter(p => !p.nested).reduce((s,p) => s + (p.sizeMB || 0), 0);
 }
 function countByState(){
   const c = { idle:0, working:0, 'needs-you':0, done:0 };
@@ -1289,9 +1349,12 @@ function persistPanes(){ store.write(LS.panes, panesOf); }
    ============================================================ */
 function renderPlist(){
   const list = allProjects();
-  document.getElementById('plist').innerHTML = list.map(p =>
-    '<div class="pitem' + (p.id === activeId ? ' active' : '') +
+  const plist = document.getElementById('plist');
+  plist.className = 'plist' + (selectMode ? ' selecting' : '');
+  plist.innerHTML = list.map(p =>
+    '<div class="pitem' + (p.id === activeId ? ' active' : '') + (selected.has(p.id) ? ' sel' : '') +
       '" data-act="open-project" data-pid="' + esc(p.id) + '" title="' + esc(p.path) + '">' +
+      (selectMode ? '<span class="pi-check" aria-hidden="true"></span>' : '') +
       '<span class="pi-ico" aria-hidden="true">' + projEmoji(p) + '</span>' +
       '<span class="pi-name">' + esc(p.alias) + '</span>' +
       lightHTML(p.id) +
@@ -1300,6 +1363,20 @@ function renderPlist(){
   ).join('');
   document.getElementById('plistCount').textContent = list.length;
   document.getElementById('navCount').textContent = list.length;
+
+  document.getElementById('selToggle').className = 'nl-btn' + (selectMode ? ' on' : '');
+  document.getElementById('selbar').className = 'selbar' + (selectMode ? ' show' : '');
+  const selDel = document.getElementById('selDel');
+  selDel.textContent = armedDelete ? '确认移除 ' + selected.size + ' 项' : '移除';
+  selDel.className = 'btn small danger' + (armedDelete ? ' armed' : '');
+  selDel.disabled = selected.size === 0;
+  document.getElementById('selInfo').textContent = selected.size
+    ? '已选 ' + selected.size + ' / ' + list.length + ' 项'
+    : (list.length ? '勾选要移除的项目' : '项目栏已空');
+
+  const rb = document.getElementById('restoreBar');
+  rb.className = 'restore-bar' + (removed.length ? ' show' : '');
+  document.getElementById('restoreInfo').textContent = '已移除 ' + removed.length + ' 个扫描项目（磁盘文件未动）';
 }
 
 /* ============================================================
@@ -1314,11 +1391,11 @@ function statsHTML(full){
   const c = countByState();
   const total = allProjects().length;
   const disk = diskTotalMB();
-  const running = DATA.projects.filter(p => p.live).length;
+  const running = allProjects().filter(p => p.live).length;
   const tiles = [
     statTile('进行中', c.working, '/ ' + total, 'working', c.working ? '有 ' + c.working + ' 个项目在推进' : '暂无进行中的项目'),
     statTile('待处理', c['needs-you'], '个', 'needs', c['needs-you'] ? '需要你介入' : '没有卡住的事项'),
-    statTile('总项目数', total, '个', '', DATA.projects.length + ' 个扫描项 · ' + custom.length + ' 个自定义'),
+    statTile('总项目数', total, '个', '', allProjects().filter(p => !p.custom).length + ' 个扫描项 · ' + allProjects().filter(p => p.custom).length + ' 个自定义'),
     statTile('磁盘占用', (disk/1024).toFixed(2), 'GB', 'gold', '仅统计顶层项目，排除嵌套目录')
   ];
   if(full){
@@ -1637,8 +1714,8 @@ function repoBody(pane, slot, pid){
 }
 
 /* ---------- repo 窗格：服务模式（走 /api/tree 与 /api/file） ---------- */
-async function srvJson(path){
-  const res = await fetch(path, { cache:'no-store' });
+async function srvJson(path, opt){
+  const res = await fetch(path, Object.assign({ cache:'no-store' }, opt || {}));
   let data = null;
   try { data = await res.json(); } catch(e){ data = null; }
   if(!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
@@ -2249,7 +2326,16 @@ root.addEventListener('click', e => {
 
   switch(a){
     case 'cycle-status': e.stopPropagation(); cycleStatus(el.dataset.pid); break;
-    case 'open-project':  e.stopPropagation(); openProject(el.dataset.pid); break;
+    case 'open-project':
+      e.stopPropagation();
+      if(selectMode && el.classList.contains('pitem')){ toggleSel(el.dataset.pid); break; }
+      openProject(el.dataset.pid);
+      break;
+    case 'toggle-select': setSelectMode(!selectMode); break;
+    case 'sel-all':       listSelectAll(); break;
+    case 'sel-none':      clearSel(); break;
+    case 'sel-delete':    deleteSelected(); break;
+    case 'restore-removed': restoreRemoved(); break;
     case 'close-project': closeProject(); break;
     case 'goto-control':  setView('control'); break;
     case 'focus-search': {
@@ -2387,7 +2473,10 @@ root.addEventListener('keydown', e => {
   }
   const inp = e.target.closest && e.target.closest('[data-field="todo-new"]');
   if(inp && e.key === 'Enter'){ e.preventDefault(); todoAdd(+inp.dataset.slot, inp.value); inp.value = ''; return; }
-  if(e.key === 'Escape' && document.getElementById('scrim').classList.contains('show')) closeModal();
+  if(e.key === 'Escape'){
+    if(document.getElementById('scrim').classList.contains('show')){ closeModal(); return; }
+    if(selectMode){ setSelectMode(false); return; }
+  }
 });
 
 /* 输入：不整页重渲染，避免丢焦点 */
@@ -2454,16 +2543,85 @@ function confirmAdd(){
   const langs = document.getElementById('fLangs').value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
   if(!name){ toast('请填写项目名称', 'warn'); return; }
   const id = 'custom-' + Date.now();
-  custom.push({
+  const rec = {
     id, name, alias:name, path: path || '（未填写路径）',
     langs: langs.length ? langs : ['Other'], category:'自定义',
     sizeMB:0, git:false, updated: new Date().toISOString().slice(0,10), files:0, custom:true
-  });
+  };
+  custom.push(rec);
   store.write(LS.custom, custom);
   ['fName','fPath','fLangs'].forEach(k => { document.getElementById(k).value = ''; });
   closeModal();
   toast('已添加项目 ' + name, 'ok');
   renderAll();
+  if(SERVER && path) registerToServer(rec);
+}
+
+/* 服务模式下把自定义目录登记进登记表，仓库窗格才能读写它 */
+async function registerToServer(rec){
+  try {
+    await srvJson('/api/register', {
+      method:'POST',
+      headers:{ 'content-type':'application/json' },
+      body: JSON.stringify({ id:rec.id, name:rec.name, path:rec.path })
+    });
+    toast('已登记到本地服务 · 仓库窗格可直接读写该目录', 'ok');
+    if(activeId === rec.id) renderSplit();
+  } catch(e){
+    toast('本地服务登记失败：' + (e.message || e) + ' · 仓库窗格仍可手动选目录', 'warn');
+  }
+}
+
+/* ============================================================
+   项目栏多选移除 / 恢复
+   ============================================================ */
+function setSelectMode(on){
+  selectMode = !!on;
+  if(!selectMode){ selected.clear(); armedDelete = false; }
+  renderPlist();
+  toast(selectMode ? '多选已开启 · 勾选项目后点「移除」' : '已退出多选');
+}
+function toggleSel(pid){
+  if(selected.has(pid)) selected.delete(pid); else selected.add(pid);
+  armedDelete = false;
+  renderPlist();
+}
+function clearSel(){ selected.clear(); armedDelete = false; renderPlist(); }
+function listSelectAll(){
+  const list = allProjects();
+  if(list.length && selected.size === list.length) selected.clear();
+  else list.forEach(p => selected.add(p.id));
+  armedDelete = false;
+  renderPlist();
+}
+function deleteSelected(){
+  if(!selected.size){ toast('先勾选要移除的项目', 'warn'); return; }
+  if(!armedDelete){
+    armedDelete = true;
+    renderPlist();
+    toast('再点一次「确认移除」才会生效 · 磁盘上的文件不会被删除', 'warn');
+    return;
+  }
+  const ids = Array.from(selected);
+  const customs = ids.filter(id => custom.some(c => c.id === id));
+  if(customs.length) custom = custom.filter(c => customs.indexOf(c.id) < 0);
+  ids.forEach(id => { if(customs.indexOf(id) < 0 && removed.indexOf(id) < 0) removed.push(id); });
+  store.write(LS.custom, custom);
+  store.write(LS.removed, removed);
+  if(activeId && ids.indexOf(activeId) >= 0){ activeId = null; store.write(LS.active, null); }
+  selected.clear(); armedDelete = false; selectMode = false;
+  renderAll();
+  toast('已从项目栏移除 ' + ids.length + ' 个项目' +
+        (customs.length ? '（其中 ' + customs.length + ' 个自定义项需重新添加）' : '') +
+        ' · 磁盘文件未动', 'warn');
+}
+function restoreRemoved(){
+  if(!removed.length) return;
+  const n = removed.length;
+  removed = [];
+  store.write(LS.removed, removed);
+  renderAll();
+  toast('已恢复 ' + n + ' 个扫描项目', 'ok');
 }
 
 /* ============================================================

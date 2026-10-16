@@ -131,6 +131,57 @@ async function runScenario(label, fetchStub, server) {
   check(label, 'chat 预设生效', presetHtml.includes('data-preset="chat"'));
   check(label, 'chat 预设自动放入 AI 对话', presetHtml.includes('data-frame="chat-1"'));
 
+  /* 用例：项目栏多选移除 / 恢复（放在最后，会清空项目栏再恢复） */
+  const total = ctx.allProjects().length;
+  const plistHtml = getEl('plist')._html;
+  check(label, '项目栏行已渲染', plistHtml.includes('data-act="open-project"') && plistHtml.includes('pi-arrow'), total + ' 行');
+  check(label, '项目栏「添加 / 多选」入口存在', getEl('selToggle').className === 'nl-btn');
+  check(label, '默认非多选：行内无复选框、工具条与恢复条隐藏',
+    !plistHtml.includes('pi-check') && getEl('selbar').className === 'selbar'
+    && getEl('restoreBar').className === 'restore-bar');
+
+  ctx.setSelectMode(true);
+  check(label, '多选态：复选框 + 工具条 + 按钮高亮',
+    getEl('plist')._html.includes('pi-check') && getEl('plist').className === 'plist selecting'
+    && getEl('selbar').className === 'selbar show' && getEl('selToggle').className === 'nl-btn on');
+  check(label, '未选中时移除按钮禁用', getEl('selDel').disabled === true);
+
+  ctx.listSelectAll();
+  check(label, '全选：计数就绪且移除按钮可用',
+    getEl('selInfo')._text === '已选 ' + total + ' / ' + total + ' 项' && getEl('selDel').disabled === false);
+  check(label, '全选后行内高亮', getEl('plist')._html.includes('pitem sel'));
+
+  ctx.deleteSelected();
+  check(label, '首次点「移除」进入二次确认（不落盘）',
+    getEl('selDel')._text === '确认移除 ' + total + ' 项'
+    && getEl('selDel').className === 'btn small danger armed'
+    && ctx.allProjects().length === total);
+
+  ctx.deleteSelected();
+  check(label, '确认后项目栏清空并退出多选',
+    String(getEl('plistCount')._text) === '0' && ctx.allProjects().length === 0
+    && getEl('plist').className === 'plist' && getEl('selbar').className === 'selbar');
+  check(label, '移除后出现恢复条', getEl('restoreBar').className === 'restore-bar show');
+
+  ctx.restoreRemoved();
+  check(label, '恢复后项目栏回满、恢复条隐藏',
+    ctx.allProjects().length === total && String(getEl('plistCount')._text) === String(total)
+    && getEl('restoreBar').className === 'restore-bar');
+  check(label, '恢复后行内复选框消失', !getEl('plist')._html.includes('pi-check'));
+
+  /* 用例：自定义添加 */
+  getEl('fName').value = '冒烟测试项目';
+  getEl('fPath').value = '';
+  getEl('fLangs').value = 'Node, JS';
+  ctx.confirmAdd();
+  const added = ctx.allProjects().filter((p) => p.custom);
+  check(label, '自定义添加落入项目栏', added.length === 1 && String(getEl('plistCount')._text) === String(total + 1),
+    added.length ? added[0].alias : '未新增');
+  check(label, '自定义项语言标签解析正确',
+    added.length === 1 && added[0].langs.join('/') === 'Node/JS', added.length ? added[0].langs.join('/') : '—');
+  check(label, '自定义项无路径时给出占位', added.length === 1 && added[0].path === '（未填写路径）');
+  check(label, '自定义项渲染进侧栏列表', getEl('plist')._html.includes('冒烟测试项目'));
+
   check(label, '渲染写入非空', writes.filter(([, v]) => v && v.length > 40).length > 5);
 }
 

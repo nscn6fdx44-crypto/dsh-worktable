@@ -190,6 +190,49 @@ console.log('\n【本地服务路由契约】');
   check('GET /api/ports 返回数组', status === 200 && Array.isArray(json?.ports), status + ' / ' + json?.ports?.length + ' 条');
 }
 
+/* 10.5 自定义项目登记（项目栏「添加」把目录登记进服务） */
+{
+  const customDir = path.join(tmp, 'custom-proj');
+  fs.mkdirSync(path.join(customDir, 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(customDir, 'index.js'), 'export const x = 1;\n', 'utf8');
+
+  const rel = await postJson('/api/register', { id: 'custom-1', name: '自定义', path: 'relative/dir' });
+  check('register 拒绝相对路径 → 400', rel.status === 400 && /绝对路径/.test(rel.json?.error || ''),
+    rel.status + ' / ' + rel.json?.error);
+
+  const miss = await postJson('/api/register', { id: 'custom-1', name: '自定义', path: path.join(tmp, 'nope-dir') });
+  check('register 拒绝不存在的路径 → 404', miss.status === 404, miss.status + ' / ' + miss.json?.error);
+
+  const file = await postJson('/api/register', { id: 'custom-1', name: '自定义', path: path.join(customDir, 'index.js') });
+  check('register 拒绝文件路径 → 400', file.status === 400 && /不是目录/.test(file.json?.error || ''),
+    file.status + ' / ' + file.json?.error);
+
+  const noId = await postJson('/api/register', { name: '自定义', path: customDir });
+  check('register 缺 id → 400', noId.status === 400 && /缺少项目 id/.test(noId.json?.error || ''),
+    noId.status + ' / ' + noId.json?.error);
+
+  const ok = await postJson('/api/register', { id: 'custom-1', name: '自定义项目', path: customDir });
+  check('register 登记成功', ok.status === 200 && ok.json?.project?.path === customDir, JSON.stringify(ok.json?.project));
+
+  const tree = await getJson('/api/tree?project=custom-1');
+  check('登记后仓库窗格可直接读取该目录',
+    tree.status === 200 && (tree.json?.files || []).map((f) => f.name).join(',') === 'index.js',
+    JSON.stringify(tree.json?.files));
+
+  const read = await getJson('/api/file?project=custom-1&path=' + q('index.js'));
+  check('登记后可直接读取文件内容', read.status === 200 && /export const x/.test(read.json?.content || ''), read.status + '');
+
+  const again = await postJson('/api/register', { id: 'custom-1', name: '改名后', path: customDir });
+  const persisted = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
+  check('重复登记同 id 为覆盖而非追加',
+    again.status === 200 && persisted.projects.filter((p) => p.id === 'custom-1').length === 1,
+    persisted.projects.map((p) => p.id).join(','));
+  check('重复登记以新名称为准', persisted.projects.find((p) => p.id === 'custom-1')?.name === '改名后');
+  check('登记未破坏既有条目', persisted.projects.some((p) => p.id === 'scratch' && p.path === projDir));
+  check('登记保留扫描根与 AI 预设',
+    Array.isArray(persisted.scanRoots) && persisted.scanRoots.length > 0 && Array.isArray(persisted.aiPresets));
+}
+
 /* 11. 探测与反代（打到本机上游桩） */
 {
   const { status, json } = await getJson('/api/probe?url=' + q(`http://127.0.0.1:${upstreamPort}/`));
