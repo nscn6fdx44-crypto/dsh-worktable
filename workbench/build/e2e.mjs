@@ -1,14 +1,16 @@
 /* 真实浏览器端到端（开发期可选）：用 Edge / Chrome 的 headless 模式 + CDP
-   在 file:// 下真跑一遍 workbench.html 的「零服务模式」：授权 → 扫描 → 渲染 → 读写。
+   在 file:// 下真跑一遍 index.html 的「零服务模式」：授权 → 扫描 → 渲染 → 读写。
 
    为什么需要它：静态校验与沙箱冒烟只能证明逻辑正确，证明不了「真实浏览器 + file://」
    下 DOM/CSS/IndexedDB 都能跑通。本脚本用真实引擎复核，并独立探测 file:// 下 IndexedDB 可用性。
 
-   唯一无法自动化的是操作系统的目录选择弹窗，因此用注入的假 FileSystemDirectoryHandle 代替；
-   真实 FileSystemHandle 与假句柄的差异（结构化克隆）只影响「句柄持久化」这一项，
-   故该项改为验证 idbPut / idbGet 的读写链路本身。
+   唯一无法自动化的是操作系统的目录选择弹窗，因此用注入的假 FileSystemDirectoryHandle 代替。
+   本脚本的假句柄只覆盖「授权 → 扫描 → 渲染 → 读写」这条主链路，
+   权限矩阵（只读 / 被拒 / 盘根被拦 / 刷新续期 / 深度扫描）由 build/e2e/run.mjs 覆盖 ——
+   那里的句柄桩额外补了真实 FileSystemHandle 才有的两项行为（可被 IndexedDB 结构化克隆、
+   requestPermission 与 queryPermission 状态联动），所以才能测到句柄持久化与刷新续期。
 
-   用法：node build/e2e.mjs [目标产物，默认 workbench.html]
+   用法：node build/e2e.mjs [目标产物，默认 index.html]
    浏览器可用环境变量 WT_BROWSER 指定。 */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -18,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
-const TARGET = process.argv[2] || 'workbench.html';
+const TARGET = process.argv[2] || 'index.html';   // 与 build-public.mjs 的产出名保持一致
 const PAGE = path.join(ROOT, TARGET);
 const PORT = 9300 + Math.floor(Math.random() * 500);
 

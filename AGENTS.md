@@ -59,6 +59,16 @@ npm run pack             # 构建 + 检查 + 测试 + 出 .vsix
 npm run typecheck        # tsc --noEmit（需先 npm install）
 ```
 
+```bash
+# 网页版工作台（workbench/），在仓库根目录执行
+npm run workbench:build  # 由 workbench.template.html 生成单文件 workbench/index.html
+npm run workbench:check  # 静态校验 + 沙箱冒烟 + 服务端路由契约
+npm run workbench:e2e    # 真实浏览器：主链路 e2e + 权限矩阵 M1-M12（需本机 Edge/Chrome）
+```
+
+验收顺序固定为：先 `workbench:build`，再 `workbench:check`，最后 `workbench:e2e`；
+e2e 用的是构建出的 `workbench/index.html`，不是模板。
+
 ## 7. 分支与标签
 
 - `main` 只收打过 tag 的提交；`dev` 集成；`feat/<模块>` 开发

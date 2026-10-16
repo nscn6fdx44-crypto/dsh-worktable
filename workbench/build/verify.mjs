@@ -38,8 +38,12 @@ if (m) {
   try { new vm.Script(src); ok.push('script 语法通过'); }
   catch (e) { fail.push('script 语法错误 — ' + e.message); }
 
+  /* 行尾符无关：本仓库 core.autocrlf=true 时产物是 CRLF，别人那里可能是 LF。
+     用正则匹配 \r?\n，否则「未找到 DATA 字面量」会随机器行尾符而变，门禁不可信。 */
+  const SEP = /\r?\n\r?\n\/\* ===/;
   const dmStart = src.indexOf('const DATA = ');
-  const dmEnd = src.indexOf('\n\n/* ===', dmStart);
+  const dmRel = dmStart >= 0 ? src.slice(dmStart).search(SEP) : -1;
+  const dmEnd = dmRel >= 0 ? dmStart + dmRel : -1;
   if (dmStart < 0 || dmEnd < 0) { fail.push('未找到 DATA 字面量'); }
   else {
     const raw = src.slice(dmStart + 'const DATA = '.length, dmEnd).trim().replace(/;$/, '');
@@ -152,7 +156,8 @@ if (fs.existsSync(pubPath)) {
 
   const pm = pub.match(/<script>([\s\S]*)<\/script>/);
   const ds = pm && pm[1].indexOf('const DATA = ');
-  const de = pm && pm[1].indexOf('\n\n/* ===', ds);
+  const de0 = pm && ds >= 0 ? pm[1].slice(ds).search(/\r?\n\r?\n\/\* ===/) : -1;
+  const de = de0 >= 0 && ds >= 0 ? de0 + ds : -1;
   if (ds >= 0 && de >= 0) {
     const PD = JSON.parse(pm[1].slice(ds + 'const DATA = '.length, de).trim().replace(/;$/, ''));
     check('公开版 trees 键与 projects id 对齐',

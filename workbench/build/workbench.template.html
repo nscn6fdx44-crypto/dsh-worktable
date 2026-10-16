@@ -782,7 +782,13 @@
   .modal-foot{display:flex;justify-content:flex-end;gap:9px;margin-top:18px}
 
   /* ================= toast ================= */
-  .toasts{position:fixed;right:22px;bottom:22px;z-index:80;display:flex;flex-direction:column;gap:9px;align-items:flex-end}
+  /* pointer-events:none 是必须的：提示条固定在右下角且 z-index 很高，
+     多条堆叠时会盖住右上大片区域，把它下面按钮的点击全部吞掉——用户看到的就是「点了没反应」。
+     提示条本身没有任何交互，不该接收指针事件；日后若要在提示条内放按钮，
+     给那个按钮单独写 .toast button{pointer-events:auto}。 */
+  .toasts{position:fixed;right:22px;bottom:22px;z-index:80;display:flex;flex-direction:column;gap:9px;align-items:flex-end;pointer-events:none}
+  .toast{pointer-events:none}
+  .toast button{pointer-events:auto}
   .toast{
     display:flex;align-items:center;gap:10px;min-width:200px;max-width:360px;padding:11px 14px;border-radius:12px;
     border:1px solid var(--line-strong);border-left:3px solid var(--amber);
@@ -1076,6 +1082,9 @@ let query       = '';
 let repoView    = {};   // { 'pid|rel' : {file: path|null} }  —— 会话内，不持久化
 
 const dirHandles = {};  // { pid: FileSystemDirectoryHandle } —— 会话内，持久副本在 IndexedDB
+/* 每个项目目录句柄自己的权限等级。scanPerm 只代表扫描根，
+   单独连接的项目（connectDir）有自己的等级，两者不能混用。 */
+const dirPerm = {};     // { pid: '' | 'read' | 'write' }
 const SCAN_ROOT_KEY = '__scanroot__';
 let scanRoot     = null;  // FileSystemDirectoryHandle —— 零服务模式的单页扫描根
 let scanRootName = '';
@@ -1084,8 +1093,16 @@ let localPorts   = null;  // { scannedAt, ports:[{port}], attempted } —— 端
 let zeroScan     = store.read(LS.zero, { scannedAt:'', rootName:'', rootPath:'', mode:'', projects:[] });
 const zeroPending = {};   // { pid: true } —— 正在把扫描根解析成项目目录句柄
 let pickFail     = null; // { name, msg } —— 最近一次目录选择失败的原因，常驻显示，避免用户「不知道为什么没反应」
+/* 当前扫描根的权限等级：'' | 'none' | 'denied' | 'prompt' | 'read' | 'write'。
+   扫描与浏览只需要 read；write 留到用户真的点「保存」那一刻再去要。
+   repoBody 是同步渲染、不能 await permLevel，因此这里缓存一份供 UI 读取。 */
+let scanPerm     = '';
 let flatFiles    = null; // Map<相对路径, File> —— 兼容模式扫描到的文件清单；会话内有效，刷新后需重扫一次
 let flatRootName = '';   // 兼容模式扫描根目录名（浏览器不暴露绝对路径）
+let flatTree     = null; // Map<相对路径, {dirs:Set,files:[]}> —— 兼容模式重建的目录树，供 flatListAt 直接查表
+let deepScan     = false;// 是否开启深度扫描（更深的层数与更大的目录预算）
+let scanning     = false;// 是否有扫描正在跑（扫描中再点扫描按钮＝取消）
+let scanAbort    = false;// 用户主动取消扫描
 
 let SERVER = false;     // 是否跑在本地服务下（可读写文件）；启动时探测 /api/health
 let scanCache = null;   // { scannedAt, roots, projects } —— /api/scan 的结果，会话内
@@ -1106,7 +1123,8 @@ function zeroProjects(){
     langs: sp.langs || [], category: sp.category || '本机扫描',
     sizeMB: Math.round(((sp.sizeBytes || 0) / 1048576) * 10) / 10,
     files: sp.files || 0, git: !!sp.git, updated: sp.updated || '',
-    live: sp.live || null, samples: sp.samples || [], ports: sp.ports || [], zero: true
+    live: sp.live || null, samples: sp.samples || [], ports: sp.ports || [], zero: true,
+    estimated: !!sp.estimated, truncated: !!sp.truncated
   }));
 }
 function zeroById(pid){ return zeroProjects().find(p => p.id === pid) || null; }
@@ -1133,11 +1151,14 @@ function shortPath(p, n){
   const isDrive = /^[A-Za-z]:$/.test(parts[0]);
   return (isDrive ? parts[0] + '\\' : '') + '…\\' + parts.slice(-(n || 2)).join('\\');
 }
-function fmtSize(mb){
+/* 预估值一律带 ~ 前缀：扫描时体积是「采样 400 个文件 + 外推」得来的，
+   不是逐文件实测。把估算当精确值报出去就违反了「声明可证伪」这条纪律。 */
+function fmtSize(mb, estimated){
   if(!mb) return '—';
-  if(mb >= 1024) return (mb/1024).toFixed(2) + ' GB';
-  if(mb < 1) return (mb*1024).toFixed(0) + ' KB';
-  return mb.toFixed(1) + ' MB';
+  const t = mb >= 1024 ? (mb/1024).toFixed(2) + ' GB'
+    : mb < 1 ? (mb*1024).toFixed(0) + ' KB'
+    : mb.toFixed(1) + ' MB';
+  return (estimated ? '~' : '') + t;
 }
 function fmtBytes(n){
   if(!n) return '0';
@@ -1203,8 +1224,9 @@ function cleanPreviewText(raw){
     .trim();
 }
 function projSummary(p){
-  return [(p.langs || []).slice(0,3).join(' · '), p.files ? p.files + ' 文件' : '',
-          p.git ? 'git' : '', fmtSize(p.sizeMB)].filter(Boolean).join(' · ');
+  return [(p.langs || []).slice(0,3).join(' · '),
+          p.files ? (p.estimated ? '约 ' : '') + p.files + ' 文件' : '',
+          p.git ? 'git' : '', fmtSize(p.sizeMB, p.estimated)].filter(Boolean).join(' · ');
 }
 
 function lightHTML(pid, extra){
@@ -1765,19 +1787,24 @@ function repoBody(pane, slot, pid){
         ? '<span class="server-pill"><i>●</i>服务端读写</span>'
         : mode === 'flat'
           ? '<span class="server-pill"><i>◇</i>兼容模式 · 只读</span>'
-          : '<button class="mini-btn" data-act="connect-dir" data-pid="' + esc(pid) + '" title="连接真实目录后可读写文件">' + (handle ? '已连接' : (isZero ? '解析中…' : '连接目录')) + '</button>') +
+          : '<button class="mini-btn" data-act="connect-dir" data-pid="' + esc(pid) + '" title="连接真实目录后可浏览文件，保存时再按需要写权限">' + (handle ? '已连接' : (isZero ? '解析中…' : '连接目录')) + '</button>') +
       '<button class="mini-btn" data-act="copy-text" data-text="' + esc(p ? p.path : '') + '">复制根路径</button>' +
       (rel ? '<button class="mini-btn" data-act="repo-nav" data-slot="' + slot + '" data-rel="' + esc(rel.split('/').slice(0,-1).join('/')) + '">↑ 上级</button>' : '') +
     '</div>';
 
+  /* 只读句柄建起来之后，旧版那句「可直接读取并保存文件」就开始撒谎了。
+     这里按该句柄自己的权限等级说实话；repoBody 是同步渲染不能 await permLevel，
+     因此读模块级 dirPerm 缓存，取不到时按「只读」保守显示（宁可少承诺）。 */
+  const canWrite = SERVER || (handle && dirPerm[pid] === 'write');
   const note = mode === 'server'
     ? '<div class="note-line"><i>●</i>本地服务已接管：无需点选目录，可直接读取并保存文件</div>'
     : mode === 'live'
-      ? '<div class="note-line"><i>●</i>已连接真实目录，可直接读取并保存文件</div>'
+      ? '<div class="note-line"><i>●</i>已连接真实目录（' +
+        (canWrite ? '可读写' : '<b>只读</b>：读取与浏览正常，点文件「保存」时会再向你索要一次写权限') + '）</div>'
       : mode === 'flat'
         ? '<div class="note-line"><i>●</i>兼容模式扫描（只读）：可浏览文件内容，<b>不能写盘</b> · 想直接写盘就到控制室点「选择本机目录」</div>'
         : isZero
-          ? '<div class="note-line"><i>●</i>本机目录（零服务）：正在解析目录句柄，稍候即可直接读写</div>'
+          ? '<div class="note-line"><i>●</i>本机目录（零服务）：正在解析目录句柄，稍候即可浏览；保存时会再按需要写权限</div>'
           : '<div class="note-line"><i>◇</i>快照浏览模式（只读）· 想直接读写磁盘文件，就在控制室授权一个本机目录，或双击「启动工作台.bat」起本地服务</div>';
 
   let body = '';
@@ -1968,7 +1995,7 @@ function renderControl(){
       '<td>' + (live ? '<span class="port-pill"><span style="width:6px;height:6px;border-radius:50%;background:#5fd39a"></span>:' + live.port + ' · ' + esc(live.proc) + '</span>'
                       : '<span class="occupancy idle">未监听</span>') + '</td>' +
       '<td><span class="occupancy' + (live ? '' : ' idle') + '">' + (live ? live.memMB + ' MB' : '—') + '</span></td>' +
-      '<td class="disk-cell"><div class="n">' + fmtSize(p.sizeMB) + '</div><div class="sizebar"><i style="width:' + w + '%"></i></div></td>' +
+      '<td class="disk-cell"><div class="n">' + fmtSize(p.sizeMB, p.estimated) + '</div><div class="sizebar"><i style="width:' + w + '%"></i></div></td>' +
       '<td><span class="occupancy">' + (p.files || 0) + '</span></td>' +
       '<td><div class="row-actions">' +
         '<button class="btn small primary" data-act="open-project" data-pid="' + esc(p.id) + '">打开</button>' +
@@ -2232,7 +2259,10 @@ async function connectDir(pid){
   if(zeroById(pid) && scanRoot){
     if(zeroPending[pid]){ toast('正在解析本机目录，稍候…'); return; }
     await ensureZeroHandle(pid);
-    if(dirHandles[pid]){ toast('已通过本机扫描根连接该目录 · 可读写', 'ok'); renderSplit(); return; }
+    if(dirHandles[pid]){
+      toast('已通过本机扫描根连接该目录 · ' + (scanPerm === 'write' ? '可读写' : '只读浏览（保存时会再要一次写权限）'), 'ok');
+      renderSplit(); return;
+    }
     toast('该目录解析失败，可能是权限已过期或目录被移动 · 请到控制室点「续期授权」或「重新扫描」', 'warn');
     return;
   }
@@ -2242,9 +2272,13 @@ async function connectDir(pid){
     return;
   }
   try {
-    const handle = await window.showDirectoryPicker({ mode:'readwrite', id:'wt-' + pid });
+    /* 同样默认只读：与控制室保持一致的权限口径，否则会出现
+       「控制室说只读、repo 窗格说可读写」的自相矛盾。 */
+    const handle = await window.showDirectoryPicker({ mode:'read', id:'wt-' + pid });
     dirHandles[pid] = handle;
-    toast('已连接目录 ' + handle.name + ' · 可读写', 'ok');
+    const lv = await permLevel(handle);
+    dirPerm[pid] = lv;
+    toast('已连接目录 ' + handle.name + ' · ' + (lv === 'write' ? '可读写' : '只读浏览（保存时会再要一次写权限）'), 'ok');
     renderSplit();
   } catch(e){
     if(e && e.name === 'AbortError'){ toast('已取消选择目录'); return; }
@@ -2306,10 +2340,28 @@ async function liveOpen(pid, slot, rel){
   } catch(e){ toast('读取失败：' + (e.message || e), 'warn'); }
 }
 
+/* 读时只读、存时才要写：这是整个权限模型的收口。
+   选目录时只要读权限（否则 C:\ 这类位置会「选完才报错」），
+   等用户真的点保存、手势窗口还开着的这一刻，再去争取写权限。 */
 async function liveSave(pid, rel, btn){
   const handle = dirHandles[pid];
   const ta = document.querySelector('[data-live-text]');
-  if(!handle || !ta) return;
+  if(!handle || !ta){ toast('目录未连接', 'warn'); return; }
+  /* 写权限升级必须落在第一个 await 之前。
+     requestPermission 依赖 transient user activation，放到任何 await 之后都会静默失效。
+     这里是 click → liveSave 的第一段，所以手势还在。 */
+  let lv = 'read';
+  try { lv = await handle.queryPermission({ mode:'readwrite' }); } catch(e){ lv = 'denied'; }
+  if(lv !== 'granted'){
+    if(btn){ btn.disabled = true; btn.textContent = '请求写权限…'; }
+    lv = await permUpgrade(handle);
+    if(btn){ btn.disabled = false; btn.textContent = '保存'; }
+  }
+  if(lv !== 'granted'){
+    toast('未能取得写权限：该目录被浏览器或系统保护（常见于 C:\\ 盘根、系统目录）。' +
+          '读取不受影响；要写盘请到控制室另选一个可写目录。', 'warn');
+    return;   // 注意：这里绝不清 dirHandles[pid]，否则连浏览也断了
+  }
   try {
     let cur = handle;
     const segs = rel.split('/');
@@ -2319,9 +2371,10 @@ async function liveSave(pid, rel, btn){
     const w = await fh.createWritable();
     await w.write(ta.value);
     await w.close();
+    dirPerm[pid] = 'write';   // 争取到写权限后记住，下次保存不用再弹一次
     toast('已写入磁盘：' + rel, 'ok');
     if(btn) btn.textContent = '已保存';
-  } catch(e){ toast('写入失败：' + (e.message || e), 'warn'); }
+  } catch(e){ toast('写入失败：' + (e && e.message ? e.message : e), 'warn'); }
 }
 
 /* ============================================================
@@ -2365,17 +2418,37 @@ const idbPut = (k, v) => idbTx('readwrite', os => os.put(v, k));
 const idbGet = (k) => idbTx('readonly', os => os.get(k));
 const idbDel = (k) => idbTx('readwrite', os => os.delete(k));
 
-/* FileSystemHandle 的权限三态：granted / prompt / denied */
-async function permState(handle, mode){
+/* 权限等级：把「读」与「写」拆成两个维度，避免为了读个目录也要写权限。
+   关键的 Chrome 语义：read 已 granted 时，queryPermission({mode:'readwrite'}) 返回的是 'prompt'
+   而不是 'granted'；只有真正拿过 write 授权才返回 'granted'。
+   所以不能用一个 readwrite 查询代表全部，否则只读目录会被误判成「没权限」，
+   进而在没有用户手势的启动路径上反复 requestPermission —— 那是必然失败且会让扫描彻底不可用。 */
+async function permLevel(handle){
   if(!handle) return 'none';
-  if(typeof handle.queryPermission !== 'function') return 'granted';
-  try { return await handle.queryPermission({ mode: mode || 'readwrite' }); }
+  if(typeof handle.queryPermission !== 'function') return 'write';
+  let rd;
+  try { rd = await handle.queryPermission({ mode:'read' }); }
   catch(e){ return 'denied'; }
+  if(rd === 'denied') return 'denied';
+  if(rd !== 'granted') return 'prompt';
+  let wr;
+  try { wr = await handle.queryPermission({ mode:'readwrite' }); }
+  catch(e){ wr = 'denied'; }
+  return wr === 'granted' ? 'write' : 'read';
 }
-async function permAsk(handle, mode){
+/* 争取写权限。铁律：requestPermission 依赖 transient user activation，
+   必须放在 click 处理链的「第一个 await 之前」，放到任何 await 之后都会静默失效。 */
+async function permUpgrade(handle){
   if(!handle) return 'none';
   if(typeof handle.requestPermission !== 'function') return 'granted';
-  try { return await handle.requestPermission({ mode: mode || 'readwrite' }); }
+  try { return await handle.requestPermission({ mode:'readwrite' }); }
+  catch(e){ return 'denied'; }
+}
+/* 续期只需读权限：写权限等用户真的点保存时再要，避免一次续期把整个位置卡死 */
+async function permResume(handle){
+  if(!handle) return 'none';
+  if(typeof handle.requestPermission !== 'function') return 'granted';
+  try { return await handle.requestPermission({ mode:'read' }); }
   catch(e){ return 'denied'; }
 }
 
@@ -2409,8 +2482,17 @@ const SKIP_DIRS = new Set(['node_modules','.git','.svn','.hg','.venv','venv','en
   'Documents and Settings','All Users','Default User','Library','Temp','OneDriveTemp','AppData','Application Data',
   'Intel','AMD','NVIDIA','WindowsApps','WpSystem']);
 /* 扫描必须有硬上限：选到 C:\ 这类超大根时也得在几秒内返回，而不是卡住不动、界面像没反应 */
-const MAX_WALK_DEPTH = 4, MAX_PROJECTS = 150, MAX_VISITED = 2500, MAX_MEASURE = 2500, MAX_SAMPLES = 8;
-const FIND_BUDGET_MS = 5000, MEASURE_BUDGET_MS = 5000;
+const MAX_PROJECTS = 150, MAX_MEASURE = 2500, MAX_SAMPLES = 8;
+const MEASURE_BUDGET_MS = 5000;
+/* 精确测量前 N 个文件，之后按均值外推：避免 2500 次 getFile() × 150 个项目拖垮整次扫描 */
+const EXACT_MEASURE = 400;
+/* 两档预算。用户扫不到深层项目时，正确做法不是单纯加深，而是同时给更大的目录预算：
+   只加深会让扫描更慢，但浅层照样先把预算吃光，深层还是轮不到。 */
+function WALK(){
+  return deepScan
+    ? { depth:6, visited:8000, findMs:15000, layer:[1500, 800] }
+    : { depth:4, visited:2500, findMs:5000,  layer:[400, 200] };
+}
 let lastScan = { visited:0, depth:0, errors:0, truncated:false };   // 最近一次扫描的遍历统计，用于「0 结果」时给出可诊断的提示
 let scanStateMsg = '';   // 扫描进度文案；扫描期间实时刷新，避免界面看起来像「点了没反应」
 
@@ -2426,15 +2508,39 @@ function setScanState(msg){
     : '';
 }
 
+/* 每次 next() 单独计时：网络驱动器、脱机盘、U 盘拔出、被杀软拦下的目录
+   都会让 entries() 无限期挂起，而预算检查点在「出队时」，await 阻塞期间根本执行不到。
+   注意必须返回「异步可迭代对象」而不是 Promise —— Promise 不是 async-iterable，
+   直接 for await 一个 Promise 会抛 TypeError，结果每次列目录都拿到空数组。 */
+const IO_TIMEOUT_MS = 3000;
+function withTimeoutIter(iter, ms){
+  const it = iter && iter[Symbol.asyncIterator] ? iter[Symbol.asyncIterator]() : null;
+  const src = it || (iter && iter[Symbol.iterator] ? iter[Symbol.iterator]() : null);
+  if(!src) throw new Error('不可迭代');
+  return (async function*(){
+    for(;;){
+      let timer = null;
+      /* 每次 next() 都重新计时，所以是「卡住 N 毫秒就放弃」，而不是「整次枚举有总时限」 */
+      const guard = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('IO 超时')), ms); });
+      try {
+        const r = it ? await Promise.race([it.next(), guard]) : await Promise.race([Promise.resolve(src.next()), guard]);
+        if(r.done) return;
+        yield r.value;
+      } finally {
+        if(timer) clearTimeout(timer);   // 不清理的话，每列一个目录就留一个待触发的定时器
+      }
+    }
+  })();
+}
 /* 兼容不同实现：优先 entries()，退化到 values()；两者都不可用时记一次错误 */
 async function listDir(dir){
   const out = [];
   try {
     if(typeof dir.entries === 'function'){
-      for await (const e of dir.entries()) out.push([e[0], e[1]]);
+      for await (const e of withTimeoutIter(dir.entries(), IO_TIMEOUT_MS)) out.push([e[0], e[1]]);
       return out;
     }
-    for await (const h of dir.values()) out.push([h.name, h]);
+    for await (const h of withTimeoutIter(dir.values(), IO_TIMEOUT_MS)) out.push([h.name, h]);
   } catch(e){ lastScan.errors++; }
   return out;
 }
@@ -2463,12 +2569,14 @@ function portsFromText(txt){
    全程带硬预算（目录数 + 耗时），超限即停并置 truncated，保证几秒内一定返回结果。 */
 async function findProjectRoots(root, onProgress){
   const hits = [];
+  const W = WALK();
   lastScan = { visited:0, depth:0, errors:0, truncated:false };
   const t0 = Date.now();
-  const overBudget = () => lastScan.visited >= MAX_VISITED || (Date.now() - t0) > FIND_BUDGET_MS;
+  const overBudget = () => lastScan.visited >= W.visited || (Date.now() - t0) > W.findMs;
   const queue = [{ dir: root, rel: '', depth: 0 }];
   let qi = 0;
   while(qi < queue.length){
+    if(scanAbort) break;
     if(hits.length >= MAX_PROJECTS){ lastScan.truncated = true; break; }
     if(overBudget()){ lastScan.truncated = true; break; }
     const { dir, rel, depth } = queue[qi++];
@@ -2486,9 +2594,16 @@ async function findProjectRoots(root, onProgress){
     }
     const git = dirs.some(([n]) => n === '.git');
     if(git || langs.size) hits.push({ rel, dir, git, langs:[...langs] });
-    if(depth >= MAX_WALK_DEPTH) continue;
+    if(depth >= W.depth) continue;
+    /* 分层配额：浅层目录动辄成千上万，不设配额的话预算在第 1-2 层就被吃光，
+       深层的项目根本轮不到。超配额的分支直接跳过，并把 truncated 置上，
+       这样「0 结果」时提示会说清是跳过了、而不是扫过了。 */
+    const layerCap = W.layer[depth] !== undefined ? W.layer[depth] : Infinity;
+    let pushed = 0;
     for(const [n, h] of dirs){
       if(SKIP_DIRS.has(n) || n.startsWith('.')) continue;
+      if(pushed >= layerCap) continue;
+      pushed++;
       queue.push({ dir: h, rel: rel ? rel + '/' + n : n, depth: depth + 1 });
     }
   }
@@ -2496,12 +2611,17 @@ async function findProjectRoots(root, onProgress){
 }
 
 /* 量一个项目：字节数 / 文件数 / 语言分布 / README 首段 / 声明端口。
-   全部有上限（文件数 + 深度 + 截止时间），保证单个超大目录也不会把整次扫描拖住。 */
+   全部有上限（文件数 + 深度 + 截止时间），保证单个超大目录也不会把整次扫描拖住。
+   体积用「采样 + 外推」：逐文件 getFile() 在大项目上是 2500 次异步 IO，
+   150 个项目下来会把整次扫描拖到预算之外，结果卡片上体积全是 0。
+   改为精确测前 EXACT_MEASURE 个文件，之后只计数并按均值外推，返回的 estimated 会让 UI 加 ~ 前缀。
+   语言分布与文件数始终是全量统计，不受采样影响。 */
 async function measureDir(dir, deadline){
-  let size = 0, files = 0, truncated = false, mtime = 0;
+  let size = 0, files = 0, truncated = false, mtime = 0, measured = 0, estimated = false;
   const langs = new Map(), samples = [];
   async function walk(d, rel, depth){
-    if(truncated || depth > 4) return;
+    if(truncated || depth > WALK().depth) return;
+    if(scanAbort){ truncated = true; return; }
     if(deadline && Date.now() > deadline){ truncated = true; return; }
     const entries = await listDir(d);
     entries.sort((a, b) => a[1].kind === b[1].kind ? a[0].localeCompare(b[0], 'zh') : (a[1].kind === 'directory' ? -1 : 1));
@@ -2516,27 +2636,29 @@ async function measureDir(dir, deadline){
       const i = n.lastIndexOf('.');
       const lang = i > 0 ? EXT_LANG[n.slice(i).toLowerCase()] : '';
       if(lang) langs.set(lang, (langs.get(lang) || 0) + 1);
+      if(measured >= EXACT_MEASURE){ estimated = true; continue; }
       try {
         const f = await h.getFile();
-        size += f.size;
+        size += f.size; measured++;
         if(f.lastModified > mtime) mtime = f.lastModified;
         if(depth === 0 && samples.length < MAX_SAMPLES && f.size < 262144) samples.push({ p:rel ? rel + '/' + n : n, t:await f.text() });
       } catch(e){}
     }
   }
   await walk(dir, '', 0);
+  if(estimated && measured > 0 && files > measured) size = Math.round(size / measured * files);
   const pkg = await readSmallText(dir, 'package.json', 131072);
   const readme = samples.find(s => /^readme(\.(md|markdown|txt|rst))?$/i.test(s.p));
   const readmeTxt = readme ? readme.t : null;
   return {
-    size, files, truncated, langs, samples,
+    size, files, truncated, estimated, langs, samples,
     readme: readmeTxt ? readmeTxt.slice(0, 400) : '',
     ports: portsFromText(pkg || readmeTxt || ''),
     mtime
   };
 }
 /* 未测量（超出总预算）的项目用这份占位：语言仍由标记文件推导，体积/预览留空 */
-function emptyMeasure(){ return { size:0, files:0, truncated:true, langs:new Map(), samples:[], readme:'', ports:[], mtime:0 }; }
+function emptyMeasure(){ return { size:0, files:0, truncated:true, estimated:false, langs:new Map(), samples:[], readme:'', ports:[], mtime:0 }; }
 
 function pickLangs(markerLangs, langMap){
   const top = [...langMap.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
@@ -2554,48 +2676,34 @@ function joinRootPath(rel){
 }
 
 /* ---- 授权 / 续期 / 扫描 ---- */
-async function pickScanRoot(forceReadOnly){
+/* 默认只要「读」权限：扫描与浏览全都是只读操作，写权限留到用户真的点「保存」那一刻再去要。
+   这样选 C:\ 这类系统不允许写入的位置时，不会再出现「目录都选完了才报错」——
+   Chrome 的 showDirectoryPicker({mode:'readwrite'}) 会在返回句柄前先隐式申请写权限，
+   被 blocked-path 拦下时才抛 SecurityError，用户看到的就是选完之后才炸。
+   绝不在失败后再调第二次 showDirectoryPicker：第一次调用已经消耗掉用户手势，
+   重试必然失败，还会让用户再弹一次选择器。 */
+async function pickScanRoot(){
   if(!CAN_FS){ toast('当前浏览器不支持原生目录访问，请改用「兼容模式扫描」（不需要该 API）', 'warn'); return; }
-  let h = null, firstErr = '';
-  if(!forceReadOnly){
-    try {
-      h = await window.showDirectoryPicker({ mode:'readwrite', id:'wt-root' });
-    } catch(e){
-      if(e && e.name === 'AbortError'){ toast('已取消选择目录'); return; }
-      /* C:\ 这类位置常被系统拒绝写权限，readwrite 会直接失败。
-         顺手再试一次只读——有些浏览器在同一个手势窗口内会放行；
-         但第二次调用往往已经没有用户手势了（弹窗只授权一次），所以失败时要如实把「第一次的原因」
-         记进 pickFail 常驻显示，而不是把「缺手势」这种次生错误报给用户。 */
-      firstErr = e && e.message ? e.message : String(e);
-      try {
-        h = await window.showDirectoryPicker({ id:'wt-root' });
-        toast('该位置不可写，已按只读方式授权 · 扫描不受影响', 'warn');
-      } catch(e2){
-        if(e2 && e2.name === 'AbortError'){ toast('已取消选择目录'); return; }
-        pickFail = { name:'', msg:firstErr };
-        renderDirBar();
-        toast('选择目录失败：' + firstErr + ' · 点「以只读方式重选」或「兼容模式扫描」继续', 'warn');
-        return;
-      }
-    }
-  } else {
-    try {
-      h = await window.showDirectoryPicker({ id:'wt-root' });
-    } catch(e){
-      if(e && e.name === 'AbortError'){ toast('已取消选择目录'); return; }
-      pickFail = { name:'', msg:(e && e.message ? e.message : String(e)) };
-      renderDirBar();
-      toast('只读方式选择目录也失败：' + pickFail.msg + ' · 请改用「兼容模式扫描」', 'warn');
-      return;
-    }
+  let h = null;
+  try {
+    h = await window.showDirectoryPicker({ mode:'read', id:'wt-root' });
+  } catch(e){
+    if(e && e.name === 'AbortError'){ toast('已取消选择目录'); return; }
+    /* 只报第一次的真实原因，不做链式重试（次生的「缺用户手势」会盖掉真实原因） */
+    pickFail = { name:'', msg:(e && e.message ? e.message : String(e)) };
+    renderDirBar();
+    toast('选择目录失败：' + pickFail.msg + ' · 可点「兼容模式扫描」继续（不需要任何权限）', 'warn');
+    return;
   }
   try {
     pickFail = null;
     scanRoot = h; scanRootName = h.name;
-    flatFiles = null; flatRootName = '';   // 切回句柄模式，兼容模式的旧清单作废
+    scanPerm = await permLevel(h);
+    flatFiles = null; flatTree = null; flatRootName = '';   // 切回句柄模式，兼容模式的旧清单作废
     pendingAuth = [];
     renderDirBar(); syncModeBadge();
-    toast('已授权目录 ' + h.name + ' · 开始扫描', 'ok');
+    toast('已授权目录 ' + h.name + ' · ' +
+      (scanPerm === 'write' ? '可读写' : '只读浏览（保存时会再向你要一次写权限）') + ' · 开始扫描', 'ok');
     /* 句柄持久化放后台尽力而为：IndexedDB 无响应时也只影响「刷新后续用」，绝不挡本次扫描 */
     idbPut(SCAN_ROOT_KEY, h).catch(() => toast('句柄未能写入浏览器存储 · 刷新后需重新授权', 'warn'));
     await scanRootNow();
@@ -2604,22 +2712,31 @@ async function pickScanRoot(forceReadOnly){
     setScanState('扫描失败：' + (e && e.message ? e.message : String(e)));
   }
 }
+/* 续期只要读权限：扫描与浏览都是只读操作，写权限等用户真的点「保存」时再要。
+   本函数只由「续期授权」按钮点击进入，requestPermission 处在手势窗口内。 */
 async function resumeScanRoot(){
   const item = pendingAuth.find(x => x.key === SCAN_ROOT_KEY) || (scanRoot ? { handle:scanRoot } : null);
   if(!item){ toast('没有待续期的目录授权', 'warn'); return; }
-  const r = await permAsk(item.handle, 'readwrite');
-  if(r !== 'granted'){ toast('未获授权，目录仍不可读写', 'warn'); renderDirBar(); return; }
+  const r = await permResume(item.handle);
+  if(r !== 'granted'){
+    toast('未获授权，目录仍不可读 · 可点「兼容模式扫描」（不需要任何权限）', 'warn');
+    renderDirBar();
+    return;
+  }
   scanRoot = item.handle; scanRootName = item.handle.name;
+  scanPerm = await permLevel(item.handle);
   pendingAuth = pendingAuth.filter(x => x.key !== SCAN_ROOT_KEY);
   renderDirBar(); syncModeBadge();
-  toast('已续期目录授权 · 可读写', 'ok');
+  toast('已续期目录授权 · ' + (scanPerm === 'write' ? '可读写' : '只读浏览'), 'ok');
   await scanRootNow();
 }
 async function clearScanRoot(){
   scanRoot = null; scanRootName = ''; pendingAuth = []; localPorts = null;
-  flatFiles = null; flatRootName = ''; pickFail = null;
+  scanPerm = '';                       // 易漏：不重置的话清除后 UI 仍显示旧权限
+  flatFiles = null; flatTree = null; flatRootName = ''; pickFail = null;
   zeroScan = { scannedAt:'', rootName:'', rootPath:zeroScan.rootPath || '', mode:'', projects:[] };
   Object.keys(dirHandles).forEach(k => { delete dirHandles[k]; });
+  Object.keys(dirPerm).forEach(k => { delete dirPerm[k]; });
   store.write(LS.zero, zeroScan);
   try { await idbDel(SCAN_ROOT_KEY); } catch(e){}
   buildIndex(); renderAll(); syncModeBadge();
@@ -2627,12 +2744,32 @@ async function clearScanRoot(){
 }
 async function scanRootNow(){
   if(!scanRoot){ toast('先在控制室选择一个本机目录', 'warn'); return; }
-  /* 权限不满足也不直接放弃：先试着读，真读不动时再在结果里给出「续期授权」的针对性提示 */
-  let perm = await permState(scanRoot, 'readwrite');
-  if(perm !== 'granted'){ perm = await permAsk(scanRoot, 'readwrite'); renderDirBar(); }
+  if(scanning){ toast('已有扫描在跑，再点扫描按钮可取消', 'warn'); return; }
+  /* 只查询权限、绝不请求。
+     requestPermission 依赖用户手势，而本函数会被页面加载时的恢复路径调用（那时没有手势），
+     一请求就必然失败；旧实现失败后还不 return，继续拿没权限的句柄硬扫，
+     结果所有 entries() 都失败，报出一个误导性的「没找到项目」——这就是刷新后扫描不可用的根因。 */
+  scanPerm = await permLevel(scanRoot);
+  renderDirBar();
   const btn = document.getElementById('dirScanBtn');
-  if(btn){ btn.disabled = true; btn.textContent = '扫描中…'; }
+  const unbusy = () => {
+    scanning = false;
+    if(btn){ btn.disabled = false; btn.textContent = deepScan ? '深度扫描' : '重新扫描'; }
+  };
+  if(scanPerm === 'denied'){
+    setScanState('目录不可读：权限已被拒绝或被系统阻止（常见于 C:\\ 盘根）· 请改选更靠近项目的父目录，或点「兼容模式扫描」');
+    unbusy();
+    return;
+  }
+  if(scanPerm === 'prompt'){
+    setScanState('浏览器已收回授权（刷新后的常态）· 请点「续期授权」后再扫描');
+    unbusy();
+    return;
+  }
+  scanning = true;
+  if(btn){ btn.textContent = '扫描中…点击取消'; }
   setScanState('正在扫描…');
+  scanAbort = false;
   const t0 = Date.now();
   let roots = [];
   try { roots = await findProjectRoots(scanRoot, p => setScanState('正在扫描… 已遍历 ' + p.visited + ' 个目录，最深 ' + p.depth + ' 层')); }
@@ -2640,13 +2777,14 @@ async function scanRootNow(){
     const msg = e && e.message ? e.message : String(e);
     toast('扫描失败：' + msg, 'warn');
     setScanState('扫描失败：' + msg + '（可换个更靠近项目的父目录再试）');
-    if(btn){ btn.disabled = false; btn.textContent = '重新扫描'; }
+    unbusy();
     return;
   }
   const projects = [];
-  const measureDeadline = t0 + FIND_BUDGET_MS + MEASURE_BUDGET_MS;
+  const measureDeadline = t0 + WALK().findMs + MEASURE_BUDGET_MS;
   let measureStopped = false;
   for(const r of roots){
+    if(scanAbort) break;
     let m;
     if(measureStopped || Date.now() > measureDeadline){ measureStopped = true; m = emptyMeasure(); }
     else {
@@ -2659,13 +2797,29 @@ async function scanRootNow(){
       path: joinRootPath(r.rel),
       langs: pickLangs(r.langs, m.langs),
       category: r.git ? '本机扫描 · git' : '本机扫描',
-      sizeBytes: m.size, files: m.files, truncated: m.truncated,
+      sizeBytes: m.size, files: m.files, truncated: m.truncated || m.estimated, estimated: !!m.estimated,
       updated: new Date(m.mtime || Date.now()).toISOString().slice(0, 10),
       git: r.git, samples: m.samples, readme: m.readme, ports: m.ports, live: null
     });
   }
+  /* 用户主动取消：保留已扫到的部分，如实说明是半途停的，不假装扫完 */
+  if(scanAbort){
+    projects.sort((a, b) => b.sizeBytes - a.sizeBytes);
+    zeroScan = {
+      scannedAt: new Date().toISOString(), rootName: scanRootName,
+      rootPath: zeroScan.rootPath || '', mode:'handle', projects,
+      stats: { visited: lastScan.visited, depth: lastScan.depth, errors: lastScan.errors, truncated:true, measured: projects.filter(p => !p.truncated).length }
+    };
+    store.write(LS.zero, zeroScan);
+    if(localPorts) applyPorts();
+    setScanState('');
+    buildIndex(); renderAll(); unbusy();
+    toast('已取消扫描 · 保留已发现的 ' + projects.length + ' 个项目（结果不完整）', 'warn');
+    return;
+  }
   projects.sort((a, b) => b.sizeBytes - a.sizeBytes);
   const truncated = lastScan.truncated || measureStopped;
+  unbusy();
   zeroScan = {
     scannedAt: new Date().toISOString(), rootName: scanRootName,
     rootPath: zeroScan.rootPath || '', mode:'handle', projects,
@@ -2676,15 +2830,16 @@ async function scanRootNow(){
   setScanState('');
   buildIndex(); renderAll();
   if(!projects.length){
-    toast('扫描完成：该目录下没找到项目（已遍历 ' + lastScan.visited + ' 个目录，最深 ' + lastScan.depth + ' 层' +
+    /* 权限提示放在第一位：旧版把它排在遍历统计之后，用户根本看不到重点 */
+    toast((scanPerm === 'read' ? '当前只有只读权限（不影响扫描）。' : '') +
+      '扫描完成：该目录下没找到项目（已遍历 ' + lastScan.visited + ' 个目录，最深 ' + lastScan.depth + ' 层' +
       (lastScan.errors ? '，有 ' + lastScan.errors + ' 个目录读取失败' : '') + '）。' +
-      (perm !== 'granted' ? '当前未取得目录访问权限，请点「续期授权」。' : '') +
-      (lastScan.truncated ? '目录太大，扫描已达上限，可能没走到项目所在位置——请改选更靠近项目的父目录。' : '') +
+      (lastScan.truncated ? '目录太大，扫描已达上限，可能没走到项目所在位置——请改选更靠近项目的父目录，或开「深度扫描」。' : '') +
       '项目需含 .git 或工程标记文件（package.json / CMakeLists.txt / Cargo.toml / go.mod 等）；' +
       '若项目在更深层，请改选更靠近项目的父目录。', 'warn');
   } else if(truncated){
     toast('扫描完成 · 发现 ' + projects.length + ' 个项目 · 用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's' +
-      '（已达扫描上限，结果可能不完整；选中的目录越大越容易漏，建议改选更靠近项目的父目录）', 'warn');
+      '（已达扫描上限，结果可能不完整；选中的目录越大越容易漏，建议改选更靠近项目的父目录，或开「深度扫描」）', 'warn');
   } else {
     toast('扫描完成 · 发现 ' + projects.length + ' 个项目 · 用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's', 'ok');
   }
@@ -2700,12 +2855,16 @@ async function restoreScanRoot(){
   try { h = await idbGet(SCAN_ROOT_KEY); } catch(e){ h = null; }
   if(!h){ renderDirBar(); return; }
   scanRootName = h.name;
-  if(await permState(h, 'readwrite') === 'granted'){
-    scanRoot = h;
+  /* 只读也算可用：旧版只认 readwrite，于是刷新后（浏览器把权限降级）扫描直接不可用。
+     这里也绝不能 requestPermission —— 页面加载时没有用户手势，一请求就必失败。 */
+  const lv = await permLevel(h);
+  if(lv === 'read' || lv === 'write'){
+    scanRoot = h; scanPerm = lv;
     renderDirBar(); syncModeBadge();
     if(!(zeroScan.projects || []).length) scanRootNow();
     return;
   }
+  scanRoot = null; scanPerm = lv;
   pendingAuth = [{ key:SCAN_ROOT_KEY, handle:h }];
   renderDirBar();
 }
@@ -2741,13 +2900,14 @@ function onFlatPicked(e){
 }
 async function scanFlatList(files){
   const t0 = Date.now();
+  /* tree 提到模块级由 flatListAt 复用：旧版扫完就丢，导致每次列目录都要全量遍历几万条清单 */
   const tree = new Map();   // rel -> { dirs:Set<string>, files:[{name,size,mtime,file}] }
   const node = rel => { let n = tree.get(rel); if(!n){ n = { dirs:new Set(), files:[] }; tree.set(rel, n); } return n; };
   node('');
   const list = new Map();   // 相对路径 -> File，供仓库窗格只读浏览
   let rootName = '', truncatedList = false, i = 0;
   for(const f of files){
-    if(i++ >= MAX_FLAT_FILES){ truncatedList = true; break; }
+    if(i >= MAX_FLAT_FILES){ truncatedList = true; break; }
     const segs = String(f.webkitRelativePath || f.name).split('/');
     if(!rootName) rootName = segs[0];
     const rest = segs.slice(1);
@@ -2757,19 +2917,26 @@ async function scanFlatList(files){
     for(const seg of rest){ node(cur).dirs.add(seg); cur = cur ? cur + '/' + seg : seg; }
     node(cur).files.push({ name:fname, size:f.size, mtime:f.lastModified, file:f });
     list.set(cur ? cur + '/' + fname : fname, f);
-    if(i % 8000 === 0) setScanState('正在整理文件清单… ' + i + ' / ' + files.length + ' 个文件');
+    i++;
+    /* 分片让出主线程：几万个文件一次性整理会冻结界面数秒，用户会以为页面死了。
+       阈值取 4000：设太小会被后台标签页的 setTimeout 节流（最低 1s）拖慢整次扫描。 */
+    if(i % 4000 === 0){
+      setScanState('正在整理文件清单… ' + i + ' / ' + files.length + ' 个文件');
+      await new Promise(r => setTimeout(r, 0));
+    }
   }
   if(!rootName){ toast('文件清单为空，无法识别目录名', 'warn'); return; }
   setScanState('正在扫描… 已整理 ' + i + ' 个文件');
 
   /* 广度优先识别项目根，规则与硬预算与句柄模式完全一致 */
+  const W = WALK();
   const hits = [];
   const stats = { visited:0, depth:0, errors:0, truncated:truncatedList };
   const queue = [{ rel:'', depth:0 }];
   let qi = 0;
   while(qi < queue.length){
     if(hits.length >= MAX_PROJECTS){ stats.truncated = true; break; }
-    if(Date.now() - t0 > FIND_BUDGET_MS){ stats.truncated = true; break; }
+    if(stats.visited >= W.visited || Date.now() - t0 > W.findMs){ stats.truncated = true; break; }
     const { rel, depth } = queue[qi++];
     stats.visited++;
     if(depth > stats.depth) stats.depth = depth;
@@ -2784,9 +2951,13 @@ async function scanFlatList(files){
     }
     const git = n.dirs.has('.git');
     if(git || langs.size) hits.push({ rel, git, langs:[...langs] });
-    if(depth >= MAX_WALK_DEPTH) continue;
+    if(depth >= W.depth) continue;
+    const layerCap = W.layer[depth] !== undefined ? W.layer[depth] : Infinity;
+    let pushed = 0;
     for(const d of n.dirs){
       if(SKIP_DIRS.has(d) || d.startsWith('.')) continue;
+      if(pushed >= layerCap) continue;
+      pushed++;
       queue.push({ rel: rel ? rel + '/' + d : d, depth: depth + 1 });
     }
   }
@@ -2844,9 +3015,12 @@ async function scanFlatList(files){
   }
   projects.sort((a, b) => b.sizeBytes - a.sizeBytes);
 
-  flatFiles = list; flatRootName = rootName; pickFail = null;
+  flatFiles = list; flatTree = tree; flatRootName = rootName; pickFail = null;
   scanRoot = null; pendingAuth = [];      // 兼容模式没有句柄，也就没有「续期」一说
+  scanPerm = '';                          // 兼容模式没有句柄，权限等级无从谈起
   scanRootName = rootName;
+  Object.keys(dirHandles).forEach(k => { delete dirHandles[k]; });   // 切到兼容模式，清掉句柄模式的残留
+  Object.keys(dirPerm).forEach(k => { delete dirPerm[k]; });
   zeroScan = {
     scannedAt: new Date().toISOString(), rootName,
     rootPath: zeroScan.rootPath || '', mode:'flat', projects,
@@ -2876,21 +3050,15 @@ function flatAbs(pid, rel){
   const base = (zp && zp.rel) ? zp.rel : '';
   return base ? (rel ? base + '/' + rel : base) : rel;
 }
+/* 直接查扫描时建好的目录树：O(1)，不再全量遍历几万条文件清单。
+   没有树（例如刷新后清单已失效）时退回空结果，UI 会提示需要重扫一次。 */
 function flatListAt(rel){
-  const dirs = new Set(), files = [];
-  if(!flatFiles) return { dirs:[], files:[] };
-  const prefix = rel ? rel + '/' : '';
-  for(const [p, f] of flatFiles){
-    if(p.indexOf(prefix) !== 0) continue;
-    const rest = p.slice(prefix.length);
-    if(!rest) continue;
-    const i = rest.indexOf('/');
-    if(i < 0) files.push({ name:rest, size:f.size });
-    else dirs.add(rest.slice(0, i));
-  }
+  if(!flatTree) return { dirs:[], files:[] };
+  const n = flatTree.get(rel || '');
+  if(!n) return { dirs:[], files:[] };
   return {
-    dirs: [...dirs].sort((a, b) => a.localeCompare(b, 'zh')).map(n => ({ name:n })),
-    files: files.sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+    dirs: [...n.dirs].sort((a, b) => a.localeCompare(b, 'zh')).map(x => ({ name:x })),
+    files: n.files.slice().sort((a, b) => a.name.localeCompare(b.name, 'zh')).map(f => ({ name:f.name, size:f.size }))
   };
 }
 function flatFill(pid){
@@ -2977,10 +3145,14 @@ async function ensureZeroHandle(pid){
   if(!zp) return;
   zeroPending[pid] = true;
   try {
-    if(await permState(scanRoot, 'readwrite') !== 'granted') return;
+    /* 只读即可建句柄：浏览与读取都只需要读权限，写留给「保存」时再升级。
+       旧版卡在 readwrite 上，导致只读目录里 repo 窗格连目录树都出不来。 */
+    let lv = scanPerm;
+    if(lv !== 'read' && lv !== 'write') lv = await permLevel(scanRoot);
+    if(lv !== 'read' && lv !== 'write') return;
     let cur = scanRoot;
     if(zp.rel) for(const seg of zp.rel.split('/')) cur = await cur.getDirectoryHandle(seg);
-    dirHandles[pid] = cur;
+    dirHandles[pid] = cur; dirPerm[pid] = lv;
     if(activeId === pid) renderSplit();
   } catch(e){ /* 目录被移动或删除，降级为快照视图 */ }
   finally { zeroPending[pid] = false; }
@@ -2993,25 +3165,39 @@ function renderDirBar(){
   const cntEl = document.getElementById('dirAuthCount');
   const name = scanRootName || zeroScan.rootName || '';
   const isFlat = zeroScan.mode === 'flat';
-  const st = scanRoot ? 'granted' : (isFlat ? 'flat' : (pendingAuth.length ? 'prompt' : 'none'));
-  const stTxt = st === 'granted' ? '已授权 · 可读写'
-    : st === 'flat' ? '已扫描 · 只读（兼容模式）'
-    : (st === 'prompt' ? '需续期（点一次即恢复）' : '未授权');
-  const stCls = st === 'granted' ? 'var(--st-done)' : (st === 'prompt' ? 'var(--st-needs)' : 'var(--txt-mute)');
+  /* 六态由权限等级驱动，而不是「有没有句柄」：
+     write 可读写 / read 只读浏览 / prompt 需续期 / denied 该位置不可读 / flat 兼容模式 / none 未授权 */
+  const st = isFlat ? 'flat'
+    : (scanPerm ? scanPerm : (pendingAuth.length ? 'prompt' : 'none'));
+  const stTxt = st === 'write' ? '已授权 · 可读写'
+    : st === 'read'   ? '已授权 · 只读浏览'
+    : st === 'flat'   ? '已扫描 · 只读（兼容模式）'
+    : st === 'prompt' ? '需续期（点一次即恢复）'
+    : st === 'denied' ? '该位置不可读（被系统或浏览器阻止）'
+    : '未授权';
+  const stCls = (st === 'write' || st === 'read') ? 'var(--st-done)'
+    : (st === 'prompt' || st === 'denied') ? 'var(--st-needs)' : 'var(--txt-mute)';
   const n = (zeroScan.projects || []).length;
   const when = zeroScan.scannedAt ? String(zeroScan.scannedAt).replace('T', ' ').slice(0, 19) : '—';
-  if(cntEl) cntEl.textContent = st === 'granted' ? '· 可读写' : (st === 'flat' ? '· 只读' : '· 只读快照');
+  if(cntEl) cntEl.textContent = st === 'write' ? '· 可读写' : (st === 'read' ? '· 只读' : (isFlat ? '· 只读' : '· 只读快照'));
 
   el.innerHTML =
     '<div class="dir-row"><span class="dir-k">状态</span>' +
       '<span class="dir-v"><b style="color:' + stCls + '">' + esc(stTxt) + '</b>' +
       (name ? '<span style="color:var(--txt-mute)"> · ' + esc(name) + '</span>' : '') + '</span></div>' +
+    (st === 'read' || st === 'write'
+      ? '<div class="dir-row"><span class="dir-k">权限</span><span class="dir-v">' +
+        (st === 'write'
+          ? '<b>读 + 写</b>'
+          : '<b>只读</b><span style="color:var(--txt-mute)"> · 读取与扫描正常，点文件「保存」时会再向你要一次写权限</span>') +
+        '</span></div>'
+      : '') +
     (pickFail
       ? '<div class="dir-row"><span class="dir-k">上次失败</span>' +
           '<span class="dir-v" style="white-space:normal;overflow:visible"><span style="color:var(--st-needs)">' +
           esc(pickFail.name ? pickFail.name + '：' : '') + esc(pickFail.msg) + '</span>' +
           '<span style="color:var(--txt-mute)"> · 常见于选择 <code>C:\\</code> 这类系统不允许写入的位置。' +
-          '点下面的「以只读方式重选」或「兼容模式扫描」都能继续。</span></span></div>'
+          '改用「兼容模式扫描」即可继续（不需要任何权限）。</span></span></div>'
       : '') +
     (name
       ? '<div class="dir-row"><span class="dir-k">根路径</span>' +
@@ -3033,10 +3219,13 @@ function renderDirBar(){
     '<div class="dir-row"><span class="dir-k">操作</span><span class="dir-v" style="display:flex;gap:8px;flex-wrap:wrap;white-space:normal;overflow:visible">' +
       (CAN_FS ? '<button class="btn small primary" data-act="dir-pick">' + (name ? '更换目录' : '选择本机目录') + '</button>'
               : '<button class="btn small" disabled>当前环境不支持目录访问</button>') +
-      (CAN_FS && pickFail ? '<button class="btn small primary" data-act="dir-pick-ro">以只读方式重选</button>' : '') +
       '<button class="btn small' + (CAN_FS ? '' : ' primary') + '" data-act="dir-flat" title="把目录的文件清单交给页面自己扫描：不需要任何权限，file:// 下也能用">兼容模式扫描</button>' +
       (st === 'prompt' ? '<button class="btn small primary" data-act="dir-resume">续期授权</button>' : '') +
-      (name ? '<button class="btn small" data-act="' + (isFlat ? 'dir-flat' : 'dir-scan') + '" id="dirScanBtn">' + (isFlat ? '重新扫描（兼容模式）' : '重新扫描') + '</button>' : '') +
+      (name && !isFlat
+        ? '<button class="btn small' + (deepScan ? ' primary' : '') + '" data-act="dir-deep" title="把遍历上限提到 8000 个目录、层数到 6 层，能扫到更深层的项目，代价是最长要等 20 秒">' +
+          (deepScan ? '深度扫描：开' : '深度扫描：关') + '</button>'
+        : '') +
+      (name ? '<button class="btn small" data-act="' + (isFlat ? 'dir-flat' : 'dir-scan') + '" id="dirScanBtn">' + (isFlat ? '重新扫描（兼容模式）' : (deepScan ? '深度扫描' : '重新扫描')) + '</button>' : '') +
       (name ? '<button class="btn small" data-act="dir-probe" id="dirProbeBtn">探测端口</button>' : '') +
       (name ? '<button class="btn small" data-act="dir-clear">清除</button>' : '') +
     '</span></div>' +
@@ -3045,16 +3234,18 @@ function renderDirBar(){
         '<b>不需要任何权限、不需要 Node、不需要安装</b>，' + (flatFiles ? '仓库窗格可只读浏览。' : '') +
         '代价是拿不到目录句柄，因此<b>不能直接写盘</b>，刷新后需要重新扫一次。'
       : '零服务模式：目录句柄存在浏览器 IndexedDB 里，<b>不需要 Node、不需要安装</b>。' +
-        '刷新或换机后浏览器会把权限降级为「待确认」，点一次「续期授权」即恢复读写。') +
+        '只申请<b>读</b>权限，扫描与浏览都够用；要保存文件时才临时再向你要一次写权限。' +
+        '刷新或换机后浏览器会把权限降级为「待确认」，点一次「续期授权」即恢复。') +
       (n ? '当前扫描根下的项目已直接并入项目栏与本地检索窗格。' : '') +
     '</div>' +
     '<div class="dir-tip">' +
       (CAN_FS
         ? '<i>提示</i>：' + (SERVER ? '本地服务已接管读写，本机目录区块是可选第二通道。'
-            : '「选择本机目录」用浏览器原生目录选择器，需要一次可授予的权限；' +
-              '若某个位置（典型是 <code>C:\\</code> 盘根）不允许写入，选择会整体失败，' +
-              '此时点<b>「以只读方式重选」</b>即可；若连只读也被拦，改用<b>「兼容模式扫描」</b>——' +
-              '它只枚举文件清单，任何浏览器、任何地址（含 <code>file://</code>）都能用。')
+            : '「选择本机目录」用浏览器原生目录选择器。扫描与浏览<b>只要读权限</b>，' +
+              '所以 <code>C:\\</code> 这类位置也能正常扫；只有保存时才需要写权限。' +
+              '若连读都被拦，改用<b>「兼容模式扫描」</b>——' +
+              '它只枚举文件清单，任何浏览器、任何地址（含 <code>file://</code>）都能用。' +
+              '扫不到深层项目时，开<b>「深度扫描」</b>能走到 6 层、最多 8000 个目录。')
         : '<i>提示</i>：当前浏览器不支持原生目录访问，但<b>兼容模式扫描</b>依然可用（不需要该 API）。') +
       ' 浏览器无法枚举本机全端口，端口探测只覆盖常见 ' + PROBE_PORTS.length + ' 个，结果为近似值；' +
       '网页反代依赖本地服务，零服务模式下内联页会退化为直连 iframe。' +
@@ -3155,7 +3346,7 @@ function copyContext(pid){
     '## 项目：' + (p.alias || p.name) + '（' + p.name + '）',
     '- 路径：' + p.path,
     '- 语言：' + ((p.langs || []).join(', ') || '—'),
-    '- 类别 / 体积 / 更新：' + (p.category || '—') + ' / ' + fmtSize(p.sizeMB) + ' / ' + (p.updated || '—'),
+    '- 类别 / 体积 / 更新：' + (p.category || '—') + ' / ' + fmtSize(p.sizeMB, p.estimated) + ' / ' + (p.updated || '—'),
     '- 运行中端口：' + (p.live ? ':' + p.live.port + ' · ' + p.live.proc : '未监听'),
     '### 目录结构（快照摘要）',
     '```',
@@ -3305,11 +3496,13 @@ root.addEventListener('click', e => {
       toast('已移除自定义项目', 'warn');
       break;
     }
-    case 'dir-pick':      pickScanRoot(false); break;
-    case 'dir-pick-ro':   pickScanRoot(true); break;
+    case 'dir-pick':      pickScanRoot(); break;
     case 'dir-flat':      pickFlatRoot(); break;
     case 'dir-resume':    resumeScanRoot(); break;
-    case 'dir-scan':      scanRootNow(); break;
+    /* 扫描中再点一次＝取消，避免在超大根目录上干等又没法中断 */
+    case 'dir-scan':      if(scanning){ scanAbort = true; setScanState('正在取消…'); } else scanRootNow(); break;
+    case 'dir-deep':      deepScan = !deepScan; renderDirBar();
+                          toast(deepScan ? '深度扫描已开：最多 8000 个目录 / 6 层，最长约 20 秒' : '已恢复普通扫描', deepScan ? 'warn' : 'ok'); break;
     case 'dir-probe':     probeLocalPorts(); break;
     case 'dir-clear':     clearScanRoot(); break;
   }

@@ -7,7 +7,7 @@ import vm from 'node:vm';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
-const TARGET = process.argv[2] || 'workbench.html';
+const TARGET = process.argv[2] || 'index.html';   // 与 build-public.mjs 的产出名保持一致
 const html = fs.readFileSync(path.join(ROOT, TARGET), 'utf8');
 const src = html.match(/<script>([\s\S]*)<\/script>/)[1];
 
