@@ -167,6 +167,19 @@ export function fsMockSource(plan, treeKind) {
         d('deep-proj', [ f('package.json', '{"name":"deep-proj"}'), d('.git', [ f('HEAD', 'ref') ]) ])
       ]) ]) ]) ]) ])
     ]);
+  } else if (KIND === 'bigproj') {
+    /* 单个大项目：src 下 600 个文件，必然超过 EXACT_MEASURE(400) 触发采样外推。
+       用来区分「体积是估算的」与「扫描被截断」——这两个不是一回事，
+       混在一起会让每个中等项目都被标成「结果可能不完整」。 */
+    var subs = [];
+    for (var k = 0; k < 20; k++) {
+      var one = [];
+      for (var m = 0; m < 30; m++) one.push(f('m' + k + '_' + m + '.ts', 'xxxxxxxxxx'));
+      subs.push(d('src' + k, one));
+    }
+    ROOT = d('BigProjRoot', [
+      d('big-app', [ f('package.json', '{"name":"big-app"}') ].concat(subs))
+    ]);
   } else if (KIND === 'huge') {
     /* 100 个顶层目录 × 100 个子目录：浅层就把遍历预算吃光 */
     var tops = [];

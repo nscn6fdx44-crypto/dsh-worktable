@@ -2797,7 +2797,10 @@ async function scanRootNow(){
       path: joinRootPath(r.rel),
       langs: pickLangs(r.langs, m.langs),
       category: r.git ? '本机扫描 · git' : '本机扫描',
-      sizeBytes: m.size, files: m.files, truncated: m.truncated || m.estimated, estimated: !!m.estimated,
+      /* truncated 只表示「扫描被预算截断」，不能把 estimated（体积为采样外推值）算进来：
+         外推是正常结果，形状完整、只是体积取近似，把它当成截断会让每个中等项目
+         都背上一个「数据不完整」的标记。兼容模式那边只写 mtrunc，两边口径要一致。 */
+      sizeBytes: m.size, files: m.files, truncated: m.truncated, estimated: !!m.estimated,
       updated: new Date(m.mtime || Date.now()).toISOString().slice(0, 10),
       git: r.git, samples: m.samples, readme: m.readme, ports: m.ports, live: null
     });

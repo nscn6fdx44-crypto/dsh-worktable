@@ -289,17 +289,47 @@ async function caseFlatBigList(conn) {
   } finally { await tab.close(); }
 }
 
+async function caseBigProject(conn) {
+  /* M13：单个大项目（600 个文件）走采样外推。
+     「体积是估算的」与「扫描被截断」是两回事，混在一起会让每个中等项目
+     都被标成「结果可能不完整」，用户会以为没扫全。 */
+  const tab = await newScenario(conn, 'read', 'bigproj');
+  try {
+    await goControl(tab);
+    await tab.click('[data-act="dir-pick"]');
+    await scanDone(tab);
+    const n = await tab.evalJs('zeroProjects().length');
+    ck('M13', '单个大项目被识别出来', n === 1, n + ' 个');
+    const est = await tab.evalJs('!!(zeroProjects()[0] || {}).estimated');
+    ck('M13b', '体积确实走了采样外推（否则这条用例没测到点子上）', est, est ? 'estimated' : '未外推');
+    const st = await tab.evalJs('JSON.stringify(zeroScan.stats || {})');
+    ck('M13c', '外推不等于截断：扫描未被标成不完整', st.indexOf('"truncated":false') >= 0, st);
+    /* 真正被污染的是这一个数：项目走的是采样外推，形状完整、只是体积为估算值，
+       却被算进了「未测量」。以后若有人拿 p.truncated 做 UI 判断，误报就从这里来。 */
+    const measured = await tab.evalJs('(zeroScan.stats || {}).measured');
+    ck('M13e', '外推不等于未测量：完整测量的项目数应为 1', measured === 1, 'measured=' + measured);
+    const bar = await tab.evalJs("(document.getElementById('dirBar')||{}).innerHTML || ''");
+    ck('M13d', '界面不谎报「已达扫描上限」', !bar.includes('已达扫描上限'),
+      bar.includes('已达扫描上限') ? '误报了' : '');
+  } finally { await tab.close(); }
+}
+
 /* ------------------------------------------------------------------ */
 
+/* 唯一事实来源：既决定 --only 的可选值，也决定全量跑的顺序（Object.keys 保序）。
+   早先这里是「CASES 表 + main 里另一份硬编码执行清单」两套，加用例时只改一处就会漏跑，
+   而漏跑的用例会静默从总数里消失，看不出来。现在只有这一张表。 */
 const CASES = {
-  M1: casePickBlocked,
-  M3: caseReadOnlyScan,
-  M5: () => null,
-  M7: caseLoadNoRequest,
-  M8: caseResume,
-  M10: caseDeepScan,
-  M11: caseHugeRoot,
-  M12: caseFlatBigList
+  M1:  { title: '盘根被拦',               fn: casePickBlocked },
+  M3:  { title: '只读权限',               fn: caseReadOnlyScan },
+  M5:  { title: '保存时升级 · 成功',      fn: c => caseSaveUpgrade(c, 'upgrade-ok', true) },
+  M6:  { title: '保存时升级 · 被拒',      fn: c => caseSaveUpgrade(c, 'upgrade-deny', false) },
+  M7:  { title: '刷新加载',               fn: caseLoadNoRequest },
+  M8:  { title: '续期',                   fn: caseResume },
+  M10: { title: '深度扫描',               fn: caseDeepScan },
+  M11: { title: '超大根',                 fn: caseHugeRoot },
+  M12: { title: '兼容模式大清单',         fn: caseFlatBigList },
+  M13: { title: '单个大项目 · 外推≠截断', fn: caseBigProject }
 };
 
 async function main() {
@@ -324,21 +354,17 @@ async function main() {
   console.log('产物   : ' + PAGE + '（' + (fs.statSync(PAGE).size / 1024).toFixed(1) + ' KB）\n');
 
   try {
+    /* CASES 是唯一事实来源：--only 与全量都从这里取，避免再加用例时两份清单不同步 */
+    const ids = Object.keys(CASES).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
     if (only) {
-      if (only === 'M5') await caseSaveUpgrade(conn, 'upgrade-ok', true);
-      else if (only === 'M6') await caseSaveUpgrade(conn, 'upgrade-deny', false);
-      else if (CASES[only]) await CASES[only](conn);
-      else { console.log('未知用例 ' + only); process.exit(1); }
+      if (!CASES[only]) { console.log('未知用例 ' + only); process.exit(1); }
+      console.log('【' + only + ' ' + CASES[only].title + '】');
+      await CASES[only].fn(conn);
     } else {
-      console.log('【盘根被拦】'); await casePickBlocked(conn);
-      console.log('\n【只读权限】'); await caseReadOnlyScan(conn);
-      console.log('\n【保存时升级 · 成功】'); await caseSaveUpgrade(conn, 'upgrade-ok', true);
-      console.log('\n【保存时升级 · 被拒】'); await caseSaveUpgrade(conn, 'upgrade-deny', false);
-      console.log('\n【刷新加载】'); await caseLoadNoRequest(conn);
-      console.log('\n【续期】'); await caseResume(conn);
-      console.log('\n【深度扫描】'); await caseDeepScan(conn);
-      console.log('\n【超大根】'); await caseHugeRoot(conn);
-      console.log('\n【兼容模式大清单】'); await caseFlatBigList(conn);
+      for (const id of ids) {
+        console.log('\n【' + id + ' ' + CASES[id].title + '】');
+        await CASES[id].fn(conn);
+      }
     }
   } catch (e) {
     console.log('\n✗ 驱动器异常：' + (e && e.message ? e.message : e));
