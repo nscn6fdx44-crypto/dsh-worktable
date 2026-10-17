@@ -48,7 +48,11 @@ if (m) {
   else {
     const raw = src.slice(dmStart + 'const DATA = '.length, dmEnd).trim().replace(/;$/, '');
     const DATA = JSON.parse(raw);
-    check('DATA.projects 非空', DATA.projects.length > 0, String(DATA.projects.length));
+    /* 公开版不注入示例项目：打开即是空的，项目全部来自访问者扫描自己的机器。
+       个人版（workbench.html，不入库）的 13 项由下方 hasPersonal 分支校验。 */
+    if (!hasPersonal) {
+      check('公开版无示例项目（打开即空）', Array.isArray(DATA.projects) && DATA.projects.length === 0, String(DATA.projects.length));
+    }
     check('DATA.trees 键与 projects id 对齐', DATA.projects.every(p => DATA.trees[p.id]), '缺 ' + DATA.projects.filter(p => !DATA.trees[p.id]).map(p => p.id).join(','));
     check('DATA.ports 为数组', Array.isArray(DATA.ports), String(DATA.ports.length) + ' 条');
     check('snapshot 已填', /\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(DATA.snapshot), DATA.snapshot);
@@ -143,7 +147,7 @@ if (fs.existsSync(regPath)) {
   fail.push('workbench.registry.json 不存在（需先跑 build.mjs）');
 }
 
-/* 5. 公开版 index.html：示例数据，且不得含任何本机标识 */
+/* 5. 公开版 index.html：无示例数据（打开即空），且不得含任何本机标识 */
 const pubPath = path.join(ROOT, 'index.html');
 if (fs.existsSync(pubPath)) {
   const pub = fs.readFileSync(pubPath, 'utf8');
@@ -151,7 +155,7 @@ if (fs.existsSync(pubPath)) {
   check('公开版无本机用户名', !pub.includes('jinshuaiyu'));
   check('公开版无用户目录前缀', !pub.includes('C:\\Users\\') && !pub.includes('LAPTOP-'));
   check('公开版无 AppData 绝对路径', !pub.includes('AppData\\Roaming'));
-  check('公开版标注为示例数据', pub.includes('公开演示版'));
+  check('公开版快照已标注', pub.includes('公开版（打开后扫描你自己的项目）'));
   check('公开版体积 < 400KB', pub.length / 1024 < 400, (pub.length / 1024).toFixed(1) + ' KB');
 
   const pm = pub.match(/<script>([\s\S]*)<\/script>/);
@@ -160,13 +164,12 @@ if (fs.existsSync(pubPath)) {
   const de = de0 >= 0 && ds >= 0 ? de0 + ds : -1;
   if (ds >= 0 && de >= 0) {
     const PD = JSON.parse(pm[1].slice(ds + 'const DATA = '.length, de).trim().replace(/;$/, ''));
-    check('公开版 trees 键与 projects id 对齐',
-      PD.projects.length > 0 && PD.projects.every(p => PD.trees[p.id]),
-      PD.projects.map(p => p.id).join(','));
-    check('公开版示例路径为通用占位',
-      PD.projects.every(p => p.path.startsWith('D:') && p.path.includes('projects')),
-      PD.projects[0].path);
-    check('公开版 live 字段形状', PD.projects.filter(p => p.live).every(p => p.live.port && p.live.proc));
+    /* 公开版不再注入示例数据：projects / trees / ports 三者都应为空，
+       页面打开即空，项目全部来自访问者扫描自己的机器 */
+    check('公开版无示例项目（projects 为空）', Array.isArray(PD.projects) && PD.projects.length === 0, String(PD.projects.length));
+    check('公开版无示例目录树（trees 为空）', Object.keys(PD.trees || {}).length === 0, String(Object.keys(PD.trees || {}).length));
+    check('公开版无示例端口（ports 为空）', Array.isArray(PD.ports) && PD.ports.length === 0, String(PD.ports.length));
+    check('公开版 AI 对话预设仍在', Array.isArray(PD.aiPresets) && PD.aiPresets.length > 0, String((PD.aiPresets || []).length) + ' 条');
   } else {
     fail.push('公开版未找到 DATA 字面量');
   }

@@ -90,12 +90,12 @@ Pages 是纯静态托管，但**零服务版支持在浏览器里扫描本机目
 
 | 路径 | 职责 |
 |---|---|
-| `index.html` | **产物**：公开版单文件（示例数据），Pages 入口 |
+| `index.html` | **产物**：公开版单文件（无示例数据，打开即空），Pages 入口 |
 | `serve.mjs` | 本地服务：零依赖 Node，现读 HTML + 项目文件读写 API + 端口探测 + 网页反代 + 自定义项目登记 |
 | `启动工作台.bat` | Windows 双击启动器 |
 | `build/workbench.template.html` | 模板：结构 / 样式 / 运行时，`/*__DATA__*/` 为数据占位符 |
 | `build/build.mjs` | 注入本机扫描快照生成 `workbench.html`（个人版，不入库） |
-| `build/build-public.mjs` | 注入示例数据生成 `index.html` |
+| `build/build-public.mjs` | 生成 `index.html`（公开版：不注入任何示例数据，打开即空） |
 | `build/verify.mjs` | 静态校验：自包含 / 数据契约 / 视觉回归 / 公开版零本机标识 |
 | `build/smoke.mjs` | 运行时冒烟：快照 / 服务 / 零服务 / 单项目根 / 超大根 / 兼容模式六场景 |
 | `build/e2e.mjs` | 真实浏览器端到端（Edge/Chrome headless + CDP，`file://` 下真跑授权→扫描→读写） |
@@ -179,8 +179,8 @@ node launcher.mjs                 # 启动器：网页内一键启动本地服�
 
 ## 隐私
 
-`index.html` 用的是**虚构示例数据**，项目路径统一为 `D:\projects\...` 占位，不含任何真实用户信息。
-`build/verify.mjs` 会断言公开版不含用户名、`C:\Users\`、`LAPTOP-` 等标识，防止误传。
+`index.html` **不携带任何示例项目**：`DATA.projects` / `trees` / `ports` 均为空，页面打开即是空的（只有空态引导与「整盘扫描」引导框）；访问者点「选择本机目录」或「兼容模式扫描」后，展示的全部是**他自己机器上**的项目，天然零暴露。
+`build/verify.mjs` 会断言公开版不含用户名、`C:\Users\`、`LAPTOP-` 等标识，并断言示例数据确实已清空，防止误传。
 
 个人版产物（内嵌本机真实路径、别名与目录样本）为 `workbench/workbench.html` 与 `workbench.registry.json`，
 两者已在仓库根 `.gitignore` 中排除，不入库。

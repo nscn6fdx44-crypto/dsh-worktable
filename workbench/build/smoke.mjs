@@ -69,6 +69,28 @@ async function runScenario(label, fetchStub, server) {
   console.log('\n【' + label + '】');
   const { ctx, writes, getEl } = buildContext(fetchStub);
 
+  /* 公开版不再内置示例项目（DATA.projects 为空）：给场景预置两个「扫描项目」
+     （走 wt2.zero——真实扫描结果的持久化通道，与访客扫完自己机器的结果同形），
+     让「取 pid → 打开项目 → 分栏 / 多选移除 / 恢复 / 自定义添加」全流程有对象可跑。
+     预置两个而非一个：唯一项目若恰是当前打开项，行类名会是 'pitem active sel'，
+     'pitem sel' 子串断言需要另一个未激活的行才成立。扫描项（非自定义）删除后进
+     removed 可恢复，与真实行为一致。 */
+  ctx.localStorage.setItem('wt2.zero', JSON.stringify({
+    scannedAt: '2026-10-17T13:00:00.000Z', rootName: 'smoke-root', rootPath: '',
+    mode: 'handle',
+    projects: [
+      { rel: 'smoke-demo', name: 'smoke-demo', path: 'D:\\projects\\smoke-demo',
+        langs: ['TypeScript'], category: '本机扫描', sizeBytes: 1048576, files: 12,
+        truncated: false, estimated: false, updated: '2026-10-17', git: false,
+        samples: [], ports: [], live: null },
+      { rel: 'smoke-demo2', name: 'smoke-demo2', path: 'D:\\projects\\smoke-demo2',
+        langs: ['Python'], category: '本机扫描', sizeBytes: 2097152, files: 8,
+        truncated: false, estimated: false, updated: '2026-10-16', git: false,
+        samples: [], ports: [], live: null }
+    ],
+    stats: { visited: 6, depth: 2, errors: 0, truncated: false, measured: 2 }
+  }));
+
   let err = null;
   try { new vm.Script(src).runInContext(ctx, { timeout: 20000 }); }
   catch (e) { err = e; }
@@ -99,8 +121,10 @@ async function runScenario(label, fetchStub, server) {
     check(label, '服务模式：不再显示「连接目录」', !splitHtml.includes('连接目录'));
     check(label, '模式徽章 = 本地服务 · 可读写', getEl('modeBadge')._html.includes('本地服务'));
   } else {
-    check(label, '快照模式：repo 窗格显示「连接目录」', splitHtml.includes('连接目录'));
-    check(label, '快照模式：提示启动本地服务', splitHtml.includes('启动工作台.bat'));
+    /* 公开版没有内置快照项目，打开的是扫描项目：repo 窗格走「零服务解析」分支，
+       显示「解析中…」与零服务提示（句柄在真实浏览器里会解析成 live，沙箱里保持解析态） */
+    check(label, '快照模式：扫描项目 repo 窗格显示「解析中」', splitHtml.includes('解析中'));
+    check(label, '快照模式：扫描项目 repo 窗格显示零服务提示', splitHtml.includes('本机目录（零服务）'));
     check(label, '模式徽章 = 快照模式 · 只读', getEl('modeBadge')._html.includes('快照模式'));
   }
 
@@ -185,6 +209,18 @@ async function runScenario(label, fetchStub, server) {
     added.length === 1 && added[0].langs.join('/') === 'Node/JS', added.length ? added[0].langs.join('/') : '—');
   check(label, '自定义项无路径时给出占位', added.length === 1 && added[0].path === '（未填写路径）');
   check(label, '自定义项渲染进侧栏列表', getEl('plist')._html.includes('冒烟测试项目'));
+
+  /* repo 窗格的「连接目录」分支：公开版没有内置快照项目，自定义项没有目录树，
+     repoBody 对它走 snapshot 分支——提示连接真实目录 / 启动本地服务。
+     打开刚添加的这个自定义项目，把这条分支的覆盖补回来。
+     仅快照模式断言：服务模式下任何项目都走服务端读写分支（上面已覆盖）。 */
+  if (!server && added.length) {
+    ctx.openProject(added[0].id);
+    await flush();
+    const snapHtml = getEl('wbSplit')._html;
+    check(label, '自定义项目 repo 窗格显示「连接目录」', snapHtml.includes('连接目录'));
+    check(label, '自定义项目 repo 窗格提示启动本地服务', snapHtml.includes('启动工作台.bat'));
+  }
 
   check(label, '渲染写入非空', writes.filter(([, v]) => v && v.length > 40).length > 5);
 }
