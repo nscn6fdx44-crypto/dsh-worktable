@@ -76,6 +76,22 @@ Rules:
 
 ---
 
+## Single-file workbench (`workbench/`)
+
+A self-contained HTML file that scans the projects on **your own machine** — no extension, no install, no build, no dependency.
+
+**Online**: <https://nscn6fdx44-crypto.github.io/trae-usage/workbench/> (pure static page on GitHub Pages)
+
+- **Scan local projects** — click "Select local directory"; the browser scans in place and recognizes a project by `.git` / `package.json` / `CMakeLists.txt` markers
+- **Read & write files** — with permission, the `repo` pane views and edits files inside the scanned directory directly
+- **Project workbench** — card grid / control room / split workspace; projects can be renamed, batched and managed (renaming only changes the display name in your browser, never the files on disk)
+
+Quick start: open the link with **Chrome / Edge** → control room → **"Select local directory"** → pick your project root (e.g. `D:\projects`). Nothing to install — the scan runs entirely in your own browser.
+
+Compatibility mode (no permission needed) covers locations where the directory picker is blocked; deep scan handles whole disks (8 levels / 20 000 dirs / ~1 min). Full documentation — including known browser limits and troubleshooting — in [`workbench/README.md`](workbench/README.md).
+
+---
+
 ## Getting started
 
 ### Development
