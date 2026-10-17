@@ -11,7 +11,10 @@
 - client 半侧（`src/client/index.js`）：`inject=['slots']`，注册侧边栏底部「工作台」区块（order 20，P0 徽标）；样式经 `ctx.effect` 注入、随销毁移除；面板页拉一次 health，把 host 半侧存活证据直接显示在页面上
 - 兼容声明只写已验证的一版：DSH **0.2.0-rc.2 + Windows 桌面端**（`dsh.compatibility.dsh`）；网页端安装语法同上游但未验证
 - 安装方式（桌面端须先从菜单/托盘完整退出应用）：`& "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:<仓库绝对路径>\dsh"`——`dsh plugin add` 底层是 profile 工作区的 pnpm add，装完重启生效
-- 根 `package.json` 增加 `dsh:build` / `dsh:check` 脚本；`dsh/README.md` 记录目录结构、构建、安装、验证步骤与 P1-P4 路线（P1 项目抽屉 → P2 文件/终端/git → P3 控制室 → P4 发布打包）
+- **真机安装实测（2026-10-17，0.2.0-rc.2）**：CLI `add` 只写依赖声明，还有两步手动——① 本机 pnpm 11.7 对 `link:` 依赖不创建 `node_modules` 链接（状态文件假报 up-to-date），需手动建 junction 后重跑 `add` 过 reconcile；② 须手动把 `trae-usage-worktable` 加进 profile 的 `dsh.profile.bundles`（CLI 不写，不加则应用不加载插件）
+- **端到端验证通过**：host 半侧 `/api/worktable/health` 在 DSH 进程内返回 `{"plugin":"trae-usage-worktable","version":"0.1.0","ok":true,"node":"v24.18.1","platform":"win32"}`；client 半侧 bundle 进入应用 boot map（`plugins/??trae-usage-worktable/client.js`）且 serve 正常；应用 5 进程 + 19387 端口正常启动
+- 踩坑记录：Electron 应用在含 `ELECTRON_RUN_AS_NODE=1` 的环境启动会退化为纯 Node 进程（不起窗口不开端口，假性"卡住"）——终端启动需 `env -u ELECTRON_RUN_AS_NODE`，日常用桌面快捷方式；DSH web 全站鉴权，验证 API 需先用启动时打印的 `?token=` URL 换 auth cookie
+- 根 `package.json` 增加 `dsh:build` / `dsh:check` 脚本；`dsh/README.md` 记录目录结构、构建、安装（含两步手动）、验证与 P1-P4 路线（P1 项目抽屉 → P2 文件/终端/git → P3 控制室 → P4 发布打包）
 
 ## workbench（未发布）
 

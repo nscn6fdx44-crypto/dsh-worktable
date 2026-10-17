@@ -4,7 +4,7 @@
 > 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的复刻，
 > 采用同款 Cordis 插件协议（host 半侧 + client 半侧双 bundle）。
 
-## 当前进度：P0 骨架（可安装、可加载、可见入口）
+## 当前进度：P0 骨架 ✅ 已安装验证（2026-10-17，DSH 0.2.0-rc.2 桌面端真机）
 
 | 半侧 | 文件 | 状态 |
 |---|---|---|
@@ -43,16 +43,26 @@ npm run check      # node --check 双 bundle
 
 ## 安装
 
-### Windows 官方桌面端（当前唯一验证平台）
+### Windows 官方桌面端（当前唯一验证平台，DSH 0.2.0-rc.2 实测通过）
 
-1. **完整退出** DeepSeek Harness（从菜单/托盘退出，只关窗口不够——否则 pnpm 写 profile 会被占用/不生效）；
-2. 用桌面端自带 CLI 执行（路径为本仓库绝对路径，不能含空格）：
+> 以下流程在 2026-10-17 真机验证。CLI 的 `plugin add` 只写依赖声明，**还有两步要手动做**（见步骤 3、5）——这是本机 pnpm 11.7 + DSH 0.2.0-rc.2 的实际行为，不是可选优化。
+
+1. **完整退出** DeepSeek Harness（从菜单/托盘退出，只关窗口不够——否则 pnpm 写 profile 会被占用）；
+2. 注册依赖（写入 `~/.dsh/profiles/desktop/package.json` + lockfile）：
 
 ```powershell
-& "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh"
+& "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:<本仓库绝对路径>\dsh"
 ```
 
-3. 手动重新打开 DeepSeek Harness，刷新界面。
+3. **确认链接落盘**：`~/.dsh/profiles/desktop/node_modules/trae-usage-worktable` 必须是指向本仓库 `dsh/` 的链接。本机 pnpm 对 `link:` 依赖只更新 lockfile、**不创建链接**（状态文件假报 "Already up to date"）。若缺失，手动建 junction：
+
+```powershell
+node -e "require('fs').symlinkSync('<本仓库绝对路径>\dsh','C:\Users\<用户>\.dsh\profiles\desktop\node_modules\trae-usage-worktable','junction')"
+```
+
+4. 重跑步骤 2 的命令——这次 reconcile（bundle 解析）会通过，无报错即注册完成；
+5. **把插件加进 bundles 列表**：编辑 `~/.dsh/profiles/desktop/package.json`，在 `dsh.profile.bundles` 数组末尾加一行 `"trae-usage-worktable"`（CLI 不会自动写这一项，不加应用启动时不加载插件）；
+6. 手动重新打开 DeepSeek Harness。
 
 ### 网页端（未验证，语法同上游）
 
@@ -63,10 +73,21 @@ dsh plugin --profile web add "link:<本仓库绝对路径>/dsh"
 ## 验证
 
 1. 侧边栏底部出现「工作台」区块（带 P0 徽标）；
-2. 点开区域显示 `host 半侧健康路由已注册`，并拉到 `/api/worktable/health` 的 JSON
-   （含 `plugin / version / node / platform` 字段——证明 host 半侧活着）；
-3. 失败排查：浏览器 DevTools Console 搜 `trae-usage-worktable`；host 侧看 DSH 日志里
-   `[worktable] host 插件已加载`。
+2. 点开区域显示 `host 半侧健康路由已注册`，并拉到 host 健康 JSON；
+3. **命令行复核**（应用启动时会在 stdout 打印 `dsh web: http://127.0.0.1:19387/?token=<令牌>`）：
+
+```bash
+# 用令牌换 auth cookie（303 重定向自动 set-cookie）
+curl -s -L -c jar.txt "http://127.0.0.1:19387/?token=<令牌>"
+# 带 cookie 打健康路由，应返回：
+# {"plugin":"trae-usage-worktable","version":"0.1.0","ok":true,"node":"v24.x","platform":"win32"}
+curl -s -b jar.txt "http://127.0.0.1:19387/api/worktable/health"
+# 客户端包应在 boot map 里（页面 HTML 含 plugins/??trae-usage-worktable/client.js）
+```
+
+4. 失败排查：浏览器 DevTools Console 搜 `trae-usage-worktable`；host 侧看应用启动输出里 `[worktable] host 插件已加载`。
+
+> **启动方式注意**：Electron 应用在带 `ELECTRON_RUN_AS_NODE=1` 的环境里启动会退化成纯 Node 进程（不起窗口、不开端口、表现为"卡住"）。从终端脚本启动时先 `env -u ELECTRON_RUN_AS_NODE`；日常请直接用桌面快捷方式。
 
 ## 兼容声明（可证伪）
 
