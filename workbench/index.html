@@ -665,6 +665,7 @@
   .pj-tags{display:flex;gap:4px;flex:none}
   .pj-tags .tag{font-size:9.5px;padding:2px 6px}
   .pj-size{font-family:var(--mono);font-size:10.5px;color:var(--txt-mute);flex:none;min-width:54px;text-align:right}
+  .pj-rename{flex:none;margin-left:2px;padding:2px 8px;font-size:10.5px}
 
   /* ================= AI 对话窗格 ================= */
   /* 对话窗格不再用「100% - 104px」按工具栏高度硬算：改成 flex 列，
@@ -1096,6 +1097,7 @@ let presetOf    = store.read(LS.preset, {});      // { pid: 'l13' }
 let panesOf     = store.read(LS.panes, {});       // { pid: [pane x4] }
 let custom      = store.read(LS.custom, []);
 let removed     = store.read(LS.removed, []);   // 已从项目栏移除的扫描项目 id
+let renames     = store.read('wb.renames', {}); // 项目显示名覆盖表：{ [normPath(path)]: 新名 }；只存浏览器，不碰磁盘
 let stateFilter = store.read(LS.filter, 'all');
 let selectMode  = false;                        // 项目栏多选态（不持久化）
 let selected    = new Set();                    // 多选中的项目 id（不持久化）
@@ -1151,6 +1153,7 @@ function zeroProjects(){
 }
 function zeroById(pid){ return zeroProjects().find(p => p.id === pid) || null; }
 /* 快照项目 + 零服务扫描 + 自定义项目，按路径去重后合并 */
+function liveAlias(p){ return p ? (renames[normPath(p.path)] || p.alias || p.name) : ''; }
 function allProjects(){
   const merged = DATA.projects.concat(zeroProjects(), custom);
   const seen = new Set(), out = [];
@@ -1159,7 +1162,7 @@ function allProjects(){
     const k = normPath(p.path);
     if(k && seen.has(k)) continue;
     if(k) seen.add(k);
-    out.push(p);
+    out.push({ ...p, alias: liveAlias(p) });
   }
   return out;
 }
@@ -1347,7 +1350,7 @@ function projUniverse(){
     scanCache.projects.forEach(sp => {
       if(seen.has(normPath(sp.path))) return;
       rows.push({
-        pid:null, name:sp.name, alias:sp.name, path:sp.path, langs:sp.langs || [],
+        pid:null, name:sp.name, alias:renames[normPath(sp.path)] || sp.name, path:sp.path, langs:sp.langs || [],
         sizeBytes:sp.sizeBytes || 0, files:sp.files || 0, updated:sp.updated || '',
         live:null, registered:false, category:'新发现', git:!!sp.git
       });
@@ -1396,6 +1399,7 @@ function projRowHTML(r){
       '<span class="pj-path" title="' + esc(r.path) + '">' + esc(shortPath(r, 2)) + '</span></span>' +
     '<span class="pj-tags">' + tags + '</span>' +
     '<span class="pj-size">' + fmtBytes(r.sizeBytes) + '</span>' +
+    '<button class="btn small ghost pj-rename" data-act="proj-rename" data-path="' + esc(r.path) + '" data-alias="' + esc(r.alias) + '" title="修改显示名">重命名</button>' +
     (!r.registered ? '<button class="btn small primary" data-act="proj-add" data-path="' + esc(r.path) +
       '" data-name="' + esc(r.name) + '" data-langs="' + esc((r.langs || []).join(',')) +
       '" data-size="' + r.sizeBytes + '" data-files="' + r.files + '" data-updated="' + esc(r.updated) +
@@ -3537,6 +3541,18 @@ root.addEventListener('click', e => {
       if(activeId === el.dataset.pid) closeProject();
       renderAll();
       toast('已移除自定义项目', 'warn');
+      break;
+    }
+    case 'proj-rename': {
+      const path = el.dataset.path;
+      const cur = el.dataset.alias || '';
+      const nv = window.prompt('修改项目显示名：', cur);
+      const v = (nv == null ? '' : String(nv)).trim();
+      if(!v || v === cur) break;
+      renames[normPath(path)] = v;
+      store.write('wb.renames', renames);
+      renderAll();
+      toast('已重命名为：' + v, 'ok');
       break;
     }
     case 'dir-pick':      pickScanRoot(); break;
