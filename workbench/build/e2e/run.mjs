@@ -351,6 +351,33 @@ async function caseScanUI(conn) {
   } finally { await tab.close(); }
 }
 
+async function caseRescanRefresh(conn) {
+  /* M15：扫描完成后 renderAll 必须随之一并刷新扫描信息栏（dirBar）。
+     旧实现 renderAll 只重渲染了侧边栏与卡片、漏调 renderDirBar：重扫后
+     「N 个项目 · 扫描于 …」停在旧数据，用户以为没扫上。这里核对 DOM 里
+     「扫描于」的时间与内存 zeroScan.scannedAt 完全一致。 */
+  const tab = await newScenario(conn, 'read', 'std');
+  try {
+    await goControl(tab);
+    await tab.click('[data-act="dir-pick"]');
+    await scanDone(tab);
+    const res = await tab.evalJs(`(() => {
+      const scannedAt = String(zeroScan.scannedAt || '');
+      const when = scannedAt ? scannedAt.replace('T', ' ').slice(0, 19) : '';
+      const bar = (document.getElementById('dirBar') || {}).innerHTML || '';
+      return { when, has: bar.includes(when), n: zeroProjects().length };
+    })()`);
+    ck('M15', '扫描信息栏时间戳与本次扫描一致（renderAll 已刷新 dirBar）',
+      !!res.when && res.has, res.has ? res.when : 'DOM 未含 ' + (res.when || '(空)'));
+    const nInDom = await tab.evalJs(`(() => {
+      const bar = (document.getElementById('dirBar') || {}).textContent || '';
+      const m = bar.match(/(\\d+)\\s*个项目/);
+      return m ? +m[1] : -1;
+    })()`);
+    ck('M15b', '扫描信息栏项目数与本次扫描一致', nInDom === res.n, nInDom + ' vs ' + res.n);
+  } finally { await tab.close(); }
+}
+
 /* ------------------------------------------------------------------ */
 
 /* 唯一事实来源：既决定 --only 的可选值，也决定全量跑的顺序（Object.keys 保序）。
@@ -367,7 +394,8 @@ const CASES = {
   M11: { title: '超大根',                 fn: caseHugeRoot },
   M12: { title: '兼容模式大清单',         fn: caseFlatBigList },
   M13: { title: '单个大项目 · 外推≠截断', fn: caseBigProject },
-  M14: { title: '扫描 UI 提示 · 不卡死',  fn: caseScanUI }
+  M14: { title: '扫描 UI 提示 · 不卡死',  fn: caseScanUI },
+  M15: { title: '重扫后信息栏刷新',        fn: caseRescanRefresh }
 };
 
 async function main() {
