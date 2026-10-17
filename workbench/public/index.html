@@ -1,0 +1,3713 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>工作台 · 控制室</title>
+<style>
+  :root{
+    /* 冷调深色玻璃底（对齐 dsh-worktable 的 --wt-* 体系） */
+    --bg:#0a0d13;
+    --card:rgba(18,23,32,.34);
+    --panel:rgba(255,255,255,.032);
+    --panel-2:rgba(255,255,255,.055);
+    --line:rgba(255,255,255,.075);
+    --line-strong:rgba(255,255,255,.16);
+    --border:#2a3140;
+    --border-hover:#39445a;
+    --txt:#e6e8eb;
+    --txt-dim:#9aa4b2;
+    --txt-mute:#6e7683;
+    /* 强调色：克制的琥珀金（不使用紫蓝渐变） */
+    --amber:#f0b429;
+    --amber-2:#c98f1c;
+    --amber-soft:rgba(240,180,41,.12);
+    --amber-line:rgba(240,180,41,.30);
+    --st-idle:#6e7683;
+    --st-working:#f0b429;
+    --st-needs:#e8734a;
+    --st-done:#3fb950;
+    --grid-line:rgba(255,255,255,.045);
+    --mono:ui-monospace,"JetBrains Mono","Cascadia Mono",Consolas,"Liberation Mono",monospace;
+    --sans:"Inter",system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    --r:16px;
+    --ease:cubic-bezier(.22,.7,.3,1);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;font-family:var(--sans);color:var(--txt);font-size:14px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    background:var(--bg);
+  }
+  /* 控制室背景层：30px 蓝图网格 + 四团缓慢漂移的暖色光斑（对齐 dsh-worktable 的 consoleBg） */
+  .wt-bg{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;background:var(--bg)}
+  .wt-bg::after{
+    content:"";position:absolute;inset:0;
+    background-image:
+      linear-gradient(var(--grid-line) 1px,transparent 1px),
+      linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);
+    background-size:30px 30px;
+    -webkit-mask-image:radial-gradient(1300px 820px at 48% 0%,#000 0%,transparent 78%);
+    mask-image:radial-gradient(1300px 820px at 48% 0%,#000 0%,transparent 78%);
+  }
+  /* 光斑：56vmax 模糊圆 + screen 叠加，克制地只走暖色，不用紫蓝 */
+  .wt-blob{position:absolute;width:56vmax;height:56vmax;border-radius:50%;filter:blur(64px);mix-blend-mode:screen;will-change:transform}
+  .wt-b1{background:radial-gradient(circle,#f0b429,transparent 66%);top:-18%;left:-14%;opacity:.34;animation:wtBlob1 13s ease-in-out infinite alternate}
+  .wt-b2{background:radial-gradient(circle,#e8734a,transparent 66%);top:2%;right:-20%;opacity:.26;animation:wtBlob2 17s ease-in-out infinite alternate}
+  .wt-b3{background:radial-gradient(circle,#2fd4b0,transparent 66%);bottom:-22%;left:12%;opacity:.20;animation:wtBlob3 11s ease-in-out infinite alternate}
+  .wt-b4{background:radial-gradient(circle,#c98f1c,transparent 66%);bottom:-10%;right:2%;opacity:.28;animation:wtBlob4 15s ease-in-out infinite alternate}
+  @keyframes wtBlob1{from{transform:translate(0,0) scale(1)}to{transform:translate(12vw,8vh) scale(1.12)}}
+  @keyframes wtBlob2{from{transform:translate(0,0) scale(1)}to{transform:translate(-11vw,9vh) scale(1.10)}}
+  @keyframes wtBlob3{from{transform:translate(0,0) scale(1)}to{transform:translate(10vw,-7vh) scale(1.14)}}
+  @keyframes wtBlob4{from{transform:translate(0,0) scale(1)}to{transform:translate(-9vw,-8vh) scale(1.11)}}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.10);border-radius:8px;border:3px solid transparent;background-clip:content-box}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(240,180,41,.30);background-clip:content-box}
+  button,input,textarea,select{font-family:inherit}
+  .mono{font-family:var(--mono)}
+
+  /* ================= shell ================= */
+  .app{position:relative;z-index:1;display:flex;min-height:100vh}
+
+  /* ================= sidebar ================= */
+  .sidebar{
+    width:274px;flex:none;display:flex;flex-direction:column;
+    padding:18px 12px 14px;gap:12px;
+    height:100vh;position:sticky;top:0;
+    border-right:1px solid var(--line);
+    background:linear-gradient(180deg,rgba(255,255,255,.026),rgba(255,255,255,.004));
+  }
+  .brand{display:flex;align-items:center;gap:11px;padding:2px 6px 8px}
+  .brand-mark{
+    width:34px;height:34px;flex:none;border-radius:10px;display:grid;place-items:center;
+    background:linear-gradient(150deg,rgba(255,255,255,.14),rgba(255,255,255,.03));
+    border:1px solid rgba(255,255,255,.16);font-size:17px;line-height:1
+  }
+  .brand-name{font-size:14.5px;font-weight:650;letter-spacing:.2px}
+  .brand-sub{font-size:10.5px;color:var(--txt-mute);letter-spacing:.7px;text-transform:uppercase}
+  .brand-tools{margin-left:auto;display:flex;align-items:center;gap:2px}
+  .brand-tools button{
+    width:24px;height:24px;padding:0;display:grid;place-items:center;border:1px solid transparent;border-radius:7px;
+    background:transparent;color:var(--txt-mute);cursor:pointer;transition:.18s var(--ease)
+  }
+  .brand-tools button:hover{background:rgba(255,255,255,.07);border-color:var(--line-strong);color:var(--txt)}
+  .brand-tools svg{width:14px;height:14px}
+
+  .nav-label{
+    font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--txt-mute);
+    padding:0 10px;margin:6px 0 5px;display:flex;align-items:center;justify-content:space-between
+  }
+  .nav-label span{font-family:var(--mono);letter-spacing:0;text-transform:none}
+  .nav{display:flex;flex-direction:column;gap:4px}
+  .nav-item{
+    display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border-radius:11px;
+    border:1px solid transparent;background:transparent;color:var(--txt-dim);font-size:13.5px;font-weight:520;
+    cursor:pointer;text-align:left;transition:background .2s var(--ease),color .2s,border-color .2s,transform .2s var(--ease);
+  }
+  .nav-item:hover{background:rgba(255,255,255,.05);color:var(--txt)}
+  .nav-item:active{transform:scale(.985)}
+  .nav-item.active{background:rgba(240,180,41,.10);border-color:rgba(240,180,41,.26);color:#f5d68f}
+  .nav-item .ni-ico{width:17px;height:17px;flex:none;opacity:.85}
+  .nav-item .ni-count{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--txt-mute)}
+  .nav-item.active .ni-count{color:rgba(240,180,41,.85)}
+
+  /* 项目列表（左栏）：emoji + 名称 + 状态光 + 箭头，34px 行高 */
+  .plist{flex:1;min-height:80px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;padding-right:2px}
+  .pitem{
+    display:flex;align-items:center;gap:10px;width:100%;height:36px;box-sizing:border-box;
+    padding:0 10px;border-radius:9px;border:1px solid transparent;
+    background:rgba(255,255,255,.02);cursor:pointer;text-align:left;font:inherit;
+    transition:background .18s var(--ease),border-color .18s var(--ease),transform .18s var(--ease)
+  }
+  .pitem:hover{background:rgba(255,255,255,.055);border-color:var(--line-strong);transform:translateX(1px)}
+  .pitem.active{background:rgba(240,180,41,.10);border-color:rgba(240,180,41,.30)}
+  .pitem .pi-ico{flex:none;font-size:15px;line-height:1}
+  .pitem .pi-name{
+    flex:1;min-width:0;font-size:12.8px;font-weight:500;color:var(--txt-dim);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+  }
+  .pitem.active .pi-name{color:#f5d68f;font-weight:600}
+  .pitem .pi-arrow{flex:none;width:13px;height:13px;opacity:.3;transition:opacity .18s}
+  .pitem:hover .pi-arrow{opacity:.72}
+
+  /* 项目栏：多选删除 + 自定义添加 */
+  .nl-tools{display:flex;gap:4px;align-items:center}
+  .nl-btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:4px;height:20px;padding:0 7px;
+    border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--txt-mute);
+    cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:.04em;
+    transition:background .18s var(--ease),color .18s,border-color .18s
+  }
+  .nl-btn:hover{background:rgba(255,255,255,.08);color:var(--txt);border-color:var(--line-strong)}
+  .nl-btn.on{background:rgba(240,180,41,.14);border-color:rgba(240,180,41,.38);color:#f5d68f}
+  .nl-btn svg{width:11px;height:11px;flex:none}
+  .plist .pi-check{
+    flex:none;width:14px;height:14px;border-radius:4.5px;border:1px solid var(--line-strong);
+    background:rgba(255,255,255,.03);position:relative;transition:background .16s,border-color .16s
+  }
+  .plist.selecting .pitem:hover .pi-check{border-color:rgba(240,180,41,.5)}
+  .pitem.sel{background:rgba(240,180,41,.13);border-color:rgba(240,180,41,.36)}
+  .pitem.sel .pi-check{background:rgba(240,180,41,.9);border-color:rgba(240,180,41,.9)}
+  .pitem.sel .pi-check::after{
+    content:'';position:absolute;left:3.5px;top:.8px;width:4px;height:7.6px;
+    border:solid #241a05;border-width:0 1.8px 1.8px 0;transform:rotate(43deg)
+  }
+  .plist.selecting .pitem .pi-arrow{display:none}
+  .selbar{
+    display:none;align-items:center;gap:5px;margin:0 0 6px;padding:6px 7px;border-radius:9px;
+    border:1px solid rgba(240,180,41,.24);background:rgba(240,180,41,.06)
+  }
+  .selbar.show{display:flex}
+  .selbar .sb-info{flex:1;min-width:0;font-family:var(--mono);font-size:10.5px;color:var(--txt-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .selbar .btn{height:22px;padding:0 9px;font-size:11px;border-radius:7px}
+  .selbar .btn.armed{background:rgba(232,115,74,.32);border-color:rgba(232,115,74,.7);color:#ffd9cc}
+  .restore-bar{
+    display:none;align-items:center;gap:6px;margin:0 0 6px;padding:5px 8px;border-radius:9px;
+    border:1px dashed var(--line-strong);background:rgba(255,255,255,.02)
+  }
+  .restore-bar.show{display:flex}
+  .restore-bar span{flex:1;min-width:0;font-family:var(--mono);font-size:10.5px;color:var(--txt-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* 四态状态光 */
+  .light{
+    width:9px;height:9px;flex:none;border-radius:50%;border:0;padding:0;cursor:pointer;
+    transition:transform .2s var(--ease),box-shadow .2s
+  }
+  .light:hover{transform:scale(1.35)}
+  .light.idle{background:var(--st-idle);box-shadow:0 0 0 3px rgba(107,104,99,.16)}
+  .light.working{background:var(--st-working);box-shadow:0 0 0 3px rgba(240,180,41,.20),0 0 10px rgba(240,180,41,.7);animation:lpulse 2.1s ease-in-out infinite}
+  .light.needs-you{background:var(--st-needs);box-shadow:0 0 0 3px rgba(232,115,74,.20),0 0 10px rgba(232,115,74,.6);animation:lpulse 1.5s ease-in-out infinite}
+  .light.done{background:var(--st-done);box-shadow:0 0 0 3px rgba(95,211,154,.20),0 0 10px rgba(95,211,154,.55)}
+  @keyframes lpulse{0%,100%{opacity:1}50%{opacity:.42}}
+
+  .sidebar-foot{margin-top:auto;display:flex;flex-direction:column;gap:9px}
+  /* 底部统计玻璃盒 */
+  .foot-box{
+    display:flex;flex-direction:column;gap:1px;padding:10px 12px;border-radius:13px;
+    border:1px solid var(--line);
+    background:linear-gradient(135deg,rgba(255,255,255,.10),rgba(255,255,255,.015));
+    backdrop-filter:blur(8px) saturate(1.15);
+    -webkit-backdrop-filter:blur(8px) saturate(1.15)
+  }
+  .fb-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0;font-size:11.5px;color:var(--txt-mute)}
+  .fb-row b{font-family:var(--mono);font-size:12.5px;font-weight:600;color:var(--txt-dim);font-variant-numeric:tabular-nums}
+
+  /* 控制室入口：呼吸灯 + 高亮边框 */
+  .control-entry{
+    position:relative;display:flex;align-items:center;gap:10px;width:100%;
+    padding:11px 12px;border-radius:13px;cursor:pointer;overflow:hidden;
+    border:1px solid rgba(240,180,41,.36);
+    background:linear-gradient(135deg,rgba(240,180,41,.16),rgba(240,180,41,.03));
+    color:#f6da9c;font-size:13.5px;font-weight:600;
+    transition:transform .24s var(--ease),border-color .24s,background .24s;
+    animation:breathe 3.1s ease-in-out infinite;
+  }
+  .control-entry:hover{transform:translateY(-2px);border-color:rgba(240,180,41,.62)}
+  .control-entry:active{transform:translateY(0) scale(.985)}
+  .control-entry.active{background:linear-gradient(135deg,rgba(240,180,41,.24),rgba(240,180,41,.06))}
+  .control-entry .ce-ico{width:18px;height:18px;flex:none}
+  .control-entry .ce-txt{display:flex;flex-direction:column;line-height:1.25}
+  .control-entry .ce-txt small{font-size:10.5px;font-weight:500;color:rgba(246,218,156,.62);letter-spacing:.04em}
+  .control-entry .ce-arrow{margin-left:auto;opacity:.55}
+  .control-entry::after{
+    content:"";position:absolute;inset:0;border-radius:13px;pointer-events:none;
+    background:linear-gradient(105deg,transparent 30%,rgba(255,224,150,.14) 48%,transparent 66%);
+    transform:translateX(-120%);animation:sheen 4.6s ease-in-out infinite;
+  }
+  @keyframes breathe{
+    0%,100%{box-shadow:0 0 0 1px rgba(240,180,41,.12),0 0 0 rgba(240,180,41,0)}
+    50%{box-shadow:0 0 0 1px rgba(240,180,41,.34),0 0 26px -2px rgba(240,180,41,.36)}
+  }
+  @keyframes sheen{0%{transform:translateX(-120%)}42%,100%{transform:translateX(130%)}}
+  .pulse-dot{width:8px;height:8px;border-radius:50%;background:var(--amber);flex:none;animation:pulse 2.3s ease-out infinite}
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(240,180,41,.55)}
+    70%{box-shadow:0 0 0 9px rgba(240,180,41,0)}
+    100%{box-shadow:0 0 0 0 rgba(240,180,41,0)}
+  }
+
+  /* ================= main ================= */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  /* 顶栏：悬浮玻璃 Dock */
+  .topbar{
+    position:sticky;top:12px;z-index:20;
+    display:flex;align-items:center;justify-content:space-between;gap:20px;
+    margin:14px 24px 16px;padding:11px 16px;border-radius:15px;
+    border:1px solid rgba(255,255,255,.16);
+    background:rgba(255,255,255,.055);
+    box-shadow:0 8px 24px rgba(0,0,0,.34);
+    backdrop-filter:blur(14px) saturate(1.3);
+    -webkit-backdrop-filter:blur(14px) saturate(1.3);
+  }
+  .tb-title{display:flex;align-items:center;gap:10px;min-width:0}
+  .tb-title h1{margin:0;font-size:19px;font-weight:680;letter-spacing:-.01em;white-space:nowrap}
+  .eyebrow{
+    font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber);
+    border:1px solid var(--amber-line);border-radius:99px;padding:2px 9px;background:var(--amber-soft);white-space:nowrap
+  }
+  .tb-sub{margin:4px 0 0;font-size:12px;color:var(--txt-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tb-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;justify-content:flex-end}
+
+  .btn{
+    display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border-radius:10px;
+    border:1px solid var(--line-strong);background:var(--panel);color:var(--txt-dim);
+    font-size:12.5px;font-weight:560;cursor:pointer;white-space:nowrap;
+    transition:.2s var(--ease);
+  }
+  .btn:hover{background:var(--panel-2);color:var(--txt);border-color:rgba(255,255,255,.22);transform:translateY(-1px)}
+  .btn:active{transform:translateY(0) scale(.98)}
+  .btn.primary{border-color:var(--amber-line);color:#f7dd9f;background:linear-gradient(135deg,rgba(240,180,41,.20),rgba(240,180,41,.05))}
+  .btn.primary:hover{border-color:rgba(240,180,41,.55);box-shadow:0 6px 22px -10px rgba(240,180,41,.6)}
+  .btn.small{padding:6px 10px;font-size:11.5px;border-radius:9px}
+  .btn.ico{padding:7px;border-radius:9px}
+  .btn.danger:hover{color:#f0a08a;border-color:rgba(232,115,74,.42)}
+  .btn[disabled]{opacity:.42;cursor:not-allowed;transform:none}
+
+  .view{display:none;padding:0 24px 34px}
+  .view.active{display:block;animation:fadeUp .34s var(--ease)}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+
+  /* ================= stats ================= */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;margin:0 auto 16px;max-width:1064px}
+  .stat{
+    position:relative;overflow:hidden;padding:13px 15px 14px;border-radius:14px;
+    border:1px solid transparent;
+    background:
+      linear-gradient(135deg,rgba(255,255,255,.14) 0%,rgba(255,255,255,.05) 34%,rgba(255,255,255,.012) 64%,rgba(0,0,0,.05) 100%),
+      rgba(18,23,32,.30);
+    box-shadow:0 8px 22px rgba(0,0,0,.26),inset 0 1px 0 rgba(255,255,255,.10);
+    backdrop-filter:blur(8px) saturate(1.15);
+    -webkit-backdrop-filter:blur(8px) saturate(1.15);
+    transition:border-color .25s var(--ease),transform .25s var(--ease),box-shadow .25s var(--ease)
+  }
+  .stat::after{
+    content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+    background:conic-gradient(from 45deg,rgba(0,0,0,.34) 0deg,rgba(255,255,255,.42) 90deg,rgba(0,0,0,.34) 180deg,rgba(255,255,255,.42) 270deg,rgba(0,0,0,.34) 360deg);
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;
+    mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    mask-composite:exclude;
+    pointer-events:none;opacity:.45
+  }
+  .stat:hover{transform:translateY(-3px);box-shadow:0 16px 36px -20px #000,0 0 26px -12px rgba(240,180,41,.5)}
+  .stat:hover::after{background:conic-gradient(from 45deg,rgba(240,180,41,.2) 0deg,rgba(240,180,41,.8) 90deg,rgba(240,180,41,.2) 180deg,rgba(240,180,41,.8) 270deg,rgba(240,180,41,.2) 360deg)}
+  .stat-k{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-mute)}
+  .stat-v{font-family:var(--mono);font-size:24px;font-weight:600;letter-spacing:-.02em;margin-top:6px}
+  .stat-v .unit{font-size:12.5px;color:var(--txt-mute);margin-left:3px;font-weight:500}
+  .stat-note{margin-top:4px;font-size:11.5px;color:var(--txt-mute)}
+  .stat-v.gold{color:var(--amber)}
+  .stat-v.working{color:var(--st-working)}
+  .stat-v.needs{color:var(--st-needs)}
+  .stat-v.done{color:var(--st-done)}
+
+  .section-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:4px 0 12px}
+  .section-head h2{margin:0;font-size:13px;font-weight:600;letter-spacing:.02em;color:var(--txt-dim)}
+  .section-head h2 span{color:var(--txt-mute);font-weight:500;font-family:var(--mono);font-size:11.5px;margin-left:8px}
+  .hint{font-size:11.5px;color:var(--txt-mute)}
+
+  /* ================= 卡片网格（对齐 dsh-worktable 控制室） ================= */
+  /* 居中定宽轨道：246px 正方贴片，列数随视口收敛，控制室占 2×2 */
+  .grid{
+    --cols:4;--gap:64px;
+    display:grid;grid-template-columns:repeat(var(--cols),minmax(0,246px));
+    grid-auto-rows:auto;justify-content:center;align-items:start;gap:var(--gap);
+    width:100%;margin:clamp(32px,9vh,110px) auto 0;
+  }
+  @media (max-width:1660px){.grid{--cols:3}}
+  @media (max-width:1240px){.grid{--cols:2}}
+  @media (max-width:780px){.grid{--cols:1}}
+
+  .card{
+    position:relative;box-sizing:border-box;display:flex;flex-direction:column;gap:13px;
+    min-width:0;aspect-ratio:1;min-height:196px;padding:21px;
+    border-radius:16px;border:1px solid transparent;overflow:hidden;cursor:pointer;
+    /* 去磨砂（参考仓库第九/十轮定案）：不留 blur，30px 井字格才能透过来，读出「半透玻璃」 */
+    background:
+      linear-gradient(135deg,rgba(255,255,255,.20) 0%,rgba(255,255,255,.065) 30%,rgba(255,255,255,.012) 60%,rgba(0,0,0,.07) 100%),
+      rgba(18,23,32,.24);
+    box-shadow:0 10px 28px rgba(0,0,0,.30),inset 0 1px 0 rgba(255,255,255,.13);
+    transition:transform .16s var(--ease),box-shadow .16s var(--ease);
+  }
+  /* 玻璃边缘：锥形渐变 1px 环（左上/右下亮，右上/左下暗），遮罩挖空实现 */
+  .card::after{
+    content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+    background:conic-gradient(from 45deg,rgba(0,0,0,.40) 0deg,rgba(255,255,255,.55) 90deg,rgba(0,0,0,.40) 180deg,rgba(255,255,255,.55) 270deg,rgba(0,0,0,.40) 360deg);
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;
+    mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    mask-composite:exclude;
+    pointer-events:none;opacity:.5
+  }
+  .card:hover{transform:translateY(-2px);box-shadow:0 14px 32px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.09)}
+  .card:active{transform:translateY(0) scale(.995)}
+  .card:focus-visible{outline:2px solid var(--amber-line);outline-offset:3px}
+
+  /* 卡片内部：图标 + 名称 / 分隔线 / 状态行 / 内容预览 */
+  .c-head{display:flex;align-items:center;gap:13px;min-width:0}
+  .c-ico{flex:none;font-size:31px;line-height:1;font-family:var(--sans)}
+  .c-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:20px;font-weight:700;line-height:28px;letter-spacing:-.01em;color:var(--txt)}
+  .c-div{flex:none;height:1px;background:var(--line)}
+  .c-srow{display:flex;align-items:baseline;justify-content:space-between;gap:9px;min-width:0}
+  .c-status{flex:none;font-size:22px;font-weight:700;line-height:30px;color:var(--txt-dim)}
+  .c-status.idle{color:var(--txt-mute)}
+  .c-status.working{color:var(--amber)}
+  .c-status.needs-you{color:var(--st-needs)}
+  .c-status.done{color:var(--st-done)}
+  .c-meta{flex:none;font-family:var(--mono);font-size:13px;font-weight:600;line-height:30px;color:var(--txt-mute);font-variant-numeric:tabular-nums;white-space:nowrap}
+  /* 预览字号缩到 8.5px（参考仓库第六轮定案：给卡片留更多余地，同空间容纳更多内容） */
+  .c-preview{
+    display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;
+    font-size:8.5px;line-height:13px;color:var(--txt-mute);word-break:break-word
+  }
+  .c-preview.mute{font-style:italic;-webkit-line-clamp:2;font-size:9px}
+
+  .card .light{margin-left:auto;flex:none}
+
+  /* 状态光效：整卡霓虹描边光晕（完成=绿 / 待处理=橙） */
+  .card.glow-done{border-color:rgba(63,185,80,.85);box-shadow:0 0 8px rgba(63,185,80,.45),0 0 26px rgba(63,185,80,.26),inset 0 0 16px rgba(63,185,80,.07)}
+  .card.glow-needs{border-color:rgba(232,115,74,.9);box-shadow:0 0 8px rgba(232,115,74,.45),0 0 26px rgba(232,115,74,.26),inset 0 0 16px rgba(232,115,74,.08)}
+  .card.glow-done::after,.card.glow-needs::after{opacity:0}
+
+  /* 工作中：琥珀金彗星光环顺时针旋转 + 斜向扫光 */
+  @property --wt-angle{syntax:"<angle>";initial-value:0deg;inherits:false}
+  /* 环加厚到 3px 并贴卡边。参考仓库用的是 inset:-4px/padding:4px（外扩环），
+     但那要求卡片不裁剪；本实现 .card 有 overflow:hidden，外扩部分会被裁掉，
+     故改用 inset:0 的 3px 卡边环 —— 与参考截图呈现的「亮边 + 双层外发光」一致 */
+  .card.busy{box-shadow:0 0 10px rgba(240,180,41,.55),0 0 34px rgba(240,180,41,.40)}
+  .card.busy::before{
+    content:"";position:absolute;inset:0;border-radius:16px;padding:3px;pointer-events:none;
+    background:conic-gradient(from var(--wt-angle),
+      transparent 0deg,rgba(240,180,41,0) 22deg,#fff6d8 54deg,#f0b429 86deg,rgba(240,180,41,0) 126deg,transparent 205deg);
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;
+    mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    mask-composite:exclude;
+    animation:wtAngleSpin 1.4s linear infinite;
+    filter:drop-shadow(0 0 8px rgba(240,180,41,.9))
+  }
+  @keyframes wtAngleSpin{to{--wt-angle:360deg}}
+  .card.busy::after{opacity:0}
+  .wt-sweep{
+    position:absolute;inset:-30%;border-radius:inherit;pointer-events:none;z-index:-1;
+    background:linear-gradient(115deg,rgba(255,255,255,.01) 0%,rgba(255,255,255,.045) 30%,rgba(255,255,255,.12) 50%,rgba(255,255,255,.045) 70%,rgba(255,255,255,.01) 100%);
+    opacity:0;animation:wtSweep 3.2s ease-in-out infinite
+  }
+  @keyframes wtSweep{
+    0%{opacity:0;transform:translate(-12%,-12%)}
+    35%{opacity:1}55%{opacity:1}
+    92%,100%{opacity:0;transform:translate(12%,12%)}
+  }
+
+  /* 控制室卡片：2×2 大正方形，琥珀金玻璃底 */
+  .control-card{
+    grid-column:span 2;grid-row:span 2;aspect-ratio:1;gap:16px;
+    border-color:rgba(240,180,41,.26);
+    background:
+      radial-gradient(560px 260px at 6% -26%,rgba(240,180,41,.16),transparent 70%),
+      linear-gradient(135deg,rgba(255,255,255,.20) 0%,rgba(255,255,255,.06) 30%,rgba(255,255,255,.012) 60%,rgba(0,0,0,.07) 100%),
+      rgba(18,23,32,.24);
+  }
+  .control-card:hover{transform:translateY(-3px);border-color:rgba(240,180,41,.52);box-shadow:0 22px 50px -26px #000,0 0 46px -14px rgba(240,180,41,.5)}
+  .control-card .c-ico{font-size:38px}
+  .control-card .c-name{font-size:25px;line-height:34px}
+  .control-card .c-status{font-size:25px;line-height:34px}
+  .cc-badge{display:inline-flex;align-items:center;gap:7px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:#f6da9c;border:1px solid var(--amber-line);background:var(--amber-soft);padding:3px 10px;border-radius:99px;white-space:nowrap}
+  .cc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:0;flex:1;align-content:center}
+  .cc-cell{padding:14px 15px;border-radius:12px;border:1px solid var(--line);background:rgba(0,0,0,.24)}
+  .cc-cell .k{font-size:10.5px;letter-spacing:.06em;color:var(--txt-mute);white-space:nowrap}
+  .cc-cell .v{font-family:var(--mono);font-size:21px;font-weight:600;margin-top:6px;letter-spacing:-.02em}
+  .cc-cell .v.gold{color:var(--amber)}
+  .cc-cell .v.working{color:var(--st-working)}
+  .cc-cell .v.needs{color:var(--st-needs)}
+  .cc-cell .v.done{color:var(--st-done)}
+  .control-card .c-preview{margin-top:2px}
+
+  /* 新建卡片：玻璃底 + 虚线边，永远排在最后一位 */
+  .add-card{
+    justify-content:center;align-items:center;gap:10px;text-align:center;
+    border:1.5px dashed var(--border-hover);
+    background:radial-gradient(circle at 50% 42%,rgba(255,255,255,.09),rgba(255,255,255,0) 65%),rgba(18,23,32,.34);
+  }
+  .add-card::after{display:none}
+  .add-card:hover{border-color:rgba(240,180,41,.6);background:radial-gradient(circle at 50% 42%,rgba(240,180,41,.10),rgba(255,255,255,0) 65%),rgba(23,28,37,.45)}
+  .add-plus{font-size:34px;line-height:1;font-weight:400;color:var(--txt-dim)}
+  .add-card:hover .add-plus{color:var(--amber)}
+  .add-label{font-size:13.5px;font-weight:600;color:var(--txt-dim)}
+  .add-card:hover .add-label{color:var(--txt)}
+
+  .empty{grid-column:1/-1;padding:52px 0;text-align:center;font-size:12.5px;color:var(--txt-mute)}
+
+  /* 通用标签 / 容量条（控制室表格与本地检索共用） */
+  .tag{font-family:var(--mono);font-size:10.5px;padding:2.5px 7px;border-radius:6px;color:var(--txt-dim);background:rgba(255,255,255,.045);border:1px solid var(--line);white-space:nowrap}
+  .tag.gold{color:#e9c778;background:rgba(240,180,41,.08);border-color:rgba(240,180,41,.22)}
+  .sizebar{height:3px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden}
+  .sizebar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--amber-2),var(--amber));transition:width .6s var(--ease)}
+
+  /* ================= 分栏工作台 ================= */
+  .wb-bar{
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;
+    padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--panel)
+  }
+  .wb-crumb{display:flex;align-items:center;gap:9px;min-width:0;flex:1}
+  .wb-crumb b{font-size:13.5px;font-weight:620;white-space:nowrap}
+  .wb-crumb .p{font-family:var(--mono);font-size:10.5px;color:var(--txt-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .seg{display:inline-flex;border:1px solid var(--line-strong);border-radius:10px;overflow:hidden;background:rgba(0,0,0,.22)}
+  .seg button{
+    padding:6px 11px;font-size:11.5px;font-weight:560;color:var(--txt-mute);background:transparent;border:0;cursor:pointer;
+    border-right:1px solid var(--line);transition:.18s var(--ease);white-space:nowrap
+  }
+  .seg button:last-child{border-right:0}
+  .seg button:hover{background:rgba(255,255,255,.05);color:var(--txt-dim)}
+  .seg button.on{background:rgba(240,180,41,.14);color:#f7dd9f}
+  .seg button .k{font-family:var(--mono);font-size:9.5px;opacity:.7;margin-left:4px}
+
+  .pane-grid{display:grid;gap:12px;height:calc(100vh - 214px);min-height:460px}
+  .pane-grid[data-preset="full"]{grid-template-columns:1fr}
+  .pane-grid[data-preset="l2"]{grid-template-columns:1fr 1fr}
+  .pane-grid[data-preset="g4"]{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
+  .pane-grid[data-preset="l13"]{grid-template-columns:1fr 1fr;grid-template-rows:1.4fr 1fr}
+  .pane-grid[data-preset="l13"] .pane[data-slot="0"]{grid-column:span 2}
+  .pane-grid[data-preset="chat"]{grid-template-columns:1fr 1.25fr}
+  @media (max-width:900px){
+    .pane-grid{height:auto;min-height:0}
+    .pane-grid[data-preset="l2"],.pane-grid[data-preset="g4"],.pane-grid[data-preset="l13"],.pane-grid[data-preset="chat"]{grid-template-columns:1fr;grid-template-rows:auto}
+    .pane-grid[data-preset="l13"] .pane[data-slot="0"]{grid-column:span 1}
+  }
+
+  .pane{
+    display:flex;flex-direction:column;min-height:0;min-width:0;
+    border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
+    background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01));
+    transition:border-color .25s var(--ease),box-shadow .25s var(--ease)
+  }
+  .pane:hover{border-color:rgba(255,255,255,.16)}
+  .pane.focus{border-color:var(--amber-line);box-shadow:0 0 0 1px rgba(240,180,41,.10),0 18px 40px -30px rgba(240,180,41,.5)}
+  .pane-head{
+    display:flex;align-items:center;gap:9px;padding:8px 10px;flex:none;
+    border-bottom:1px solid var(--line);background:rgba(0,0,0,.20)
+  }
+  .pane-head .kind-chip{
+    display:inline-flex;align-items:center;gap:6px;font-size:10.5px;letter-spacing:.06em;
+    color:var(--txt-dim);border:1px solid var(--line);border-radius:7px;padding:2px 7px;background:rgba(255,255,255,.04);flex:none
+  }
+  .pane-head .kind-chip i{font-style:normal;color:var(--amber);font-size:11px}
+  .pane-title{
+    flex:1;min-width:40px;background:transparent;border:0;outline:0;color:var(--txt);
+    font-size:12.5px;font-weight:600;padding:3px 5px;border-radius:6px;transition:background .2s
+  }
+  .pane-title:hover{background:rgba(255,255,255,.045)}
+  .pane-title:focus{background:rgba(0,0,0,.35);box-shadow:0 0 0 2px rgba(240,180,41,.20)}
+  .pane-tools{display:flex;align-items:center;gap:5px;flex:none}
+  .mini-btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:5px;
+    height:24px;min-width:24px;padding:0 7px;border-radius:7px;border:1px solid var(--line);
+    background:rgba(255,255,255,.035);color:var(--txt-mute);font-size:11px;cursor:pointer;transition:.18s var(--ease)
+  }
+  .mini-btn:hover{color:var(--txt);border-color:var(--line-strong);background:rgba(255,255,255,.07)}
+  .mini-btn:active{transform:scale(.94)}
+  .pane-body{flex:1;min-height:0;overflow:auto;padding:11px 12px 13px}
+
+  .empty-slot{
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:11px;height:100%;
+    border:1px dashed rgba(255,255,255,.14);border-radius:12px;background:rgba(0,0,0,.14);padding:18px;text-align:center
+  }
+  .empty-slot p{margin:0;font-size:12px;color:var(--txt-mute)}
+  .kind-picker{display:flex;flex-wrap:wrap;gap:7px;justify-content:center}
+  .kind-picker button{
+    display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:9px;
+    border:1px solid var(--line-strong);background:var(--panel);color:var(--txt-dim);font-size:11.5px;cursor:pointer;
+    transition:.2s var(--ease)
+  }
+  .kind-picker button:hover{border-color:var(--amber-line);color:#f7dd9f;transform:translateY(-1px);background:rgba(240,180,41,.08)}
+  .kind-picker button i{font-style:normal;color:var(--amber)}
+
+  /* note */
+  .note-area{
+    width:100%;height:100%;min-height:150px;resize:none;border:0;outline:0;background:transparent;
+    color:var(--txt);font-size:13px;line-height:1.72;font-family:var(--sans)
+  }
+  .note-area::placeholder{color:var(--txt-mute)}
+  .pane-meta{display:flex;justify-content:space-between;gap:10px;font-size:10.5px;color:var(--txt-mute);font-family:var(--mono);margin-top:6px}
+
+  /* todo */
+  .todo-list{display:flex;flex-direction:column;gap:2px}
+  .todo-row{display:flex;align-items:flex-start;gap:9px;padding:6px 7px;border-radius:9px;transition:background .18s}
+  .todo-row:hover{background:rgba(255,255,255,.045)}
+  .todo-row input[type=checkbox]{
+    appearance:none;width:15px;height:15px;flex:none;margin-top:2px;border-radius:4px;cursor:pointer;
+    border:1px solid rgba(255,255,255,.24);background:rgba(0,0,0,.3);transition:.18s var(--ease);position:relative
+  }
+  .todo-row input[type=checkbox]:checked{background:rgba(95,211,154,.22);border-color:rgba(95,211,154,.55)}
+  .todo-row input[type=checkbox]:checked::after{
+    content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;
+    border:solid var(--st-done);border-width:0 2px 2px 0;transform:rotate(42deg)
+  }
+  .todo-row .tx{flex:1;font-size:12.8px;color:var(--txt-dim);word-break:break-word;cursor:pointer}
+  .todo-row.done .tx{color:var(--txt-mute);text-decoration:line-through}
+  .todo-row .del{opacity:0;transition:opacity .18s;flex:none}
+  .todo-row:hover .del{opacity:1}
+  .todo-add{display:flex;gap:7px;margin-top:9px}
+  .todo-add input{
+    flex:1;padding:7px 10px;border-radius:9px;border:1px solid var(--line-strong);
+    background:rgba(0,0,0,.30);color:var(--txt);font-size:12.5px;outline:0;transition:.2s
+  }
+  .todo-add input:focus{border-color:var(--amber-line);box-shadow:0 0 0 3px rgba(240,180,41,.09)}
+  .prog{height:4px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden;margin:11px 0 4px}
+  .prog i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--amber-2),var(--st-done));transition:width .5s var(--ease)}
+
+  /* link / web */
+  .url-row{display:flex;gap:7px;margin-bottom:9px}
+  .url-row input{
+    flex:1;padding:7px 10px;border-radius:9px;border:1px solid var(--line-strong);
+    background:rgba(0,0,0,.30);color:var(--txt);font-size:12px;font-family:var(--mono);outline:0;transition:.2s
+  }
+  .url-row input:focus{border-color:var(--amber-line);box-shadow:0 0 0 3px rgba(240,180,41,.09)}
+  .link-card{
+    display:flex;align-items:center;gap:11px;padding:13px;border-radius:12px;border:1px solid var(--line);
+    background:rgba(0,0,0,.20)
+  }
+  .link-card .dom{font-family:var(--mono);font-size:12px;color:var(--txt-dim);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .frame-wrap{position:relative;height:calc(100% - 44px);min-height:170px;border-radius:11px;overflow:hidden;border:1px solid var(--line);background:rgba(0,0,0,.35)}
+  .frame-wrap iframe{width:100%;height:100%;border:0;display:block;background:#fff}
+  .frame-fallback{
+    position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;
+    padding:18px;text-align:center;background:rgba(10,11,13,.92);color:var(--txt-mute);font-size:12px
+  }
+  .frame-fallback b{color:var(--txt-dim);font-size:12.5px}
+
+  /* repo */
+  .repo-bar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:9px}
+  .crumb{display:flex;align-items:center;gap:3px;flex-wrap:wrap;flex:1;min-width:0}
+  .crumb button{
+    background:transparent;border:0;color:var(--txt-dim);font-size:11.5px;font-family:var(--mono);
+    cursor:pointer;padding:3px 5px;border-radius:6px;transition:.18s
+  }
+  .crumb button:hover{background:rgba(240,180,41,.10);color:#f7dd9f}
+  .crumb .sep{color:var(--txt-mute);font-size:11px}
+  .tree{display:flex;flex-direction:column;gap:1px}
+  .tree-row{
+    display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:8px;
+    border:0;background:transparent;color:var(--txt-dim);font-size:12.5px;cursor:pointer;
+    text-align:left;width:100%;transition:background .16s var(--ease)
+  }
+  .tree-row:hover{background:rgba(240,180,41,.07);color:var(--txt)}
+  .tree-row.on{background:rgba(240,180,41,.13);color:#f7dd9f}
+  .tree-row .ic{width:15px;flex:none;text-align:center;color:var(--amber);font-size:11px}
+  .tree-row .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);font-size:12px}
+  .tree-row .sz{font-family:var(--mono);font-size:10.5px;color:var(--txt-mute);flex:none}
+  .file-view{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+  .file-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+  .file-head .fp{font-family:var(--mono);font-size:11px;color:var(--txt-dim);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  pre.code{
+    margin:0;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:rgba(0,0,0,.42);
+    font-family:var(--mono);font-size:11.5px;line-height:1.65;color:#cfcbc4;overflow:auto;max-height:340px;white-space:pre
+  }
+  .note-line{
+    display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;font-size:11.5px;color:var(--txt-mute);
+    border:1px solid var(--line);background:rgba(0,0,0,.18)
+  }
+  .note-line i{font-style:normal;color:var(--amber)}
+
+  /* ================= 模式徽章 ================= */
+  .mode-badge{
+    display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:99px;
+    font-size:11.5px;font-weight:560;cursor:pointer;user-select:none;white-space:nowrap;
+    border:1px solid var(--line-strong);background:rgba(0,0,0,.24);color:var(--txt-mute);
+    transition:.2s var(--ease)
+  }
+  .mode-badge i{font-style:normal;font-size:9px;line-height:1}
+  .mode-badge:hover{border-color:var(--line-strong);color:var(--txt-dim)}
+  .mode-badge.on{
+    border-color:var(--amber-line);color:#f7dd9f;
+    background:linear-gradient(135deg,rgba(240,180,41,.20),rgba(240,180,41,.05));
+    box-shadow:0 0 24px -14px rgba(240,180,41,.95)
+  }
+  .mode-badge.on i{color:var(--amber);animation:pulse 2.3s ease-out infinite}
+  .server-pill{
+    display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-family:var(--mono);
+    padding:3px 8px;border-radius:99px;border:1px solid rgba(95,211,154,.34);
+    color:#9fe3bd;background:rgba(95,211,154,.09)
+  }
+
+  /* ================= 本地检索窗格 ================= */
+  .pj-bar{display:flex;gap:7px;margin-bottom:8px}
+  .pj-q{
+    flex:1;min-width:0;padding:7px 10px;border-radius:9px;border:1px solid var(--line-strong);
+    background:rgba(0,0,0,.30);color:var(--txt);font-size:12px;outline:0;transition:.2s
+  }
+  .pj-q:focus{border-color:var(--amber-line);box-shadow:0 0 0 3px rgba(240,180,41,.09)}
+  .pj-seg{margin-bottom:8px}
+  .pj-stat{
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--txt-mute);
+    font-family:var(--mono);padding:6px 9px;border-radius:9px;border:1px solid var(--line);
+    background:rgba(0,0,0,.18);margin-bottom:9px
+  }
+  .pj-stat b{color:var(--txt-dim);font-weight:600}
+  .pj-stat .sp{flex:1;min-width:8px}
+  .pj-list{display:flex;flex-direction:column;gap:4px}
+  .pj-group{
+    display:flex;align-items:center;gap:7px;margin:9px 0 3px;
+    font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-mute)
+  }
+  .pj-group span{font-family:var(--mono);color:var(--amber);font-size:10px;letter-spacing:0}
+  .pj-row{
+    display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:9px;cursor:pointer;
+    border:1px solid transparent;background:rgba(255,255,255,.022);transition:.18s var(--ease)
+  }
+  .pj-row:hover{border-color:var(--amber-line);background:rgba(240,180,41,.06);transform:translateX(2px)}
+  .pj-row.run{border-color:rgba(95,211,154,.30)}
+  .pj-row .light{flex:none}
+  .pj-body{display:flex;flex-direction:column;min-width:0;flex:1}
+  .pj-name{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pj-path{font-size:10px;color:var(--txt-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pj-tags{display:flex;gap:4px;flex:none}
+  .pj-tags .tag{font-size:9.5px;padding:2px 6px}
+  .pj-size{font-family:var(--mono);font-size:10.5px;color:var(--txt-mute);flex:none;min-width:54px;text-align:right}
+
+  /* ================= AI 对话窗格 ================= */
+  /* 对话窗格不再用「100% - 104px」按工具栏高度硬算：改成 flex 列，
+     iframe 自动吃掉工具栏之外的全部高度，工具栏换行也不会把 iframe 挤没 */
+  .pane-body.chat-body{display:flex;flex-direction:column;gap:7px;overflow:hidden;padding:10px 11px 12px}
+  .chat-bar{flex-wrap:wrap;margin-bottom:0}
+  .chat-bar select{
+    flex:none;max-width:158px;padding:7px 9px;border-radius:9px;border:1px solid var(--line-strong);
+    background:rgba(0,0,0,.30);color:var(--txt-dim);font-size:11.5px;outline:0;cursor:pointer;transition:.2s
+  }
+  .chat-bar select:hover{border-color:var(--amber-line);color:var(--txt)}
+  .chat-bar input{flex:1 1 150px;min-width:0}
+  .chat-bar .btn{flex:none;white-space:nowrap}
+  .chat-wrap{flex:1 1 auto;height:auto;min-height:220px}
+  .frame-fallback .fb-row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:3px}
+
+  /* ================= 控制室 ================= */
+  .ports-strip{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+
+  /* 零服务模式：本机目录授权（File System Access + IndexedDB 句柄持久化） */
+  .dirbar{
+    border:1px solid var(--line);border-radius:var(--r);margin-bottom:18px;overflow:hidden;
+    background:linear-gradient(180deg,rgba(255,255,255,.032),rgba(255,255,255,.008))
+  }
+  .dir-row{
+    display:flex;align-items:center;gap:10px;padding:9px 13px;border-bottom:1px solid var(--line);
+    font-size:12.5px;color:var(--txt-dim);flex-wrap:wrap
+  }
+  .dir-row:last-child{border-bottom:0}
+  .dir-k{flex:none;width:74px;font-size:11px;letter-spacing:.08em;color:var(--txt-mute);text-transform:uppercase}
+  .dir-v{flex:1;min-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dir-v.mute{color:var(--txt-mute)}
+  .dir-v b{color:var(--amber);font-weight:600;font-family:var(--mono)}
+  .dir-note{
+    padding:11px 13px;font-size:12px;color:var(--txt-mute);line-height:1.65
+  }
+  .dir-note b{color:var(--txt-dim);font-weight:600}
+  .dir-note code{font-family:var(--mono);font-size:11.5px;color:var(--amber);background:rgba(240,180,41,.08);padding:1px 5px;border-radius:4px}
+  .dir-tip{
+    padding:8px 13px;border-top:1px solid var(--line);font-size:11.5px;line-height:1.6;color:var(--txt-mute);
+    background:rgba(240,180,41,.035)
+  }
+  .dir-tip i{color:var(--amber);font-style:normal}
+
+  .port-chip{
+    display:inline-flex;align-items:center;gap:8px;padding:7px 11px;border-radius:10px;
+    border:1px solid var(--line);background:var(--panel);font-size:11.5px;color:var(--txt-dim);transition:.2s var(--ease)
+  }
+  .port-chip:hover{border-color:var(--line-strong);transform:translateY(-2px);color:var(--txt)}
+  .port-chip b{font-family:var(--mono);color:var(--amber);font-weight:600}
+  .port-chip span{font-family:var(--mono);font-size:11px;color:var(--txt-mute)}
+
+  .table-wrap{border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:linear-gradient(180deg,rgba(255,255,255,.032),rgba(255,255,255,.008))}
+  .tbl-scroll{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;min-width:1060px}
+  thead th{
+    position:sticky;top:0;z-index:2;text-align:left;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--txt-mute);font-weight:600;padding:10px 13px;background:rgba(16,17,20,.94);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);white-space:nowrap
+  }
+  tbody tr{border-bottom:1px solid rgba(255,255,255,.045);transition:background .18s}
+  tbody tr:last-child{border-bottom:0}
+  tbody tr:hover{background:rgba(240,180,41,.045)}
+  tbody td{padding:11px 13px;vertical-align:middle;font-size:12.8px}
+  .cell-name{display:flex;align-items:center;gap:10px;min-width:186px}
+  .sq{
+    width:26px;height:26px;flex:none;border-radius:8px;display:grid;place-items:center;
+    font-family:var(--mono);font-size:10px;font-weight:700;color:var(--amber);
+    background:rgba(240,180,41,.12);border:1px solid rgba(240,180,41,.22)
+  }
+  .cell-name .nm{font-weight:580;white-space:nowrap}
+  .cell-name .sm{font-size:11px;color:var(--txt-mute);font-family:var(--mono)}
+  .cell-path{font-family:var(--mono);font-size:11px;color:var(--txt-mute);max-width:250px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .port-pill{
+    display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;padding:3px 8px;border-radius:7px;
+    border:1px solid rgba(95,211,154,.32);background:rgba(95,211,154,.10);color:#8ee9b6
+  }
+  .occupancy{font-family:var(--mono);font-size:12px;color:var(--txt-dim)}
+  .occupancy.idle{color:var(--txt-mute)}
+  .disk-cell{min-width:126px}
+  .disk-cell .n{font-family:var(--mono);font-size:12px;color:var(--txt-dim)}
+  .row-actions{display:flex;gap:6px;justify-content:flex-end}
+  .empty{padding:32px;text-align:center;color:var(--txt-mute);font-size:12.5px}
+  .state-cell{display:flex;align-items:center;gap:8px;cursor:pointer;white-space:nowrap}
+  .state-cell .lb{font-size:11.5px;color:var(--txt-dim)}
+
+  .search{
+    display:flex;align-items:center;gap:9px;flex:1;min-width:210px;max-width:400px;padding:8px 12px;
+    border-radius:11px;border:1px solid var(--line-strong);background:var(--panel);transition:border-color .2s,background .2s
+  }
+  .search:focus-within{border-color:var(--amber-line);background:rgba(240,180,41,.05)}
+  .search input{flex:1;background:transparent;border:0;outline:0;color:var(--txt);font-size:13px}
+  .search input::placeholder{color:var(--txt-mute)}
+  .cr-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:13px;flex-wrap:wrap}
+
+  /* ================= modal ================= */
+  .scrim{position:fixed;inset:0;z-index:60;display:none;place-items:center;background:rgba(6,7,9,.62);backdrop-filter:blur(5px)}
+  .scrim.show{display:grid;animation:fade .22s var(--ease)}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .modal{
+    width:min(440px,92vw);border-radius:16px;border:1px solid var(--line-strong);
+    background:linear-gradient(180deg,#15161a,#101114);
+    box-shadow:0 40px 90px -40px #000,0 0 0 1px rgba(240,180,41,.10);padding:20px;animation:pop .28s var(--ease)
+  }
+  @keyframes pop{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:none}}
+  .modal h3{margin:0 0 3px;font-size:15px}
+  .modal p{margin:0 0 16px;font-size:12px;color:var(--txt-mute)}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-mute);margin-bottom:6px}
+  .field input{
+    width:100%;padding:9px 11px;border-radius:10px;border:1px solid var(--line-strong);
+    background:rgba(0,0,0,.35);color:var(--txt);font-size:13px;outline:0;transition:.2s
+  }
+  .field input:focus{border-color:var(--amber-line);box-shadow:0 0 0 3px rgba(240,180,41,.10)}
+  .modal-foot{display:flex;justify-content:flex-end;gap:9px;margin-top:18px}
+
+  /* ================= toast ================= */
+  /* pointer-events:none 是必须的：提示条固定在右下角且 z-index 很高，
+     多条堆叠时会盖住右上大片区域，把它下面按钮的点击全部吞掉——用户看到的就是「点了没反应」。
+     提示条本身没有任何交互，不该接收指针事件；日后若要在提示条内放按钮，
+     给那个按钮单独写 .toast button{pointer-events:auto}。 */
+  .toasts{position:fixed;right:22px;bottom:22px;z-index:80;display:flex;flex-direction:column;gap:9px;align-items:flex-end;pointer-events:none}
+  .toast{pointer-events:none}
+  .toast button{pointer-events:auto}
+  .toast{
+    display:flex;align-items:center;gap:10px;min-width:200px;max-width:360px;padding:11px 14px;border-radius:12px;
+    border:1px solid var(--line-strong);border-left:3px solid var(--amber);
+    background:rgba(19,20,24,.94);backdrop-filter:blur(12px);color:var(--txt);font-size:12.5px;
+    box-shadow:0 22px 50px -24px #000;animation:toastIn .3s var(--ease)
+  }
+  .toast.ok{border-left-color:var(--st-done)}
+  .toast.warn{border-left-color:var(--st-needs)}
+  .toast.out{animation:toastOut .3s var(--ease) forwards}
+  @keyframes toastIn{from{opacity:0;transform:translateX(18px) scale(.96)}to{opacity:1;transform:none}}
+  @keyframes toastOut{to{opacity:0;transform:translateX(18px) scale(.96)}}
+
+  @media (max-width:820px){
+    .app{flex-direction:column}
+    .sidebar{width:100%;height:auto;position:static;border-right:0;border-bottom:1px solid var(--line)}
+    .plist{max-height:230px}
+    .sidebar-foot{margin-top:6px}
+    .topbar,.view{padding-left:16px;padding-right:16px}
+    .stats{grid-template-columns:repeat(2,1fr)}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important}
+  }
+</style>
+</head>
+<body>
+
+<div class="wt-bg" aria-hidden="true">
+  <i class="wt-blob wt-b1"></i>
+  <i class="wt-blob wt-b2"></i>
+  <i class="wt-blob wt-b3"></i>
+  <i class="wt-blob wt-b4"></i>
+</div>
+
+<div class="app">
+  <!-- ============ 左栏 ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">🧰</div>
+      <div>
+        <div class="brand-name">工作台</div>
+        <div class="brand-sub">Workbench</div>
+      </div>
+      <div class="brand-tools">
+        <button data-act="focus-search" title="搜索项目" aria-label="搜索项目">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.6"/><path d="m20 20-4.3-4.3"/></svg>
+        </button>
+        <button data-act="refresh" title="重扫本机项目" aria-label="重扫本机项目">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.4 12a8.4 8.4 0 1 1-2.46-5.94"/><path d="M20.6 4.2v4.6h-4.6"/></svg>
+        </button>
+        <button data-act="add-project" title="添加项目" aria-label="添加项目">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div>
+      <div class="nav-label">视图</div>
+      <nav class="nav">
+        <button class="nav-item" data-view="workbench">
+          <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+            <rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/>
+            <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>
+          </svg>
+          <span>项目工作台</span>
+          <span class="ni-count" id="navCount">0</span>
+        </button>
+      </nav>
+    </div>
+
+    <div>
+      <div class="nav-label">
+        <span style="letter-spacing:.14em">项目 <span id="plistCount">0</span></span>
+        <span class="nl-tools">
+          <button class="nl-btn" data-act="add-project" title="添加自定义项目">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>添加
+          </button>
+          <button class="nl-btn" id="selToggle" data-act="toggle-select" title="多选删除">多选</button>
+        </span>
+      </div>
+      <div class="selbar" id="selbar">
+        <span class="sb-info" id="selInfo">勾选要移除的项目</span>
+        <button class="btn small" data-act="sel-all">全选</button>
+        <button class="btn small" data-act="sel-none">清空</button>
+        <button class="btn small danger" id="selDel" data-act="sel-delete">移除</button>
+      </div>
+      <div class="restore-bar" id="restoreBar">
+        <span id="restoreInfo"></span>
+        <button class="btn small" data-act="restore-removed">全部恢复</button>
+      </div>
+      <div class="plist" id="plist"></div>
+    </div>
+
+    <div class="sidebar-foot">
+      <div class="foot-box">
+        <div class="fb-row"><span>进行中</span><b><span id="miniWorking">0</span> / <span id="miniTotal">0</span></b></div>
+        <div class="fb-row"><span>磁盘占用</span><b id="miniDisk">—</b></div>
+        <div class="fb-row"><span>快照</span><b id="miniSnap">—</b></div>
+      </div>
+
+      <button class="control-entry" id="controlEntry" data-view="control">
+        <span class="pulse-dot"></span>
+        <svg class="ce-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <circle cx="12" cy="12" r="8.4"/><circle cx="12" cy="12" r="3.2"/>
+          <path d="M12 3.6v3M12 17.4v3M3.6 12h3M17.4 12h3"/>
+        </svg>
+        <span class="ce-txt"><span>控制室</span><small>CONTROL ROOM</small></span>
+        <svg class="ce-arrow" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ============ 主区 ============ -->
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <div class="tb-title">
+          <h1 id="viewTitle">项目工作台</h1>
+          <span class="eyebrow" id="viewEyebrow">Workspace</span>
+        </div>
+        <p class="tb-sub" id="viewSub">加载中…</p>
+      </div>
+      <div class="tb-actions" id="tbActions">
+        <span class="mode-badge" id="modeBadge" data-act="mode-help" title="检测本地服务中…"><i>◇</i>检测中…</span>
+        <button class="btn" data-act="refresh">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20.4 12a8.4 8.4 0 1 1-2.46-5.94"/><path d="M20.6 4.2v4.6h-4.6"/>
+          </svg><span>刷新视图</span>
+        </button>
+        <button class="btn primary" data-act="add-project">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          <span>添加项目</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- 视图一：工作台（卡片网格 / 分栏工作台 双范式） -->
+    <section class="view active" id="view-workbench">
+      <div id="wbGrid">
+        <div class="grid" id="cardGrid"></div>
+      </div>
+      <div id="wbSplit" style="display:none"></div>
+    </section>
+
+    <!-- 视图二：控制室 -->
+    <section class="view" id="view-control">
+      <div class="stats" id="crStats"></div>
+
+      <div class="section-head">
+        <h2>本机目录 <span id="dirAuthCount">—</span></h2>
+        <div class="hint">零服务模式 · 目录句柄存浏览器，刷新后一键续期</div>
+      </div>
+      <div class="dirbar" id="dirBar"></div>
+      <!-- 兼容模式扫描：webkitdirectory 只枚举文件清单，不需要任何权限、不需要安全上下文，
+           在 file:// 下也能用。作为 showDirectoryPicker 不可用 / 授权被拒时的兜底通道。 -->
+      <input type="file" id="dirFlatInput" webkitdirectory directory multiple
+        style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" />
+
+      <div class="section-head">
+        <h2>本机监听端口 <span id="portCount">—</span></h2>
+        <div class="hint" id="portHint">快照采集 · 与项目匹配的已标注</div>
+      </div>
+      <div class="ports-strip" id="portsStrip"></div>
+
+      <div class="section-head">
+        <h2>本地项目列表 <span id="crCount">—</span></h2>
+        <div class="hint">点状态光切换四态 · 点「打开」进入分栏工作台</div>
+      </div>
+      <div class="cr-toolbar">
+        <label class="search">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="6.6"/><path d="m20 20-4.3-4.3"/></svg>
+          <input id="searchInput" type="search" placeholder="搜索项目名 / 路径 / 语言…" autocomplete="off" />
+        </label>
+        <div class="seg" id="stateFilter"></div>
+      </div>
+      <div class="table-wrap">
+        <div class="tbl-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th style="min-width:200px">项目</th>
+                <th>语言标签</th>
+                <th style="min-width:210px">路径</th>
+                <th style="min-width:132px">状态</th>
+                <th style="min-width:120px">运行 / 端口</th>
+                <th style="min-width:96px">占用</th>
+                <th style="min-width:146px">磁盘</th>
+                <th style="min-width:78px">文件</th>
+                <th style="text-align:right;min-width:132px">操作</th>
+              </tr>
+            </thead>
+            <tbody id="crBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- 添加项目 -->
+<div class="scrim" id="scrim">
+  <div class="modal" role="dialog" aria-modal="true">
+    <h3>添加自定义项目</h3>
+    <p>只写入本机浏览器 localStorage，不会改动磁盘上的任何文件；填了绝对路径且已连本地服务时，会把该目录登记进服务以便仓库窗格读写。</p>
+    <div class="field"><label>项目名称</label><input id="fName" placeholder="例如：智能小车固件" autocomplete="off" /></div>
+    <div class="field"><label>目录路径</label><input id="fPath" placeholder="C:\projects\smart-car" autocomplete="off" class="mono" /></div>
+    <div class="field"><label>语言标签（逗号分隔）</label><input id="fLangs" placeholder="C, C++, ESP-IDF" autocomplete="off" /></div>
+    <div class="modal-foot">
+      <button class="btn" data-act="close-modal">取消</button>
+      <button class="btn primary" data-act="confirm-add">添加到工作台</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+/* ============================================================
+   快照数据（由本机扫描生成，非示例数据）
+   ============================================================ */
+const DATA = {"snapshot":"2026-10-16 19:00 · 公开演示版（示例数据）","projects":[{"id":"smart-car-fw","name":"smart-car-fw","alias":"智能小车固件","path":"D:\\projects\\smart-car-fw","langs":["C","C++","STM32","Makefile"],"category":"嵌入式","sizeBytes":48234496,"sizeMB":46,"git":true,"updated":"2026-09-28","files":812,"exists":true,"nested":false},{"id":"vision-demo","name":"vision-demo","alias":"视觉识别 Demo","path":"D:\\projects\\vision-demo","langs":["Python","OpenCV","PyTorch"],"category":"AI","sizeBytes":133169152,"sizeMB":127,"git":true,"updated":"2026-10-08","files":356,"exists":true,"nested":false,"live":{"port":8000,"pid":20412,"proc":"python","memMB":186},"declaredPorts":[8000]},{"id":"web-dashboard","name":"web-dashboard","alias":"数据看板","path":"D:\\projects\\web-dashboard","langs":["TypeScript","Vue","Vite"],"category":"前端","sizeBytes":52428800,"sizeMB":50,"git":true,"updated":"2026-10-12","files":264,"exists":true,"nested":false,"live":{"port":5173,"pid":17890,"proc":"node","memMB":142},"declaredPorts":[5173]},{"id":"blog-site","name":"blog-site","alias":"个人博客","path":"D:\\projects\\blog-site","langs":["Astro","MDX","CSS"],"category":"前端","sizeBytes":18874368,"sizeMB":18,"git":true,"updated":"2026-09-15","files":141,"exists":true,"nested":false},{"id":"script-toolbox","name":"script-toolbox","alias":"脚本工具箱","path":"D:\\projects\\script-toolbox","langs":["Python","PowerShell"],"category":"工具","sizeBytes":4194304,"sizeMB":4,"git":false,"updated":"2026-08-22","files":57,"exists":true,"nested":false},{"id":"esp-weather","name":"esp-weather","alias":"ESP32 气象站","path":"D:\\projects\\esp-weather","langs":["C++","ESP-IDF"],"category":"嵌入式","sizeBytes":96468992,"sizeMB":92,"git":true,"updated":"2026-07-30","files":903,"exists":true,"nested":false}],"trees":{"smart-car-fw":{"tree":[["src",1,0],["src/main.c",0,18342],["src/motor.c",0,7412],["include",1,0],["include/motor.h",0,1204],["CMakeLists.txt",0,642],["README.md",0,2140]],"samples":[{"p":"README.md","t":"# 智能小车固件\n\n基于 STM32F103 的两轮差速小车，含电机 PWM 驱动、编码器测速与串口调试协议。\n\n## 目录\n- `src/` 驱动与主循环\n- `include/` 头文件\n\n## 构建\n```sh\nmake -j8\n```\n"}]},"vision-demo":{"tree":[["app",1,0],["app/server.py",0,9214],["app/detect.py",0,14380],["models",1,0],["models/yolov8n.onnx",0,12451840],["requirements.txt",0,318],["README.md",0,3620]],"samples":[{"p":"README.md","t":"# 视觉识别 Demo\n\n本地起一个 FastAPI 服务，浏览器上传图片即返回检测框。默认监听 `8000`。\n\n```bash\npip install -r requirements.txt\npython app/server.py\n```\n"}]},"web-dashboard":{"tree":[["src",1,0],["src/main.ts",0,2841],["src/App.vue",0,7412],["src/components",1,0],["src/components/ChartCard.vue",0,5120],["package.json",0,812],["vite.config.ts",0,604],["README.md",0,1860]],"samples":[{"p":"README.md","t":"# 数据看板\n\nVite + Vue3 的轻量看板，`npm run dev` 后默认落在 `5173`。\n\n数据源可切换为本地 JSON 或远端接口。\n"}]},"blog-site":{"tree":[["src",1,0],["src/pages",1,0],["src/pages/index.astro",0,2410],["src/content",1,0],["src/content/hello.mdx",0,1120],["astro.config.mjs",0,512],["README.md",0,980]],"samples":[{"p":"README.md","t":"# 个人博客\n\nAstro 静态站点，文章写在 `src/content/` 下的 MDX 里，构建产物可直接丢到静态托管。\n"}]},"script-toolbox":{"tree":[["scripts",1,0],["scripts/rename.py",0,2140],["scripts/backup.ps1",0,1680],["README.md",0,1420]],"samples":[{"p":"README.md","t":"# 脚本工具箱\n\n零依赖小脚本合集：批量重命名、目录备份、日志切片。\n\n每个脚本都在文件头写了用法注释。\n"}]},"esp-weather":{"tree":[["main",1,0],["main/app_main.c",0,11240],["main/sensor.c",0,6420],["components",1,0],["components/bme280",1,0],["sdkconfig",0,4820],["README.md",0,2740]],"samples":[{"p":"README.md","t":"# ESP32 气象站\n\nESP-IDF 工程，BME280 采集温湿度气压，MQTT 上报。\n\n```bash\nidf.py build flash monitor\n```\n"}]}},"ports":[{"port":5173,"pid":17890,"proc":"node","memMB":142,"address":"127.0.0.1"},{"port":8000,"pid":20412,"proc":"python","memMB":186,"address":"127.0.0.1"},{"port":5432,"pid":9120,"proc":"postgres","memMB":64,"address":"127.0.0.1"}],"aiPresets":[{"name":"本机 Open WebUI","url":"http://localhost:3000"},{"name":"本机 LobeChat","url":"http://localhost:3210"},{"name":"本机 LibreChat","url":"http://localhost:3080"},{"name":"DeepSeek","url":"https://chat.deepseek.com"},{"name":"豆包","url":"https://www.doubao.com/chat"},{"name":"ChatGPT","url":"https://chatgpt.com"}]};
+
+/* ============================================================
+   常量
+   ============================================================ */
+const KINDS = {
+  note:        { label:'随手记',   icon:'✎', desc:'自由文本，自动保存' },
+  todo:        { label:'待办清单', icon:'☑', desc:'勾选式任务列表' },
+  link:        { label:'外链',     icon:'↗', desc:'一个可跳转的网址' },
+  repo:        { label:'仓库',     icon:'▤', desc:'目录树 + 文件内容' },
+  projects:    { label:'本地检索', icon:'⊞', desc:'检索本机项目并加入工作台' },
+  chat:        { label:'AI 对话',  icon:'✦', desc:'窗格内嵌 AI 网页' },
+  web:         { label:'网页',     icon:'◫', desc:'内嵌本地服务预览' },
+  placeholder: { label:'预留位',   icon:'◇', desc:'空窗格' }
+};
+const KIND_ORDER = ['repo','projects','todo','note','link','web','chat','placeholder'];
+
+const STATES = {
+  'idle':      { label:'待命',   cls:'idle' },
+  'working':   { label:'进行中', cls:'working' },
+  'needs-you': { label:'待处理', cls:'needs-you' },
+  'done':      { label:'已完成', cls:'done' }
+};
+const STATE_ORDER = ['idle','working','needs-you','done'];
+
+const PRESETS = {
+  full: { label:'单窗',     k:'1',  slots:1 },
+  l2:   { label:'左右',     k:'2',  slots:2 },
+  l13:  { label:'顶部大窗', k:'1+2',slots:3 },
+  g4:   { label:'田字',     k:'2×2',slots:4 },
+  chat: { label:'对话',     k:'1+AI',slots:2 }
+};
+const PRESET_ORDER = ['full','l2','l13','g4','chat'];
+const MAX_SLOTS = 4;
+
+/* AI 对话预设：优先用构建期注入 / 本地服务返回的列表 */
+const FALLBACK_AI_PRESETS = [
+  { name:'本机 Open WebUI', url:'http://localhost:3000' },
+  { name:'本机 LobeChat',   url:'http://localhost:3210' },
+  { name:'DeepSeek',        url:'https://chat.deepseek.com' }
+];
+let AI_PRESETS = (DATA && Array.isArray(DATA.aiPresets) && DATA.aiPresets.length)
+  ? DATA.aiPresets.slice() : FALLBACK_AI_PRESETS.slice();
+
+const LS = {
+  view:'wt2.view', active:'wt2.active', status:'wt2.status', preset:'wt2.preset',
+  panes:'wt2.panes', custom:'wt2.custom', filter:'wt2.filter', removed:'wt2.removed',
+  zero:'wt2.zero'
+};
+
+/* ============================================================
+   状态
+   ============================================================ */
+const store = {
+  read(k, fb){ try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch(e){ return fb; } },
+  write(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
+};
+
+let view        = store.read(LS.view, 'workbench');
+let activeId    = store.read(LS.active, null);
+let status      = store.read(LS.status, {});      // { pid: 'idle'|'working'|'needs-you'|'done' }
+let presetOf    = store.read(LS.preset, {});      // { pid: 'l13' }
+let panesOf     = store.read(LS.panes, {});       // { pid: [pane x4] }
+let custom      = store.read(LS.custom, []);
+let removed     = store.read(LS.removed, []);   // 已从项目栏移除的扫描项目 id
+let stateFilter = store.read(LS.filter, 'all');
+let selectMode  = false;                        // 项目栏多选态（不持久化）
+let selected    = new Set();                    // 多选中的项目 id（不持久化）
+let armedDelete = false;                        // 移除二次确认（不持久化）
+let query       = '';
+let repoView    = {};   // { 'pid|rel' : {file: path|null} }  —— 会话内，不持久化
+
+const dirHandles = {};  // { pid: FileSystemDirectoryHandle } —— 会话内，持久副本在 IndexedDB
+/* 每个项目目录句柄自己的权限等级。scanPerm 只代表扫描根，
+   单独连接的项目（connectDir）有自己的等级，两者不能混用。 */
+const dirPerm = {};     // { pid: '' | 'read' | 'write' }
+const SCAN_ROOT_KEY = '__scanroot__';
+let scanRoot     = null;  // FileSystemDirectoryHandle —— 零服务模式的单页扫描根
+let scanRootName = '';
+let pendingAuth  = [];    // [{ key, handle }] —— 权限降级为 prompt，需用户手势才能续期
+let localPorts   = null;  // { scannedAt, ports:[{port}], attempted } —— 端口试探结果（近似）
+let zeroScan     = store.read(LS.zero, { scannedAt:'', rootName:'', rootPath:'', mode:'', projects:[] });
+const zeroPending = {};   // { pid: true } —— 正在把扫描根解析成项目目录句柄
+let pickFail     = null; // { name, msg } —— 最近一次目录选择失败的原因，常驻显示，避免用户「不知道为什么没反应」
+/* 当前扫描根的权限等级：'' | 'none' | 'denied' | 'prompt' | 'read' | 'write'。
+   扫描与浏览只需要 read；write 留到用户真的点「保存」那一刻再去要。
+   repoBody 是同步渲染、不能 await permLevel，因此这里缓存一份供 UI 读取。 */
+let scanPerm     = '';
+let flatFiles    = null; // Map<相对路径, File> —— 兼容模式扫描到的文件清单；会话内有效，刷新后需重扫一次
+let flatRootName = '';   // 兼容模式扫描根目录名（浏览器不暴露绝对路径）
+let flatTree     = null; // Map<相对路径, {dirs:Set,files:[]}> —— 兼容模式重建的目录树，供 flatListAt 直接查表
+let deepScan     = false;// 是否开启深度扫描（更深的层数与更大的目录预算）
+let scanning     = false;// 是否有扫描正在跑（扫描中再点扫描按钮＝取消）
+let scanAbort    = false;// 用户主动取消扫描
+
+let SERVER = false;     // 是否跑在本地服务下（可读写文件）；启动时探测 /api/health
+let scanCache = null;   // { scannedAt, roots, projects } —— /api/scan 的结果，会话内
+let projQuery = '';     // 本地检索窗格的搜索词（不持久化）
+let projGroup = 'flat'; // 'flat' | 'lang' | 'cat'
+let projFilter = 'all'; // 'all' | 'running' | 'new'
+
+/* ============================================================
+   工具
+   ============================================================ */
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function hkey(s){ let h = 5381; for(let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return h.toString(36); }
+/* 零服务模式扫描出来的项目，形状对齐 DATA.projects，便于整套渲染复用 */
+function zeroProjects(){
+  return (zeroScan.projects || []).map(sp => ({
+    id: 'zero-' + hkey((zeroScan.rootName || '') + '|' + sp.rel),
+    name: sp.name, alias: sp.name, path: sp.path, rel: sp.rel,
+    langs: sp.langs || [], category: sp.category || '本机扫描',
+    sizeMB: Math.round(((sp.sizeBytes || 0) / 1048576) * 10) / 10,
+    files: sp.files || 0, git: !!sp.git, updated: sp.updated || '',
+    live: sp.live || null, samples: sp.samples || [], ports: sp.ports || [], zero: true,
+    estimated: !!sp.estimated, truncated: !!sp.truncated
+  }));
+}
+function zeroById(pid){ return zeroProjects().find(p => p.id === pid) || null; }
+/* 快照项目 + 零服务扫描 + 自定义项目，按路径去重后合并 */
+function allProjects(){
+  const merged = DATA.projects.concat(zeroProjects(), custom);
+  const seen = new Set(), out = [];
+  for(const p of merged){
+    if(removed.indexOf(p.id) >= 0) continue;
+    const k = normPath(p.path);
+    if(k && seen.has(k)) continue;
+    if(k) seen.add(k);
+    out.push(p);
+  }
+  return out;
+}
+function projectById(id){ return allProjects().find(p => p.id === id) || null; }
+function initials(p){ const s = (p.alias || p.name || '?').replace(/[^\w\u4e00-\u9fa5]/g,''); return (s.slice(0,2) || 'PR').toUpperCase(); }
+function shortPath(p, n){
+  const full = p.path || '';
+  if(full.length <= 44) return full;
+  const parts = full.split('\\').filter(Boolean);
+  if(parts.length < 3) return full;
+  const isDrive = /^[A-Za-z]:$/.test(parts[0]);
+  return (isDrive ? parts[0] + '\\' : '') + '…\\' + parts.slice(-(n || 2)).join('\\');
+}
+/* 预估值一律带 ~ 前缀：扫描时体积是「采样 400 个文件 + 外推」得来的，
+   不是逐文件实测。把估算当精确值报出去就违反了「声明可证伪」这条纪律。 */
+function fmtSize(mb, estimated){
+  if(!mb) return '—';
+  const t = mb >= 1024 ? (mb/1024).toFixed(2) + ' GB'
+    : mb < 1 ? (mb*1024).toFixed(0) + ' KB'
+    : mb.toFixed(1) + ' MB';
+  return (estimated ? '~' : '') + t;
+}
+function fmtBytes(n){
+  if(!n) return '0';
+  if(n >= 1048576) return (n/1048576).toFixed(1) + ' MB';
+  if(n >= 1024) return (n/1024).toFixed(1) + ' KB';
+  return n + ' B';
+}
+function stOf(pid){ return status[pid] || 'idle'; }
+function stLabel(pid){ return STATES[stOf(pid)].label; }
+
+/* 项目图标：按分类优先，其次按主语言推断 */
+const CAT_EMOJI = { '嵌入式':'🔌','上位机':'🖥️','练习':'📚','工具':'🛠️','扩展':'🧩','脚本':'📜','前端':'🌐','后端':'⚙️','数据':'📊','文档':'📄' };
+function projEmoji(p){
+  if(CAT_EMOJI[p.category]) return CAT_EMOJI[p.category];
+  const l = (p.langs || [])[0] || '';
+  if(/ESP|STM32|Arduino|C\+\+|^C$/i.test(l)) return '🔌';
+  if(/Python/i.test(l)) return '🐍';
+  if(/Node|JavaScript|TypeScript|Vue|React/i.test(l)) return '🌐';
+  if(/PowerShell|Batch|Shell/i.test(l)) return '📜';
+  if(/HTML|CSS/i.test(l)) return '🎨';
+  return '📁';
+}
+
+/* 相对时间：以快照时刻为基准 */
+function relTime(d){
+  if(!d) return '';
+  const a = Date.parse(String(d).slice(0,10) + 'T00:00:00');
+  if(isNaN(a)) return String(d);
+  const b = Date.parse(String(DATA.snapshot || '').slice(0,10) + 'T00:00:00');
+  const base = isNaN(b) ? Date.now() : b;
+  const days = Math.round((base - a) / 86400000);
+  if(days <= 0) return '今天';
+  if(days === 1) return '昨天';
+  if(days < 30) return days + ' 天前';
+  const mo = Math.floor(days / 30);
+  return mo < 12 ? mo + ' 个月前' : Math.floor(mo / 12) + ' 年前';
+}
+
+/* 卡片预览：优先取 README 正文首段，退化到语言/规模摘要 */
+function projPreview(p){
+  const set = DATA.trees[p.id];
+  const list = (set && set.samples) || p.samples || [];
+  const readme = list.find(s => /(^|\/)readme\.(md|markdown|txt|rst)$/i.test(s.p));
+  const pick = readme || list.find(s => s.t && s.t.trim().length > 24) || list[0];
+  if(pick && pick.t){
+    const clean = cleanPreviewText(pick.t);
+    if(clean.length > 24) return clean.slice(0, 220);
+  }
+  return '';
+}
+
+/* 预览清洗：先剥代码围栏与行内代码，再滤掉标记行，最后压缩空白（对齐参考仓库 cleanPreviewText） */
+function cleanPreviewText(raw){
+  return String(raw)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .split(/\r?\n/)
+    .filter(l => { const s = l.trim(); return s && !/^[|+\-=*_#>]/.test(s) && !/^https?:\/\//.test(s); })
+    .join(' ')
+    .replace(/[*_~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function projSummary(p){
+  return [(p.langs || []).slice(0,3).join(' · '),
+          p.files ? (p.estimated ? '约 ' : '') + p.files + ' 文件' : '',
+          p.git ? 'git' : '', fmtSize(p.sizeMB, p.estimated)].filter(Boolean).join(' · ');
+}
+
+function lightHTML(pid, extra){
+  const s = stOf(pid);
+  return '<button class="light ' + s + '" data-act="cycle-status" data-pid="' + esc(pid) +
+         '" title="' + STATES[s].label + ' · 点击切换" aria-label="状态：' + STATES[s].label + '"' + (extra || '') + '></button>';
+}
+function diskTotalMB(){
+  return allProjects().filter(p => !p.nested).reduce((s,p) => s + (p.sizeMB || 0), 0);
+}
+function countByState(){
+  const c = { idle:0, working:0, 'needs-you':0, done:0 };
+  allProjects().forEach(p => { c[stOf(p.id)]++; });
+  return c;
+}
+
+/* ============================================================
+   Toast
+   ============================================================ */
+const toasts = document.getElementById('toasts');
+const TICON = { info:'◆', ok:'✓', warn:'!' };
+function toast(msg, kind){
+  kind = kind || 'info';
+  const el = document.createElement('div');
+  el.className = 'toast ' + (kind === 'info' ? '' : kind);
+  el.innerHTML = '<span>' + TICON[kind] + '</span><span>' + esc(msg) + '</span>';
+  toasts.appendChild(el);
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, 2800);
+}
+
+/* ============================================================
+   目录树索引（把扁平快照转成嵌套结构）
+   ============================================================ */
+const TREE = {};
+function buildIndex(){
+  for(const pid in DATA.trees){
+    const flat = DATA.trees[pid].tree || [];
+    const root = { name:'', dirs:new Map(), files:new Map() };
+    for(const node of flat){
+      const p = node[0], isDir = node[1] === 1, size = node[2] || 0;
+      const parts = p.split('/');
+      const name = parts.pop();
+      let cur = root;
+      for(const seg of parts){
+        if(!cur.dirs.has(seg)) cur.dirs.set(seg, { name:seg, dirs:new Map(), files:new Map() });
+        cur = cur.dirs.get(seg);
+      }
+      if(isDir){ if(!cur.dirs.has(name)) cur.dirs.set(name, { name, dirs:new Map(), files:new Map() }); }
+      else cur.files.set(name, { name, size });
+    }
+    TREE[pid] = root;
+  }
+}
+function nodeAt(pid, rel){
+  let cur = TREE[pid];
+  if(!cur) return null;
+  if(!rel) return cur;
+  for(const seg of rel.split('/')){
+    if(!cur.dirs.has(seg)) return null;
+    cur = cur.dirs.get(seg);
+  }
+  return cur;
+}
+function listAt(pid, rel){
+  const n = nodeAt(pid, rel);
+  if(!n) return { dirs:[], files:[] };
+  return {
+    dirs: [...n.dirs.values()].sort((a,b) => a.name.localeCompare(b.name, 'zh')),
+    files: [...n.files.values()].sort((a,b) => a.name.localeCompare(b.name, 'zh'))
+  };
+}
+function sampleOf(pid, rel){
+  const set = DATA.trees[pid];
+  if(!set) return null;
+  const hit = (set.samples || []).find(s => s.p === rel);
+  return hit ? hit.t : null;
+}
+
+/* ============================================================
+   本地检索（窗格 projects 的数据层）
+   ============================================================ */
+function normPath(s){ return String(s || '').replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase(); }
+
+/** 已登记项目 + 扫描到但未登记的项目，合成一张统一列表 */
+function projUniverse(){
+  const rows = [], seen = new Set();
+  allProjects().forEach(p => {
+    seen.add(normPath(p.path));
+    rows.push({
+      pid:p.id, name:p.name, alias:p.alias || p.name, path:p.path, langs:p.langs || [],
+      sizeBytes:(p.sizeMB || 0) * 1048576, files:p.files || 0, updated:p.updated || '',
+      live:p.live || null, registered:true, category:p.category || '未分类'
+    });
+  });
+  if(scanCache && Array.isArray(scanCache.projects)){
+    scanCache.projects.forEach(sp => {
+      if(seen.has(normPath(sp.path))) return;
+      rows.push({
+        pid:null, name:sp.name, alias:sp.name, path:sp.path, langs:sp.langs || [],
+        sizeBytes:sp.sizeBytes || 0, files:sp.files || 0, updated:sp.updated || '',
+        live:null, registered:false, category:'新发现', git:!!sp.git
+      });
+    });
+  }
+  return rows;
+}
+
+function projFiltered(){
+  let rows = projUniverse();
+  if(projFilter === 'running') rows = rows.filter(r => r.live);
+  else if(projFilter === 'new') rows = rows.filter(r => !r.registered);
+  const q = projQuery.trim().toLowerCase();
+  if(q) rows = rows.filter(r => (r.alias + ' ' + r.name + ' ' + r.path + ' ' + (r.langs || []).join(' ')).toLowerCase().includes(q));
+  return rows;
+}
+
+function projGrouped(rows){
+  if(projGroup === 'flat') return [{ key:'', rows }];
+  const keyOf = projGroup === 'lang'
+    ? (r => (r.langs || [])[0] || '其他语言')
+    : (r => r.category || '未分类');
+  const map = new Map();
+  rows.forEach(r => { const k = keyOf(r); if(!map.has(k)) map.set(k, []); map.get(k).push(r); });
+  return [...map.entries()].map(([key, rs]) => ({ key, rows:rs }));
+}
+
+function projStatHTML(hit, total, running){
+  return '<span>命中 <b>' + hit + '</b> / 共 ' + total + '</span>' +
+    '<span>运行中 <b>' + running + '</b></span>' +
+    '<span class="sp"></span>' +
+    '<span>' + (SERVER ? '索引：本地服务实时重扫'
+      : (scanRoot ? '索引：本机目录扫描（零服务）' : '索引：内置快照 ' + esc(DATA.snapshot))) + '</span>' +
+    (scanCache ? '<span>· 重扫于 ' + esc(String(scanCache.scannedAt || '').slice(11, 19)) + '</span>'
+      : (zeroScan.scannedAt ? '<span>· 扫描于 ' + esc(String(zeroScan.scannedAt).slice(11, 19)) + '</span>' : ''));
+}
+
+function projRowHTML(r){
+  const tags = (r.langs || []).slice(0, 2).map(l => '<span class="tag">' + esc(l) + '</span>').join('') +
+    (r.live ? '<span class="tag gold">:' + r.live.port + '</span>' : '') +
+    (!r.registered ? '<span class="tag gold">新</span>' : '');
+  return '<div class="pj-row' + (r.live ? ' run' : '') + '"' +
+      (r.registered ? ' data-act="proj-open" data-pid="' + esc(r.pid) + '" title="点开进入分栏工作台"' : '') + '>' +
+    (r.registered ? lightHTML(r.pid) : '<span class="light idle" style="pointer-events:none;opacity:.5"></span>') +
+    '<span class="pj-body"><span class="pj-name" title="' + esc(r.alias) + '">' + esc(r.alias) + '</span>' +
+      '<span class="pj-path" title="' + esc(r.path) + '">' + esc(shortPath(r, 2)) + '</span></span>' +
+    '<span class="pj-tags">' + tags + '</span>' +
+    '<span class="pj-size">' + fmtBytes(r.sizeBytes) + '</span>' +
+    (!r.registered ? '<button class="btn small primary" data-act="proj-add" data-path="' + esc(r.path) +
+      '" data-name="' + esc(r.name) + '" data-langs="' + esc((r.langs || []).join(',')) +
+      '" data-size="' + r.sizeBytes + '" data-files="' + r.files + '" data-updated="' + esc(r.updated) +
+      '" data-git="' + (r.git ? '1' : '0') + '">加入</button>' : '') +
+  '</div>';
+}
+
+function projListHTML(){
+  const rows = projFiltered();
+  if(!rows.length) return '<div class="empty" style="padding:16px">没有匹配的项目</div>';
+  return projGrouped(rows).map(g =>
+    (g.key ? '<div class="pj-group">' + esc(g.key) + ' <span>' + g.rows.length + '</span></div>' : '') +
+    g.rows.map(projRowHTML).join('')
+  ).join('');
+}
+
+/** 只重画该窗格内的列表与统计，不整页重渲染（避免丢输入焦点） */
+function renderProjPane(slot){
+  const host = document.querySelector('[data-proj-list="' + slot + '"]');
+  if(!host) return;
+  host.innerHTML = projListHTML();
+  const stat = document.querySelector('[data-proj-stat="' + slot + '"]');
+  if(stat){
+    const universe = projUniverse();
+    stat.innerHTML = projStatHTML(projFiltered().length, universe.length, universe.filter(r => r.live).length);
+  }
+  const total = projUniverse();
+  const newN = total.filter(r => !r.registered).length;
+  const runN = total.filter(r => r.live).length;
+  const counts = { all:total.length, running:runN, new:newN };
+  Object.keys(counts).forEach(k => {
+    const btn = document.querySelector('[data-act="proj-filter"][data-slot="' + slot + '"][data-filter="' + k + '"] .k');
+    if(btn) btn.textContent = counts[k];
+  });
+}
+
+/* ============================================================
+   窗格
+   ============================================================ */
+function defaultPanes(p){
+  const pkgish = (p.langs || []).some(l => /Node|JavaScript|TypeScript/i.test(l));
+  return [
+    { kind:'repo',  title:'仓库', content:'' },
+    { kind:'todo',  title:'待办', content:[
+        { t:'通读 ' + (p.alias || p.name) + ' 的目录结构', done:false },
+        { t:'确认构建/运行方式', done:false }
+      ] },
+    { kind:'note',  title:'随手记', content:'' },
+    { kind:'web',   title:'服务预览', content: pkgish ? 'http://localhost:5173' : 'http://localhost:8080' }
+  ];
+}
+function panesOfProject(pid){
+  if(!panesOf[pid] || !Array.isArray(panesOf[pid]) || panesOf[pid].length !== MAX_SLOTS){
+    const p = projectById(pid);
+    panesOf[pid] = p ? defaultPanes(p) : [
+      { kind:'placeholder', title:'预留位', content:null },
+      { kind:'placeholder', title:'预留位', content:null },
+      { kind:'placeholder', title:'预留位', content:null },
+      { kind:'placeholder', title:'预留位', content:null }
+    ];
+  }
+  return panesOf[pid];
+}
+function presetOfProject(pid){ return PRESETS[presetOf[pid]] ? (presetOf[pid] || 'l13') : 'l13'; }
+function persistPanes(){ store.write(LS.panes, panesOf); }
+
+/* ============================================================
+   渲染：左栏项目列表
+   ============================================================ */
+function renderPlist(){
+  const list = allProjects();
+  const plist = document.getElementById('plist');
+  plist.className = 'plist' + (selectMode ? ' selecting' : '');
+  plist.innerHTML = list.map(p =>
+    '<div class="pitem' + (p.id === activeId ? ' active' : '') + (selected.has(p.id) ? ' sel' : '') +
+      '" data-act="open-project" data-pid="' + esc(p.id) + '" title="' + esc(p.path) + '">' +
+      (selectMode ? '<span class="pi-check" aria-hidden="true"></span>' : '') +
+      '<span class="pi-ico" aria-hidden="true">' + projEmoji(p) + '</span>' +
+      '<span class="pi-name">' + esc(p.alias) + '</span>' +
+      lightHTML(p.id) +
+      '<svg class="pi-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>' +
+    '</div>'
+  ).join('');
+  document.getElementById('plistCount').textContent = list.length;
+  document.getElementById('navCount').textContent = list.length;
+
+  document.getElementById('selToggle').className = 'nl-btn' + (selectMode ? ' on' : '');
+  document.getElementById('selbar').className = 'selbar' + (selectMode ? ' show' : '');
+  const selDel = document.getElementById('selDel');
+  selDel.textContent = armedDelete ? '确认移除 ' + selected.size + ' 项' : '移除';
+  selDel.className = 'btn small danger' + (armedDelete ? ' armed' : '');
+  selDel.disabled = selected.size === 0;
+  document.getElementById('selInfo').textContent = selected.size
+    ? '已选 ' + selected.size + ' / ' + list.length + ' 项'
+    : (list.length ? '勾选要移除的项目' : '项目栏已空');
+
+  const rb = document.getElementById('restoreBar');
+  rb.className = 'restore-bar' + (removed.length ? ' show' : '');
+  document.getElementById('restoreInfo').textContent = '已移除 ' + removed.length + ' 个扫描项目（磁盘文件未动）';
+}
+
+/* ============================================================
+   渲染：顶部统计条
+   ============================================================ */
+function statTile(k, v, unit, cls, note){
+  return '<div class="stat"><div class="stat-k">' + esc(k) + '</div>' +
+    '<div class="stat-v ' + (cls || '') + '">' + v + '<span class="unit">' + esc(unit || '') + '</span></div>' +
+    '<div class="stat-note">' + esc(note || '') + '</div></div>';
+}
+function statsHTML(full){
+  const c = countByState();
+  const total = allProjects().length;
+  const disk = diskTotalMB();
+  const running = allProjects().filter(p => p.live).length;
+  const tiles = [
+    statTile('进行中', c.working, '/ ' + total, 'working', c.working ? '有 ' + c.working + ' 个项目在推进' : '暂无进行中的项目'),
+    statTile('待处理', c['needs-you'], '个', 'needs', c['needs-you'] ? '需要你介入' : '没有卡住的事项'),
+    statTile('总项目数', total, '个', '', allProjects().filter(p => !p.custom).length + ' 个扫描项 · ' + allProjects().filter(p => p.custom).length + ' 个自定义'),
+    statTile('磁盘占用', (disk/1024).toFixed(2), 'GB', 'gold', '仅统计顶层项目，排除嵌套目录')
+  ];
+  if(full){
+    tiles.push(statTile('已完成', c.done, '个', 'done', '四态状态光汇总'));
+    tiles.push(statTile('运行中服务', running, '个', '', (localPorts && !SERVER)
+      ? '近似探测 ' + localPorts.attempted + ' 个常见端口'
+      : '本机监听端口匹配到 ' + DATA.ports.length + ' 条'));
+  }
+  return tiles.join('');
+}
+
+/* ============================================================
+   渲染：卡片网格（正方形玻璃贴片，对齐参考仓库控制室）
+   ============================================================ */
+function ccCell(k, v, cls){
+  return '<div class="cc-cell"><div class="k">' + esc(k) + '</div><div class="v ' + (cls || '') + '">' + v + '</div></div>';
+}
+function renderCards(){
+  const cs = countByState();
+  const total = allProjects().length;
+  const liveN = allProjects().filter(p => p.live).length;
+
+  const controlCard =
+    '<article class="card control-card" data-act="goto-control" tabindex="0" title="控制室 · 本机项目总控">' +
+      '<div class="c-head">' +
+        '<span class="c-ico" aria-hidden="true">🎛️</span>' +
+        '<span class="c-name">控制室</span>' +
+        '<span class="cc-badge"><span class="pulse-dot"></span>LIVE</span>' +
+      '</div>' +
+      '<div class="c-div"></div>' +
+      '<div class="c-srow">' +
+        '<span class="c-status ' + (cs.working ? 'working' : 'idle') + '">' + (cs.working ? '进行中' : '待命') + '</span>' +
+        '<span class="c-meta">' + total + ' 个项目</span>' +
+      '</div>' +
+      '<div class="cc-grid">' +
+        ccCell('进行中', cs.working, 'working') +
+        ccCell('待处理', cs['needs-you'], 'needs') +
+        ccCell('已完成', cs.done, 'done') +
+        ccCell('总项目', total, '') +
+        ccCell('运行中', liveN, '') +
+        ccCell('磁盘', (diskTotalMB()/1024).toFixed(2) + ' <span style="font-size:11px;color:var(--txt-mute)">GB</span>', 'gold') +
+      '</div>' +
+      '<div class="c-preview mute">快照 ' + esc(DATA.snapshot) + ' · 点卡片查看端口监听与项目明细</div>' +
+    '</article>';
+
+  const cards = allProjects().map(p => {
+    const st = stOf(p.id);
+    const cls = 'card project-card' +
+      (st === 'working' ? ' busy' : '') +
+      (st === 'done' ? ' glow-done' : '') +
+      (st === 'needs-you' ? ' glow-needs' : '');
+    const meta = p.live ? (':' + p.live.port) : relTime(p.updated);
+    const pv = projPreview(p);
+    return '<article class="' + cls + '" data-act="open-project" data-pid="' + esc(p.id) +
+        '" tabindex="0" title="' + esc(p.alias + ' · ' + p.path) + '">' +
+      (st === 'working' ? '<span class="wt-sweep" aria-hidden="true"></span>' : '') +
+      '<div class="c-head">' +
+        '<span class="c-ico" aria-hidden="true">' + projEmoji(p) + '</span>' +
+        '<span class="c-name">' + esc(p.alias) + '</span>' +
+        lightHTML(p.id) +
+      '</div>' +
+      '<div class="c-div"></div>' +
+      '<div class="c-srow">' +
+        '<span class="c-status ' + st + '">' + esc(STATES[st].label) + '</span>' +
+        (meta ? '<span class="c-meta">' + esc(meta) + '</span>' : '') +
+      '</div>' +
+      '<div class="c-preview' + (pv ? '' : ' mute') + '">' + esc(pv || projSummary(p)) + '</div>' +
+    '</article>';
+  }).join('');
+
+  const addCard =
+    '<article class="card add-card" data-act="add-project" tabindex="0" role="button" title="添加自定义项目">' +
+      '<span class="add-plus" aria-hidden="true">＋</span>' +
+      '<span class="add-label">添加项目</span>' +
+    '</article>';
+
+  document.getElementById('cardGrid').innerHTML =
+    controlCard + cards + addCard + (total ? '' : '<div class="empty">还没有项目，点「添加项目」加入工作台</div>');
+
+  const wbCount = document.getElementById('wbCount');
+  if(wbCount) wbCount.textContent = '· ' + total + ' 个项目';
+}
+
+/* ============================================================
+   渲染：分栏工作台
+   ============================================================ */
+function renderSplit(){
+  const p = projectById(activeId);
+  const host = document.getElementById('wbSplit');
+  if(!p){ host.innerHTML = ''; return; }
+  const preset = presetOfProject(p.id);
+  const slots = PRESETS[preset].slots;
+  const panes = panesOfProject(p.id);
+
+  const seg = PRESET_ORDER.map(k =>
+    '<button class="' + (k === preset ? 'on' : '') + '" data-act="set-preset" data-preset="' + k + '" title="' + PRESETS[k].label + '">' +
+      esc(PRESETS[k].label) + '<span class="k">' + esc(PRESETS[k].k) + '</span></button>'
+  ).join('');
+
+  const bar =
+    '<div class="wb-bar">' +
+      '<button class="btn small" data-act="close-project">← 全部项目</button>' +
+      '<div class="wb-crumb">' + lightHTML(p.id) + '<b>' + esc(p.alias) + '</b>' +
+        '<span class="p mono" title="' + esc(p.path) + '">' + esc(shortPath(p, 3)) + '</span></div>' +
+      '<div class="seg">' + seg + '</div>' +
+      '<button class="btn small" data-act="copy-path" data-pid="' + esc(p.id) + '">复制路径</button>' +
+      '<button class="btn small" data-act="reset-panes" data-pid="' + esc(p.id) + '">重置窗格</button>' +
+    '</div>';
+
+  const cells = [];
+  for(let i = 0; i < MAX_SLOTS; i++){
+    if(i >= slots){
+      cells.push('<div class="pane" data-slot="' + i + '" style="opacity:.34"><div class="pane-body" style="display:grid;place-items:center">' +
+        '<div class="empty-slot" style="border-style:solid;border-color:var(--line)"><p>该布局不显示此窗格</p>' +
+        '<p class="hint">切到「田字」可容纳 4 个窗格</p></div></div></div>');
+      continue;
+    }
+    cells.push(renderPane(panes[i], i, p.id));
+  }
+
+  host.innerHTML = bar + '<div class="pane-grid" data-preset="' + preset + '">' + cells.join('') + '</div>';
+  if(SERVER) srvFill(p.id);
+  else if(dirHandles[p.id]) surviveLive(p.id);
+  else if(zeroScan.mode === 'flat' && zeroById(p.id)) flatFill(p.id);
+  else if(zeroById(p.id)) ensureZeroHandle(p.id);
+}
+
+function renderPane(pane, slot, pid){
+  const k = KINDS[pane.kind] ? pane.kind : 'placeholder';
+  const head =
+    '<div class="pane-head">' +
+      '<span class="kind-chip"><i>' + KINDS[k].icon + '</i>' + esc(KINDS[k].label) + '</span>' +
+      '<input class="pane-title" value="' + esc(pane.title || KINDS[k].label) + '" data-field="pane-title" data-slot="' + slot + '" spellcheck="false" />' +
+      '<span class="pane-tools">' + lightHTML(pid) +
+        '<button class="mini-btn" data-act="pane-kind" data-slot="' + slot + '" data-kind="' + k + '" title="切换窗格类型">⋯</button>' +
+        '<button class="mini-btn" data-act="clear-pane" data-slot="' + slot + '" title="清空窗格">✕</button>' +
+      '</span>' +
+    '</div>';
+  return '<section class="pane" data-slot="' + slot + '">' + head +
+         '<div class="pane-body' + (k === 'chat' ? ' chat-body' : '') + '">' + paneBody(pane, slot, pid) + '</div></section>';
+}
+
+function paneBody(pane, slot, pid){
+  const k = pane.kind;
+  if(k === 'placeholder') return kindPicker(slot);
+  if(k === 'note'){
+    const txt = pane.content || '';
+    return '<textarea class="note-area" data-field="note" data-slot="' + slot + '" placeholder="随手记点什么…内容会自动保存到本机浏览器">' + esc(txt) + '</textarea>' +
+           '<div class="pane-meta"><span>自动保存</span><span data-count="' + slot + '">' + txt.length + ' 字符</span></div>';
+  }
+  if(k === 'todo'){
+    const items = Array.isArray(pane.content) ? pane.content : [];
+    const doneN = items.filter(i => i.done).length;
+    const pct = items.length ? Math.round(doneN / items.length * 100) : 0;
+    return '<div class="prog"><i style="width:' + pct + '%"></i></div>' +
+      '<div class="pane-meta" style="margin-top:2px"><span>' + doneN + ' / ' + items.length + ' 已完成</span><span>' + pct + '%</span></div>' +
+      '<div class="todo-list" style="margin-top:8px">' +
+        (items.length ? items.map((it, i) =>
+          '<div class="todo-row' + (it.done ? ' done' : '') + '">' +
+            '<input type="checkbox" data-act="todo-toggle" data-slot="' + slot + '" data-idx="' + i + '"' + (it.done ? ' checked' : '') + ' />' +
+            '<span class="tx" data-act="todo-toggle" data-slot="' + slot + '" data-idx="' + i + '">' + esc(it.t) + '</span>' +
+            '<button class="mini-btn del" data-act="todo-del" data-slot="' + slot + '" data-idx="' + i + '" title="删除">✕</button>' +
+          '</div>').join('') : '<div class="empty" style="padding:14px">还没有待办</div>') +
+      '</div>' +
+      '<div class="todo-add"><input data-field="todo-new" data-slot="' + slot + '" placeholder="添加一项，回车确认" /><button class="btn small" data-act="todo-add" data-slot="' + slot + '">添加</button></div>';
+  }
+  if(k === 'link'){
+    const url = pane.content || '';
+    let dom = '';
+    try { dom = url ? new URL(url).host : ''; } catch(e){ dom = ''; }
+    return '<div class="url-row"><input data-field="link-url" data-slot="' + slot + '" value="' + esc(url) + '" placeholder="https://…" spellcheck="false" />' +
+        '<button class="btn small primary" data-act="open-url" data-slot="' + slot + '">打开</button></div>' +
+      (url ? '<div class="link-card"><span class="dom">' + esc(dom || url) + '</span>' +
+        '<button class="mini-btn" data-act="copy-text" data-text="' + esc(url) + '">复制</button></div>' : '') +
+      '<div class="pane-meta" style="margin-top:10px"><span>在新标签页打开</span></div>';
+  }
+  if(k === 'web'){
+    const url = pane.content || 'http://localhost:5173';
+    return '<div class="url-row"><input data-field="web-url" data-slot="' + slot + '" value="' + esc(url) + '" placeholder="http://localhost:5173" spellcheck="false" />' +
+        '<button class="btn small" data-act="reload-frame" data-slot="' + slot + '">重载</button>' +
+        '<button class="btn small primary" data-act="open-url" data-slot="' + slot + '">新标签</button></div>' +
+      '<div class="frame-wrap">' +
+        '<iframe data-frame="' + slot + '" src="' + esc(url) + '" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals" referrerpolicy="no-referrer"></iframe>' +
+        '<div class="frame-fallback" data-fallback="' + slot + '"><b>这里显示本地服务</b>' +
+          '<span>先启动项目的开发服务，再点「重载」。若一直空白，多为该服务未运行或禁止被内嵌。</span>' +
+          '<button class="btn small" data-act="hide-fallback" data-slot="' + slot + '" data-fallback="' + slot + '">仍然显示</button></div>' +
+      '</div>';
+  }
+  if(k === 'projects') return projectsBody(slot);
+  if(k === 'chat') return chatBody(pane, slot, pid);
+  if(k === 'repo') return repoBody(pane, slot, pid);
+  return kindPicker(slot);
+}
+
+/* ---------- projects 窗格：本地检索 ---------- */
+function projectsBody(slot){
+  const universe = projUniverse();
+  const running = universe.filter(r => r.live).length;
+  const newN = universe.filter(r => !r.registered).length;
+  const segBtn = (act, key, cur, label, n) =>
+    '<button class="' + (cur === key ? 'on' : '') + '" data-act="' + act + '" data-slot="' + slot +
+    '" data-' + (act === 'proj-group' ? 'group' : 'filter') + '="' + key + '">' + label +
+    '<span class="k">' + n + '</span></button>';
+
+  return '<div class="pj-bar">' +
+      '<input class="pj-q" data-field="proj-q" data-slot="' + slot + '" value="' + esc(projQuery) +
+        '" placeholder="搜索项目名 / 路径 / 语言…" spellcheck="false" autocomplete="off" />' +
+      '<button class="btn small" data-act="scan-refresh" data-slot="' + slot + '"' +
+        ((SERVER || scanRoot) ? '' : ' title="实时重扫需先在控制室授权本机目录，或启动本地服务"') + '>刷新索引</button>' +
+    '</div>' +
+    '<div class="seg pj-seg">' +
+      segBtn('proj-filter', 'all', projFilter, '全部', universe.length) +
+      segBtn('proj-filter', 'running', projFilter, '运行中', running) +
+      segBtn('proj-filter', 'new', projFilter, '未登记', newN) +
+    '</div>' +
+    '<div class="pj-stat" data-proj-stat="' + slot + '">' + projStatHTML(projFiltered().length, universe.length, running) + '</div>' +
+    '<div class="seg pj-seg">' +
+      segBtn('proj-group', 'flat', projGroup, '平铺', universe.length) +
+      segBtn('proj-group', 'lang', projGroup, '按语言', universe.length) +
+      segBtn('proj-group', 'cat', projGroup, '按类别', universe.length) +
+    '</div>' +
+    '<div class="pj-list" data-proj-list="' + slot + '">' + projListHTML() + '</div>';
+}
+
+/* URL 规范化：去引号空格并补协议。本机/内网地址默认 http，其余默认 https，
+   这样输入 "localhost:3210" 这类裸地址不用再手写协议 */
+function normalizeUrl(raw){
+  let u = String(raw == null ? '' : raw).trim().replace(/^["'<]+|["'>]+$/g, '');
+  if(!u) return '';
+  if(!/^[a-z][a-z0-9+.-]*:\/\//i.test(u)){
+    const host = u.split('/')[0].split(':')[0].toLowerCase();
+    const local = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0'
+      || /^192\.168\./.test(host) || /^10\./.test(host) || /\.local$/.test(host);
+    u = (local ? 'http://' : 'https://') + u;
+  }
+  return u;
+}
+
+/* ---------- chat 窗格：AI 对话 ---------- */
+function chatBody(pane, slot, pid){
+  const url = normalizeUrl(pane.content || (AI_PRESETS[0] ? AI_PRESETS[0].url : ''));
+  const opts = AI_PRESETS.map(pr =>
+    '<option value="' + esc(pr.url) + '"' + (pr.url === url ? ' selected' : '') + '>' + esc(pr.name) + '</option>').join('');
+  const note = SERVER
+    ? '<div class="note-line"><i>●</i>服务模式：可先探测站点是否允许内嵌；仍打不开时点「新标签」</div>'
+    : '<div class="note-line"><i>◇</i>快照模式：无法探测可嵌入性，长时间空白多为站点禁止内嵌（X-Frame-Options / CSP）</div>';
+
+  return '<div class="url-row chat-bar">' +
+      '<select data-act="chat-preset" data-slot="' + slot + '" title="AI 预设">' + opts + '</select>' +
+      '<input data-field="chat-url" data-slot="' + slot + '" value="' + esc(url) +
+        '" placeholder="http://localhost:3000 或 https://…" spellcheck="false" autocomplete="off" />' +
+      '<button class="btn small" data-act="chat-reload" data-slot="' + slot + '">载入</button>' +
+      '<button class="btn small primary" data-act="chat-open" data-slot="' + slot + '">新标签</button>' +
+      '<button class="btn small" data-act="copy-context" data-pid="' + esc(pid) + '">复制项目上下文</button>' +
+    '</div>' + note +
+    '<div class="frame-wrap chat-wrap">' +
+      '<iframe data-frame="chat-' + slot + '" src="' + esc(url) + '" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals" allow="clipboard-write" referrerpolicy="no-referrer"></iframe>' +
+      '<div class="frame-fallback" data-fallback="chat-' + slot + '">' +
+        '<b>第三方网页 AI 通常不允许被内嵌</b>' +
+        '<span>登录型云 AI（DeepSeek / 豆包 / ChatGPT）多会以 X-Frame-Options 或 CSP 拒绝内嵌，且本工作台不会接管登录态。推荐改用本机自托管的 AI 前端（Ollama + Open WebUI、LobeChat、LibreChat）。</span>' +
+        '<span class="fb-row">' +
+          '<button class="btn small" data-act="hide-fallback" data-fallback="chat-' + slot + '">仍然显示内嵌页</button>' +
+          '<button class="btn small primary" data-act="chat-open" data-slot="' + slot + '">在新标签打开</button>' +
+        '</span>' +
+      '</div>' +
+    '</div>';
+}
+
+function kindPicker(slot){
+  return '<div class="empty-slot"><p>这个窗格还是空的</p>' +
+    '<div class="kind-picker">' + KIND_ORDER.map(k =>
+      '<button data-act="pane-kind" data-slot="' + slot + '" data-kind="' + k + '"><i>' + KINDS[k].icon + '</i>' + esc(KINDS[k].label) + '</button>'
+    ).join('') + '</div>' +
+    '<p class="hint">选一种模块填充它</p></div>';
+}
+
+/* ---------- repo 窗格 ---------- */
+function repoKey(pid, rel){ return pid + '|' + rel; }
+function repoBody(pane, slot, pid){
+  const p = projectById(pid);
+  const rel = pane.content || '';
+  const handle = dirHandles[pid];
+  const flat = !SERVER && zeroScan.mode === 'flat' && !!zeroById(pid);
+  const mode = SERVER ? 'server' : (flat ? 'flat' : (handle ? 'live' : 'snapshot'));
+  const isZero = mode === 'snapshot' && !!zeroById(pid);
+  const rv = repoView[repoKey(pid, rel)] || {};
+  const sel = rv.file || null;
+
+  const bar =
+    '<div class="repo-bar">' +
+      '<div class="crumb">' + crumbHTML(pid, rel, mode) + '</div>' +
+      (mode === 'server'
+        ? '<span class="server-pill"><i>●</i>服务端读写</span>'
+        : mode === 'flat'
+          ? '<span class="server-pill"><i>◇</i>兼容模式 · 只读</span>'
+          : '<button class="mini-btn" data-act="connect-dir" data-pid="' + esc(pid) + '" title="连接真实目录后可浏览文件，保存时再按需要写权限">' + (handle ? '已连接' : (isZero ? '解析中…' : '连接目录')) + '</button>') +
+      '<button class="mini-btn" data-act="copy-text" data-text="' + esc(p ? p.path : '') + '">复制根路径</button>' +
+      (rel ? '<button class="mini-btn" data-act="repo-nav" data-slot="' + slot + '" data-rel="' + esc(rel.split('/').slice(0,-1).join('/')) + '">↑ 上级</button>' : '') +
+    '</div>';
+
+  /* 只读句柄建起来之后，旧版那句「可直接读取并保存文件」就开始撒谎了。
+     这里按该句柄自己的权限等级说实话；repoBody 是同步渲染不能 await permLevel，
+     因此读模块级 dirPerm 缓存，取不到时按「只读」保守显示（宁可少承诺）。 */
+  const canWrite = SERVER || (handle && dirPerm[pid] === 'write');
+  const note = mode === 'server'
+    ? '<div class="note-line"><i>●</i>本地服务已接管：无需点选目录，可直接读取并保存文件</div>'
+    : mode === 'live'
+      ? '<div class="note-line"><i>●</i>已连接真实目录（' +
+        (canWrite ? '可读写' : '<b>只读</b>：读取与浏览正常，点文件「保存」时会再向你索要一次写权限') + '）</div>'
+      : mode === 'flat'
+        ? '<div class="note-line"><i>●</i>兼容模式扫描（只读）：可浏览文件内容，<b>不能写盘</b> · 想直接写盘就到控制室点「选择本机目录」</div>'
+        : isZero
+          ? '<div class="note-line"><i>●</i>本机目录（零服务）：正在解析目录句柄，稍候即可浏览；保存时会再按需要写权限</div>'
+          : '<div class="note-line"><i>◇</i>快照浏览模式（只读）· 想直接读写磁盘文件，就在控制室授权一个本机目录，或双击「启动工作台.bat」/ 打开 <a href="//127.0.0.1:7339/" target="_blank" rel="noopener">启动器网页</a> 起本地服务</div>';
+
+  let body = '';
+  if(mode === 'server'){
+    body = '<div class="tree" data-srv-tree="' + slot + '"><div class="empty" style="padding:14px">正在读取目录…</div></div>' +
+           '<div class="file-view" data-srv-file="' + slot + '"></div>';
+  } else if(mode === 'live'){
+    body = '<div class="tree" data-live-tree="' + slot + '"><div class="empty" style="padding:14px">正在读取目录…</div></div>' +
+           '<div class="file-view" data-live-file="' + slot + '"></div>';
+  } else if(mode === 'flat'){
+    body = '<div class="tree" data-flat-tree="' + slot + '"><div class="empty" style="padding:14px">正在整理目录…</div></div>' +
+           '<div class="file-view" data-flat-file="' + slot + '"></div>';
+  } else if(isZero){
+    body = '<div class="tree"><div class="empty" style="padding:14px">' +
+      (scanRoot ? '正在解析本机目录…' : '本机目录未连接：到控制室点「续期授权」或重新扫描一次') +
+      '</div></div><div class="file-view"></div>';
+  } else {
+    const { dirs, files } = listAt(pid, rel);
+    body = '<div class="tree">' +
+      (dirs.length || files.length
+        ? dirs.map(d => treeRow(d.name, true, 0, rel, slot)).join('') + files.map(f => treeRow(f.name, false, f.size, rel, slot)).join('')
+        : '<div class="empty" style="padding:14px">该目录在快照中为空</div>') +
+      '</div>' +
+      (sel ? filePreview(pid, rel, sel, slot) : '');
+  }
+  return bar + note + body;
+}
+
+/* ---------- repo 窗格：服务模式（走 /api/tree 与 /api/file） ---------- */
+async function srvJson(path, opt){
+  const res = await fetch(path, Object.assign({ cache:'no-store' }, opt || {}));
+  let data = null;
+  try { data = await res.json(); } catch(e){ data = null; }
+  if(!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
+  return data;
+}
+
+async function srvFill(pid){
+  const hosts = document.querySelectorAll('[data-srv-tree]');
+  if(!hosts.length) return;
+  const panes = panesOfProject(pid);
+  for(const host of hosts){
+    const slot = +host.dataset.srvTree;
+    const rel = (panes[slot] && panes[slot].content) || '';
+    try {
+      const j = await srvJson('/api/tree?project=' + encodeURIComponent(pid) + '&path=' + encodeURIComponent(rel));
+      const rows = (j.dirs || []).map(d =>
+          '<button class="tree-row" data-act="srv-nav" data-slot="' + slot + '" data-rel="' + esc(d.path) + '">' +
+          '<span class="ic">▸</span><span class="nm">' + esc(d.name) + '/</span></button>').join('') +
+        (j.files || []).map(f =>
+          '<button class="tree-row" data-act="srv-open" data-slot="' + slot + '" data-rel="' + esc(f.path) + '">' +
+          '<span class="ic">·</span><span class="nm">' + esc(f.name) + '</span><span class="sz">' + fmtBytes(f.size) + '</span></button>').join('');
+      host.innerHTML = rows ||
+        '<div class="empty" style="padding:14px">该目录为空' + (j.truncated ? '（已截断，仅显示前 400 项）' : '') + '</div>';
+      const rv = repoView[repoKey(pid, rel)];
+      if(rv && rv.file) srvOpen(pid, slot, rel, rv.file);
+    } catch(e){
+      host.innerHTML = '<div class="empty" style="padding:14px">读取失败：' + esc(e.message || e) + '</div>';
+    }
+  }
+}
+
+async function srvOpen(pid, slot, dir, name){
+  const rel = dir ? dir + '/' + name : name;
+  const host = document.querySelector('[data-srv-file="' + slot + '"]');
+  if(!host) return;
+  repoView[repoKey(pid, dir)] = { file:name };
+  try {
+    const j = await srvJson('/api/file?project=' + encodeURIComponent(pid) + '&path=' + encodeURIComponent(rel));
+    if(j.binary){
+      host.innerHTML = '<div class="file-head"><span class="fp">' + esc(rel) + ' · ' + fmtBytes(j.bytes) + '</span>' +
+        '<button class="mini-btn" data-act="srv-close" data-slot="' + slot + '">关闭</button></div>' +
+        '<div class="note-line"><i>◇</i>这是二进制文件，不在窗格内打开。用「复制路径」交给编辑器处理。</div>';
+      toast('二进制文件，未在窗格内打开', 'warn');
+      return;
+    }
+    host.innerHTML = '<div class="file-head"><span class="fp">' + esc(rel) + ' · ' + fmtBytes(j.bytes) +
+        (j.truncated ? '（仅载入前 512KB）' : '') + '</span>' +
+      (j.truncated ? '' : '<button class="btn small primary" data-act="srv-save" data-slot="' + slot + '" data-rel="' + esc(rel) + '">保存</button>') +
+      '<button class="mini-btn" data-act="srv-close" data-slot="' + slot + '">关闭</button></div>' +
+      '<textarea class="note-area" style="min-height:200px;font-family:var(--mono);font-size:11.5px" data-srv-text="' + slot + '">' + esc(j.content) + '</textarea>' +
+      '<div class="pane-meta"><span>' + (j.truncated ? '文件过大，已禁用保存以免截断原文' : '直接写回磁盘 · 服务端已校验路径在项目根内') + '</span><span>' + j.content.length + ' 字符</span></div>';
+    toast('已读取 ' + rel, 'ok');
+  } catch(e){
+    host.innerHTML = '<div class="file-view"><div class="note-line"><i>◇</i>读取失败：' + esc(e.message || e) + '</div></div>';
+    toast('读取失败：' + (e.message || e), 'warn');
+  }
+}
+
+async function srvSave(slot, rel, btn){
+  const ta = document.querySelector('[data-srv-text="' + slot + '"]');
+  if(!ta || !activeId) return;
+  try {
+    const res = await fetch('/api/file', {
+      method:'POST',
+      headers:{ 'content-type':'application/json' },
+      body: JSON.stringify({ project:activeId, path:rel, content:ta.value })
+    });
+    let data = null;
+    try { data = await res.json(); } catch(e){ data = null; }
+    if(!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
+    toast('已写入磁盘：' + rel + ' · ' + fmtBytes(data.bytes), 'ok');
+    if(btn) btn.textContent = '已保存';
+  } catch(e){
+    toast('写入失败：' + (e.message || e), 'warn');
+  }
+}
+
+function crumbHTML(pid, rel, mode){
+  const p = projectById(pid);
+  const segs = rel ? rel.split('/') : [];
+  let out = '<button data-act="repo-nav" data-slot="" data-rel="">' + esc(p ? p.name : '') + '</button>';
+  let acc = '';
+  segs.forEach((s, i) => {
+    acc = acc ? acc + '/' + s : s;
+    out += '<span class="sep">/</span><button data-act="repo-nav" data-rel="' + esc(i === segs.length - 1 ? '' : acc) + '" data-navrel="' + esc(acc) + '">' + esc(s) + '</button>';
+  });
+  return out;
+}
+
+function treeRow(name, isDir, size, rel, slot){
+  const full = rel ? rel + '/' + name : name;
+  return '<button class="tree-row" data-act="repo-' + (isDir ? 'nav' : 'open') + '" data-slot="' + slot + '" data-rel="' + esc(full) + '">' +
+    '<span class="ic">' + (isDir ? '▸' : '·') + '</span>' +
+    '<span class="nm">' + esc(name) + (isDir ? '/' : '') + '</span>' +
+    (isDir ? '' : '<span class="sz">' + fmtBytes(size) + '</span>') +
+    '</button>';
+}
+
+function filePreview(pid, rel, file, slot){
+  const p = projectById(pid);
+  const full = rel ? rel + '/' + file : file;
+  const txt = sampleOf(pid, full);
+  const abs = (p ? p.path : '') + '\\' + full.split('/').join('\\');
+  const head = '<div class="file-head"><span class="fp" title="' + esc(abs) + '">' + esc(full) + '</span>' +
+    '<button class="mini-btn" data-act="copy-text" data-text="' + esc(abs) + '">复制路径</button>' +
+    '<button class="mini-btn" data-act="repo-close" data-slot="' + slot + '">关闭</button></div>';
+  if(txt === null || txt === undefined){
+    return '<div class="file-view">' + head +
+      '<div class="note-line"><i>◇</i>该文件未内嵌预览（快照只收录 ≤ 4KB 的文本文件）。点「复制路径」用编辑器打开。</div></div>';
+  }
+  return '<div class="file-view">' + head +
+    '<pre class="code">' + esc(txt) + '</pre>' +
+    '<div class="pane-meta"><span>快照内嵌内容 · 已截断至 4KB</span><span>' + txt.length + ' 字符</span></div></div>';
+}
+
+/* ============================================================
+   渲染：控制室
+   ============================================================ */
+function renderControl(){
+  document.getElementById('crStats').innerHTML = statsHTML(true);
+  renderDirBar();
+
+  const portRows = (localPorts && !SERVER) ? localPorts.ports : DATA.ports;
+  const usedPorts = new Set(allProjects().filter(p => p.live).map(p => p.live.port));
+  document.getElementById('portsStrip').innerHTML = portRows.length ? portRows.map(pt =>
+    '<div class="port-chip"><b>:' + pt.port + '</b><span>' + esc(pt.proc) + '</span>' +
+    (pt.memMB ? '<span>· ' + pt.memMB + ' MB</span>' : '') +
+    (usedPorts.has(pt.port) ? '<span style="color:var(--st-done)">· 已匹配项目</span>' : '') + '</div>'
+  ).join('') : '<div class="empty" style="padding:12px">未探测到监听端口</div>';
+  const portHint = document.getElementById('portHint');
+  if(portHint) portHint.textContent = (localPorts && !SERVER) ? '近似探测 · 浏览器只探常见端口' : '快照采集 · 与项目匹配的已标注';
+
+  document.getElementById('portCount').textContent = '· ' + portRows.length + ' 个';
+
+  document.getElementById('stateFilter').innerHTML =
+    '<button class="' + (stateFilter === 'all' ? 'on' : '') + '" data-act="filter-state" data-state="all">全部<span class="k">' + allProjects().length + '</span></button>' +
+    STATE_ORDER.map(s => '<button class="' + (stateFilter === s ? 'on' : '') + '" data-act="filter-state" data-state="' + s + '">' +
+      STATES[s].label + '<span class="k">' + countByState()[s] + '</span></button>').join('');
+
+  const maxSize = Math.max(1, ...allProjects().map(p => p.sizeMB || 0));
+  let list = allProjects();
+  if(stateFilter !== 'all') list = list.filter(p => stOf(p.id) === stateFilter);
+  if(query){
+    const q = query.toLowerCase();
+    list = list.filter(p => (p.name + ' ' + p.alias + ' ' + p.path + ' ' + (p.langs || []).join(' ')).toLowerCase().includes(q));
+  }
+
+  document.getElementById('crBody').innerHTML = list.length ? list.map(p => {
+    const w = Math.max(3, Math.round((p.sizeMB / maxSize) * 100));
+    const live = p.live;
+    return '<tr data-pid="' + esc(p.id) + '">' +
+      '<td><div class="cell-name"><span class="sq">' + esc(initials(p)) + '</span>' +
+        '<span><span class="nm">' + esc(p.alias) + '</span><br><span class="sm">' + esc(p.name) + '</span></span></div></td>' +
+      '<td>' + (p.langs || []).map(l => '<span class="tag">' + esc(l) + '</span>').join(' ') + '</td>' +
+      '<td><div class="cell-path mono" title="' + esc(p.path) + '">' + esc(shortPath(p)) + '</div></td>' +
+      '<td><div class="state-cell" data-act="cycle-status" data-pid="' + esc(p.id) + '">' + lightHTML(p.id) + '<span class="lb">' + stLabel(p.id) + '</span></div></td>' +
+      '<td>' + (live ? '<span class="port-pill"><span style="width:6px;height:6px;border-radius:50%;background:#5fd39a"></span>:' + live.port + ' · ' + esc(live.proc) + '</span>'
+                      : '<span class="occupancy idle">未监听</span>') + '</td>' +
+      '<td><span class="occupancy' + (live ? '' : ' idle') + '">' + (live ? live.memMB + ' MB' : '—') + '</span></td>' +
+      '<td class="disk-cell"><div class="n">' + fmtSize(p.sizeMB, p.estimated) + '</div><div class="sizebar"><i style="width:' + w + '%"></i></div></td>' +
+      '<td><span class="occupancy">' + (p.files || 0) + '</span></td>' +
+      '<td><div class="row-actions">' +
+        '<button class="btn small primary" data-act="open-project" data-pid="' + esc(p.id) + '">打开</button>' +
+        '<button class="mini-btn" data-act="copy-text" data-text="' + esc(p.path) + '" title="复制路径">⧉</button>' +
+        (p.custom ? '<button class="mini-btn" data-act="remove-custom" data-pid="' + esc(p.id) + '" title="移除">✕</button>' : '') +
+      '</div></td></tr>';
+  }).join('') : '<tr><td colspan="9"><div class="empty">没有匹配的项目</div></td></tr>';
+
+  document.getElementById('crCount').textContent = '· ' + list.length + ' 条';
+}
+
+/* ============================================================
+   渲染入口
+   ============================================================ */
+function renderAll(){
+  const total = allProjects().length;
+  const c = countByState();
+  document.getElementById('miniWorking').textContent = c.working;
+  document.getElementById('miniTotal').textContent = total;
+  document.getElementById('miniDisk').textContent = (diskTotalMB()/1024).toFixed(2) + ' GB';
+  const snapEl = document.getElementById('miniSnap');
+  if(snapEl) snapEl.textContent = String(DATA.snapshot || '').slice(5) || '—';
+  renderPlist();
+  renderCards();
+  renderControl();
+  if(activeId) renderSplit();
+  syncView();
+  syncModeBadge();
+}
+
+/* ============================================================
+   运行模式（快照只读 / 本地服务可读写）
+   ============================================================ */
+function syncModeBadge(){
+  const el = document.getElementById('modeBadge');
+  if(!el) return;
+  const isFlat = !SERVER && zeroScan.mode === 'flat';
+  el.className = 'mode-badge' + (SERVER || scanRoot || isFlat ? ' on' : '');
+  const port = (typeof location !== 'undefined' && location.port) ? ':' + location.port : '';
+  el.innerHTML = SERVER ? '<i>●</i>本地服务 · 可读写'
+    : (scanRoot ? '<i>●</i>本机目录 · 零服务读写'
+    : (isFlat ? '<i>◇</i>兼容模式 · 只读' : '<i>◇</i>快照模式 · 只读'));
+  el.title = SERVER
+    ? '本地服务已接管' + port + '，仓库窗格可直接读写磁盘文件'
+    : scanRoot
+      ? '已授权本机目录「' + (scanRootName || '') + '」· 句柄存浏览器 IndexedDB，可扫描并直接读写'
+      : isFlat
+        ? '兼容模式扫描「' + (zeroScan.rootName || '') + '」· 只读浏览，刷新后需重扫一次；想写盘请到控制室点「选择本机目录」'
+        : '快照模式为只读：到控制室授权一个本机目录即可扫描并直接读写；也可双击「启动工作台.bat」起本地服务';
+}
+
+function detectServer(){
+  syncModeBadge();
+  if(typeof location !== 'undefined' && location.protocol === 'file:') return;
+  if(typeof fetch !== 'function') return;
+  let ctl = null, timer = null;
+  if(typeof AbortController === 'function'){ ctl = new AbortController(); timer = setTimeout(() => ctl.abort(), 900); }
+  Promise.resolve(fetch('/api/health', ctl ? { signal:ctl.signal } : {}))
+    .then(res => (res && res.ok) ? res.json() : null)
+    .then(j => {
+      if(!j || !j.ok) return;
+      SERVER = true;
+      if(Array.isArray(j.aiPresets) && j.aiPresets.length) AI_PRESETS = j.aiPresets.slice();
+      syncModeBadge();
+      if(activeId) renderSplit();
+      toast('已连接本地服务 · 仓库窗格可直接读写文件', 'ok');
+    })
+    .catch(() => {})
+    .then(() => { if(timer) clearTimeout(timer); });
+}
+
+function syncView(){
+  document.querySelectorAll('.view').forEach(s => s.classList.toggle('active', s.id === 'view-' + view));
+  document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  const meta = view === 'control'
+    ? { t:'控制室', e:'Control Room' }
+    : { t: activeId ? (projectById(activeId) || {}).alias || '分栏工作台' : '项目工作台', e: activeId ? 'Split Workbench' : 'Workspace' };
+  document.getElementById('viewTitle').textContent = meta.t;
+  document.getElementById('viewEyebrow').textContent = meta.e;
+  const c = countByState();
+  document.getElementById('viewSub').textContent = view === 'control'
+    ? '快照 ' + DATA.snapshot + ' · ' + allProjects().length + ' 个项目 · 进行中 ' + c.working + ' · 待处理 ' + c['needs-you'] + ' · 磁盘 ' + (diskTotalMB()/1024).toFixed(2) + ' GB'
+    : '快照 ' + DATA.snapshot + ' · ' + allProjects().length + ' 个项目 · 磁盘 ' + (diskTotalMB()/1024).toFixed(2) + ' GB · 点卡片进入分栏工作台';
+  const g = document.getElementById('wbGrid'), s = document.getElementById('wbSplit');
+  const split = view === 'workbench' && !!activeId;
+  g.style.display = split ? 'none' : '';
+  s.style.display = split ? '' : 'none';
+  const wbStats = document.getElementById('wbStats');
+  if(wbStats) wbStats.innerHTML = statsHTML(false);
+}
+
+function setView(v){
+  view = v;
+  store.write(LS.view, v);
+  if(v === 'workbench' && activeId === null) { /* 保持卡片网格 */ }
+  syncView();
+  toast(v === 'control' ? '已进入控制室' : '已切换到项目工作台');
+}
+
+/* ============================================================
+   交互
+   ============================================================ */
+function cycleStatus(pid){
+  const cur = stOf(pid);
+  const next = STATE_ORDER[(STATE_ORDER.indexOf(cur) + 1) % STATE_ORDER.length];
+  status[pid] = next;
+  store.write(LS.status, status);
+  renderAll();
+  toast((projectById(pid) || {}).alias + ' → ' + STATES[next].label, next === 'done' ? 'ok' : (next === 'needs-you' ? 'warn' : 'info'));
+}
+
+function openProject(pid){
+  if(!projectById(pid)) return;
+  activeId = pid;
+  store.write(LS.active, pid);
+  if(!panesOf[pid]) panesOfProject(pid);
+  if(!presetOf[pid]) presetOf[pid] = 'l13';
+  view = 'workbench';
+  store.write(LS.view, view);
+  renderAll();
+  const p = projectById(pid);
+  toast('已进入 ' + p.alias + ' · 布局 ' + PRESETS[presetOfProject(pid)].label);
+}
+
+function closeProject(){
+  activeId = null;
+  store.write(LS.active, null);
+  renderAll();
+  toast('已回到全部项目');
+}
+
+function setPreset(k){
+  if(!PRESETS[k] || !activeId) return;
+  presetOf[activeId] = k;
+  store.write(LS.preset, presetOf);
+  let auto = false;
+  if(k === 'chat'){
+    const panes = panesOfProject(activeId);
+    if(panes[1] && panes[1].kind === 'placeholder'){
+      panes[1] = { kind:'chat', title: KINDS.chat.label, content: AI_PRESETS[0] ? AI_PRESETS[0].url : '' };
+      persistPanes();
+      auto = true;
+    }
+  }
+  renderAll();
+  toast('布局切换为「' + PRESETS[k].label + '」 · ' + PRESETS[k].slots + ' 个窗格' + (auto ? ' · 右侧已放入 AI 对话' : ''));
+}
+
+function setPaneKind(slot, kind){
+  if(!activeId || !KINDS[kind]) return;
+  const panes = panesOfProject(activeId);
+  const old = panes[slot];
+  let content;
+  if(kind === 'note') content = '';
+  else if(kind === 'todo') content = [];
+  else if(kind === 'link') content = 'https://';
+  else if(kind === 'web') content = 'http://localhost:5173';
+  else if(kind === 'repo') content = '';
+  else if(kind === 'projects') content = null;
+  else if(kind === 'chat') content = (AI_PRESETS[0] ? AI_PRESETS[0].url : '');
+  else content = null;
+  panes[slot] = { kind, title: KINDS[kind].label, content };
+  persistPanes();
+  renderSplit();
+  toast('窗格 ' + (slot + 1) + ' → ' + KINDS[kind].label);
+}
+
+function clearPane(slot){
+  if(!activeId) return;
+  const panes = panesOfProject(activeId);
+  panes[slot] = { kind:'placeholder', title:'预留位', content:null };
+  persistPanes();
+  renderSplit();
+  toast('已清空窗格 ' + (slot + 1), 'warn');
+}
+
+function resetPanes(){
+  if(!activeId) return;
+  panesOf[activeId] = defaultPanes(projectById(activeId));
+  persistPanes();
+  renderSplit();
+  toast('已重置本项目窗格', 'warn');
+}
+
+function repoNav(slot, rel){
+  if(!activeId) return;
+  const panes = panesOfProject(activeId);
+  panes[slot].content = rel || '';
+  persistPanes();
+  delete repoView[repoKey(activeId, rel || '')];
+  renderSplit();
+}
+
+function repoOpen(slot, rel){
+  if(!activeId) return;
+  const key = repoKey(activeId, rel);
+  repoView[key] = { file: rel.split('/').pop() };
+  /* 兼容模式没有快照样本，直接读文件清单里的 File 对象（只读） */
+  if(!SERVER && zeroScan.mode === 'flat' && zeroById(activeId)){ flatOpen(activeId, slot, rel); return; }
+  renderSplit();
+  const txt = sampleOf(activeId, rel);
+  toast(txt ? '已载入 ' + rel + ' 的快照内容' : rel + ' 未内嵌预览（点复制路径用编辑器打开）', txt ? 'ok' : 'warn');
+}
+
+function repoClose(slot){
+  if(!activeId) return;
+  const panes = panesOfProject(activeId);
+  delete repoView[repoKey(activeId, panes[slot].content || '')];
+  renderSplit();
+}
+
+function todoToggle(slot, idx){
+  if(!activeId) return;
+  const pane = panesOfProject(activeId)[slot];
+  if(pane.kind !== 'todo' || !pane.content[idx]) return;
+  pane.content[idx].done = !pane.content[idx].done;
+  persistPanes();
+  renderSplit();
+}
+function todoDel(slot, idx){
+  if(!activeId) return;
+  const pane = panesOfProject(activeId)[slot];
+  pane.content.splice(idx, 1);
+  persistPanes();
+  renderSplit();
+}
+function todoAdd(slot, text){
+  if(!activeId || !text.trim()) return;
+  const pane = panesOfProject(activeId)[slot];
+  pane.content.push({ t: text.trim(), done:false });
+  persistPanes();
+  renderSplit();
+  toast('已添加待办：' + text.trim(), 'ok');
+}
+
+function copyText(text, label){
+  const done = () => toast(label || '已复制到剪贴板', 'ok');
+  const fail = () => toast('复制失败，请手动选择', 'warn');
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done, () => legacy());
+  } else legacy();
+  function legacy(){
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch(e){ fail(); }
+    ta.remove();
+  }
+}
+
+function openUrl(url){
+  if(!url){ toast('请先填写网址', 'warn'); return; }
+  const w = window.open(url, '_blank', 'noopener');
+  if(w) toast('已在新标签打开 ' + url, 'ok');
+  else toast('浏览器拦截了新标签，请允许弹出窗口', 'warn');
+}
+
+/* ---------- 连接真实目录（File System Access API） ---------- */
+async function connectDir(pid){
+  if(SERVER){ toast('本地服务已接管读写，无需再连接目录', 'ok'); return; }
+  if(zeroById(pid) && scanRoot){
+    if(zeroPending[pid]){ toast('正在解析本机目录，稍候…'); return; }
+    await ensureZeroHandle(pid);
+    if(dirHandles[pid]){
+      toast('已通过本机扫描根连接该目录 · ' + (scanPerm === 'write' ? '可读写' : '只读浏览（保存时会再要一次写权限）'), 'ok');
+      renderSplit(); return;
+    }
+    toast('该目录解析失败，可能是权限已过期或目录被移动 · 请到控制室点「续期授权」或「重新扫描」', 'warn');
+    return;
+  }
+  const fileProto = typeof location !== 'undefined' && location.protocol === 'file:';
+  if(!window.showDirectoryPicker){
+    toast('当前浏览器不支持目录访问（需 Chrome / Edge 86+）', 'warn');
+    return;
+  }
+  try {
+    /* 同样默认只读：与控制室保持一致的权限口径，否则会出现
+       「控制室说只读、repo 窗格说可读写」的自相矛盾。 */
+    const handle = await window.showDirectoryPicker({ mode:'read', id:'wt-' + pid });
+    dirHandles[pid] = handle;
+    const lv = await permLevel(handle);
+    dirPerm[pid] = lv;
+    toast('已连接目录 ' + handle.name + ' · ' + (lv === 'write' ? '可读写' : '只读浏览（保存时会再要一次写权限）'), 'ok');
+    renderSplit();
+  } catch(e){
+    if(e && e.name === 'AbortError'){ toast('已取消选择目录'); return; }
+    const why = fileProto
+      ? 'file:// 不是安全上下文，浏览器直接拦掉了目录选择器 —— 这不是本页的 bug。'
+      : '浏览器拒绝了目录选择器：' + (e && e.message ? e.message : e);
+    toast(why + ' 解决办法：用 https 地址（GitHub Pages）或双击「启动工作台.bat」后用 http://127.0.0.1 打开。', 'warn');
+  }
+}
+
+async function surviveLive(pid){
+  const host = document.querySelector('[data-live-tree]');
+  if(!host) return;
+  const handle = dirHandles[pid];
+  const panes = panesOfProject(pid);
+  const slot = +host.dataset.liveTree;
+  const rel = panes[slot].content || '';
+  try {
+    let cur = handle;
+    for(const seg of (rel ? rel.split('/') : [])){
+      cur = await cur.getDirectoryHandle(seg);
+    }
+    const dirs = [], files = [];
+    for await (const [name, h] of cur.entries()){
+      if(name === '.git' || name === 'node_modules') continue;
+      if(h.kind === 'directory') dirs.push({ name, dir:true });
+      else { let size = 0; try { size = (await h.getFile()).size; } catch(e){} files.push({ name, dir:false, size }); }
+    }
+    dirs.sort((a,b) => a.name.localeCompare(b.name, 'zh'));
+    files.sort((a,b) => a.name.localeCompare(b.name, 'zh'));
+    host.innerHTML = dirs.concat(files).map(e =>
+      '<button class="tree-row" data-act="live-' + (e.dir ? 'nav' : 'open') + '" data-pid="' + esc(pid) + '" data-slot="' + slot + '" data-rel="' + esc(rel ? rel + '/' + e.name : e.name) + '">' +
+      '<span class="ic">' + (e.dir ? '▸' : '·') + '</span><span class="nm">' + esc(e.name) + (e.dir ? '/' : '') + '</span>' +
+      (e.dir ? '' : '<span class="sz">' + fmtBytes(e.size) + '</span>') + '</button>').join('') ||
+      '<div class="empty" style="padding:14px">空目录</div>';
+  } catch(e){
+    host.innerHTML = '<div class="empty" style="padding:14px">读取失败：' + esc(e.message || e) + '</div>';
+  }
+}
+
+async function liveOpen(pid, slot, rel){
+  const handle = dirHandles[pid];
+  if(!handle) return;
+  try {
+    let cur = handle;
+    const segs = rel.split('/');
+    const name = segs.pop();
+    for(const seg of segs) cur = await cur.getDirectoryHandle(seg);
+    const fh = await cur.getFileHandle(name);
+    const file = await fh.getFile();
+    if(file.size > 524288){ toast('文件超过 512KB，不在窗格内打开', 'warn'); return; }
+    const text = await file.text();
+    const host = document.querySelector('[data-live-file]');
+    if(!host) return;
+    host.innerHTML = '<div class="file-head"><span class="fp">' + esc(rel) + ' · ' + fmtBytes(file.size) + '</span>' +
+      '<button class="btn small primary" data-act="live-save" data-pid="' + esc(pid) + '" data-rel="' + esc(rel) + '">保存</button></div>' +
+      '<textarea class="note-area" style="min-height:210px;font-family:var(--mono);font-size:11.5px" data-live-text>' + esc(text) + '</textarea>';
+    toast('已读取 ' + rel, 'ok');
+  } catch(e){ toast('读取失败：' + (e.message || e), 'warn'); }
+}
+
+/* 读时只读、存时才要写：这是整个权限模型的收口。
+   选目录时只要读权限（否则 C:\ 这类位置会「选完才报错」），
+   等用户真的点保存、手势窗口还开着的这一刻，再去争取写权限。 */
+async function liveSave(pid, rel, btn){
+  const handle = dirHandles[pid];
+  const ta = document.querySelector('[data-live-text]');
+  if(!handle || !ta){ toast('目录未连接', 'warn'); return; }
+  /* 写权限升级必须落在第一个 await 之前。
+     requestPermission 依赖 transient user activation，放到任何 await 之后都会静默失效。
+     这里是 click → liveSave 的第一段，所以手势还在。 */
+  let lv = 'read';
+  try { lv = await handle.queryPermission({ mode:'readwrite' }); } catch(e){ lv = 'denied'; }
+  if(lv !== 'granted'){
+    if(btn){ btn.disabled = true; btn.textContent = '请求写权限…'; }
+    lv = await permUpgrade(handle);
+    if(btn){ btn.disabled = false; btn.textContent = '保存'; }
+  }
+  if(lv !== 'granted'){
+    toast('未能取得写权限：该目录被浏览器或系统保护（常见于 C:\\ 盘根、系统目录）。' +
+          '读取不受影响；要写盘请到控制室另选一个可写目录。', 'warn');
+    return;   // 注意：这里绝不清 dirHandles[pid]，否则连浏览也断了
+  }
+  try {
+    let cur = handle;
+    const segs = rel.split('/');
+    const name = segs.pop();
+    for(const seg of segs) cur = await cur.getDirectoryHandle(seg);
+    const fh = await cur.getFileHandle(name, { create:true });
+    const w = await fh.createWritable();
+    await w.write(ta.value);
+    await w.close();
+    dirPerm[pid] = 'write';   // 争取到写权限后记住，下次保存不用再弹一次
+    toast('已写入磁盘：' + rel, 'ok');
+    if(btn) btn.textContent = '已保存';
+  } catch(e){ toast('写入失败：' + (e && e.message ? e.message : e), 'warn'); }
+}
+
+/* ============================================================
+   零服务模式：本机目录授权 → 单页扫描 → 直接读写
+   把 serve.mjs + 启动工作台.bat 的扫描能力搬进单页：
+   目录句柄存 IndexedDB，刷新后点一次续期即可；无需 Node、无需安装。
+   ============================================================ */
+const IDB_NAME = 'wt-fs', IDB_STORE = 'handles';
+
+/* IndexedDB 在 file:// 等环境下偶发「既不成功也不报错」，会永远吊住 await。
+   因此每个操作都必须带超时：宁可放弃持久化，也绝不能让扫描这条主链路被卡住。 */
+const IDB_TIMEOUT_MS = 1500;
+function idbOpen(){
+  return new Promise((res, rej) => {
+    if(typeof indexedDB === 'undefined'){ rej(new Error('浏览器不支持 IndexedDB')); return; }
+    let done = false, timer = null;
+    const finish = (fn, arg) => { if(done) return; done = true; if(timer) clearTimeout(timer); fn(arg); };
+    timer = setTimeout(() => finish(rej, new Error('IndexedDB 无响应（已跳过持久化）')), IDB_TIMEOUT_MS);
+    let rq;
+    try { rq = indexedDB.open(IDB_NAME, 1); } catch(e){ finish(rej, e); return; }
+    rq.onupgradeneeded = () => { const db = rq.result; if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE); };
+    rq.onsuccess = () => finish(res, rq.result);
+    rq.onerror = () => finish(rej, rq.error || new Error('IndexedDB 打开失败'));
+    rq.onblocked = () => finish(rej, new Error('IndexedDB 被其它标签页占用'));
+  });
+}
+function idbTx(mode, fn){
+  return idbOpen().then(db => new Promise((res, rej) => {
+    let done = false, timer = null;
+    const finish = (fn2, arg) => { if(done) return; done = true; if(timer) clearTimeout(timer); fn2(arg); };
+    timer = setTimeout(() => finish(rej, new Error('IndexedDB 事务无响应')), IDB_TIMEOUT_MS);
+    let tx, rq;
+    try { tx = db.transaction(IDB_STORE, mode); rq = fn(tx.objectStore(IDB_STORE)); }
+    catch(e){ finish(rej, e); return; }
+    tx.oncomplete = () => finish(res, rq && rq.result);
+    tx.onerror = () => finish(rej, tx.error || new Error('IndexedDB 事务失败'));
+    tx.onabort = () => finish(rej, tx.error || new Error('IndexedDB 事务中止'));
+  }));
+}
+const idbPut = (k, v) => idbTx('readwrite', os => os.put(v, k));
+const idbGet = (k) => idbTx('readonly', os => os.get(k));
+const idbDel = (k) => idbTx('readwrite', os => os.delete(k));
+
+/* 权限等级：把「读」与「写」拆成两个维度，避免为了读个目录也要写权限。
+   关键的 Chrome 语义：read 已 granted 时，queryPermission({mode:'readwrite'}) 返回的是 'prompt'
+   而不是 'granted'；只有真正拿过 write 授权才返回 'granted'。
+   所以不能用一个 readwrite 查询代表全部，否则只读目录会被误判成「没权限」，
+   进而在没有用户手势的启动路径上反复 requestPermission —— 那是必然失败且会让扫描彻底不可用。 */
+async function permLevel(handle){
+  if(!handle) return 'none';
+  if(typeof handle.queryPermission !== 'function') return 'write';
+  let rd;
+  try { rd = await handle.queryPermission({ mode:'read' }); }
+  catch(e){ return 'denied'; }
+  if(rd === 'denied') return 'denied';
+  if(rd !== 'granted') return 'prompt';
+  let wr;
+  try { wr = await handle.queryPermission({ mode:'readwrite' }); }
+  catch(e){ wr = 'denied'; }
+  return wr === 'granted' ? 'write' : 'read';
+}
+/* 争取写权限。铁律：requestPermission 依赖 transient user activation，
+   必须放在 click 处理链的「第一个 await 之前」，放到任何 await 之后都会静默失效。 */
+async function permUpgrade(handle){
+  if(!handle) return 'none';
+  if(typeof handle.requestPermission !== 'function') return 'granted';
+  try { return await handle.requestPermission({ mode:'readwrite' }); }
+  catch(e){ return 'denied'; }
+}
+/* 续期只需读权限：写权限等用户真的点保存时再要，避免一次续期把整个位置卡死 */
+async function permResume(handle){
+  if(!handle) return 'none';
+  if(typeof handle.requestPermission !== 'function') return 'granted';
+  try { return await handle.requestPermission({ mode:'read' }); }
+  catch(e){ return 'denied'; }
+}
+
+const CAN_FS = typeof window !== 'undefined' && !!window.showDirectoryPicker;
+
+/* ---- 项目识别表 ---- */
+const MARK_FILES = {
+  'package.json':'Node', 'pnpm-workspace.yaml':'Node', 'tsconfig.json':'TypeScript',
+  'Cargo.toml':'Rust', 'go.mod':'Go', 'pyproject.toml':'Python', 'requirements.txt':'Python',
+  'setup.py':'Python', 'manage.py':'Python', 'pom.xml':'Java', 'build.gradle':'Java',
+  'build.gradle.kts':'Kotlin', 'CMakeLists.txt':'C/C++', 'Makefile':'Make', 'platformio.ini':'PlatformIO',
+  'composer.json':'PHP', 'Gemfile':'Ruby', 'pubspec.yaml':'Dart', 'Podfile':'Swift',
+  'mix.exs':'Elixir', 'docker-compose.yml':'Docker', 'angular.json':'Angular',
+  'vite.config.ts':'Vite', 'next.config.js':'Next.js', 'nuxt.config.ts':'Nuxt'
+};
+const SUFFIX_MARKS = { '.sln':'.NET', '.csproj':'.NET', '.fsproj':'.NET', '.xcodeproj':'Swift', '.uproject':'Unreal' };
+const EXT_LANG = {
+  '.js':'JavaScript', '.mjs':'JavaScript', '.cjs':'JavaScript', '.jsx':'JavaScript',
+  '.ts':'TypeScript', '.tsx':'TypeScript', '.vue':'Vue', '.svelte':'Svelte',
+  '.py':'Python', '.ipynb':'Python', '.rs':'Rust', '.go':'Go', '.java':'Java', '.kt':'Kotlin',
+  '.c':'C', '.h':'C', '.cpp':'C++', '.cc':'C++', '.hpp':'C++', '.cs':'C#', '.swift':'Swift',
+  '.rb':'Ruby', '.php':'PHP', '.dart':'Dart', '.lua':'Lua', '.sh':'Shell', '.ps1':'PowerShell',
+  '.sql':'SQL', '.html':'HTML', '.css':'CSS', '.scss':'SCSS', '.md':'Markdown'
+};
+const SKIP_DIRS = new Set(['node_modules','.git','.svn','.hg','.venv','venv','env','__pycache__',
+  'dist','build','out','target','bin','obj','.next','.nuxt','.cache','.idea','.vscode','.vs',
+  'vendor','Pods','.gradle','.mvn','coverage','.pytest_cache','.mypy_cache','.tox','site-packages',
+  /* 系统 / 厂商 / 联结目录：没人把它们当项目，体量却极大，扫进去只会拖慢并污染结果 */
+  'Windows','Program Files','Program Files (x86)','ProgramData','System Volume Information',
+  'Recovery','PerfLogs','MSOCache','Config.Msi','Windows.old','$Recycle.Bin','$WinREAgent','$SysReset',
+  'Documents and Settings','All Users','Default User','Library','Temp','OneDriveTemp','AppData','Application Data',
+  'Intel','AMD','NVIDIA','WindowsApps','WpSystem']);
+/* 扫描必须有硬上限：选到 C:\ 这类超大根时也得在几秒内返回，而不是卡住不动、界面像没反应 */
+const MAX_PROJECTS = 150, MAX_MEASURE = 2500, MAX_SAMPLES = 8;
+const MEASURE_BUDGET_MS = 5000;
+/* 精确测量前 N 个文件，之后按均值外推：避免 2500 次 getFile() × 150 个项目拖垮整次扫描 */
+const EXACT_MEASURE = 400;
+/* 两档预算。用户扫不到深层项目时，正确做法不是单纯加深，而是同时给更大的目录预算：
+   只加深会让扫描更慢，但浅层照样先把预算吃光，深层还是轮不到。 */
+function WALK(){
+  return deepScan
+    ? { depth:6, visited:8000, findMs:15000, layer:[1500, 800] }
+    : { depth:4, visited:2500, findMs:5000,  layer:[400, 200] };
+}
+let lastScan = { visited:0, depth:0, errors:0, truncated:false };   // 最近一次扫描的遍历统计，用于「0 结果」时给出可诊断的提示
+let scanStateMsg = '';   // 扫描进度文案；扫描期间实时刷新，避免界面看起来像「点了没反应」
+
+/* 扫描是异步且可能耗时的（选到 C:\ 这类超大根时尤甚），必须给出实时进度。
+   只更新进度行本身，不整块重绘 dirBar，避免扫描期间反复重建按钮。 */
+function setScanState(msg){
+  scanStateMsg = msg || '';
+  const el = document.getElementById('dirStateRow');
+  if(!el) return;
+  el.style.display = scanStateMsg ? '' : 'none';
+  el.innerHTML = scanStateMsg
+    ? '<span class="dir-k">进度</span><span class="dir-v">' + esc(scanStateMsg) + '</span>'
+    : '';
+}
+
+/* 每次 next() 单独计时：网络驱动器、脱机盘、U 盘拔出、被杀软拦下的目录
+   都会让 entries() 无限期挂起，而预算检查点在「出队时」，await 阻塞期间根本执行不到。
+   注意必须返回「异步可迭代对象」而不是 Promise —— Promise 不是 async-iterable，
+   直接 for await 一个 Promise 会抛 TypeError，结果每次列目录都拿到空数组。 */
+const IO_TIMEOUT_MS = 3000;
+function withTimeoutIter(iter, ms){
+  const it = iter && iter[Symbol.asyncIterator] ? iter[Symbol.asyncIterator]() : null;
+  const src = it || (iter && iter[Symbol.iterator] ? iter[Symbol.iterator]() : null);
+  if(!src) throw new Error('不可迭代');
+  return (async function*(){
+    for(;;){
+      let timer = null;
+      /* 每次 next() 都重新计时，所以是「卡住 N 毫秒就放弃」，而不是「整次枚举有总时限」 */
+      const guard = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('IO 超时')), ms); });
+      try {
+        const r = it ? await Promise.race([it.next(), guard]) : await Promise.race([Promise.resolve(src.next()), guard]);
+        if(r.done) return;
+        yield r.value;
+      } finally {
+        if(timer) clearTimeout(timer);   // 不清理的话，每列一个目录就留一个待触发的定时器
+      }
+    }
+  })();
+}
+/* 兼容不同实现：优先 entries()，退化到 values()；两者都不可用时记一次错误 */
+async function listDir(dir){
+  const out = [];
+  try {
+    if(typeof dir.entries === 'function'){
+      for await (const e of withTimeoutIter(dir.entries(), IO_TIMEOUT_MS)) out.push([e[0], e[1]]);
+      return out;
+    }
+    for await (const h of withTimeoutIter(dir.values(), IO_TIMEOUT_MS)) out.push([h.name, h]);
+  } catch(e){ lastScan.errors++; }
+  return out;
+}
+
+async function readSmallText(dir, name, cap){
+  try {
+    const fh = await dir.getFileHandle(name);
+    const f = await fh.getFile();
+    if(f.size > cap) return null;
+    return await f.text();
+  } catch(e){ return null; }
+}
+function portsFromText(txt){
+  const out = new Set();
+  if(!txt) return [];
+  const re = /(?:--port[=\s]+|-p\s+|PORT\s*=\s*|localhost:|127\.0\.0\.1:)(\d{2,5})/g;
+  let m;
+  while((m = re.exec(txt))){ const n = +m[1]; if(n >= 80 && n <= 65535) out.add(n); }
+  return [...out].slice(0, 6);
+}
+
+/* 递归找项目根：命中 .git 或任一工程标记文件即认定为项目。
+   被选中的目录本身若是项目，也计入（rel 为空串）——否则「直接选中单个项目文件夹」会一无所获。
+   遍历用广度优先：选到 C:\ 这类超大根时，预算优先花在浅层，先把整个盘面扫一遍再往深处走；
+   若用深度优先，预算会被 Users\<你>\AppData 这类巨型单支一次耗尽，深层项目永远轮不到。
+   全程带硬预算（目录数 + 耗时），超限即停并置 truncated，保证几秒内一定返回结果。 */
+async function findProjectRoots(root, onProgress){
+  const hits = [];
+  const W = WALK();
+  lastScan = { visited:0, depth:0, errors:0, truncated:false };
+  const t0 = Date.now();
+  const overBudget = () => lastScan.visited >= W.visited || (Date.now() - t0) > W.findMs;
+  const queue = [{ dir: root, rel: '', depth: 0 }];
+  let qi = 0;
+  while(qi < queue.length){
+    if(scanAbort) break;
+    if(hits.length >= MAX_PROJECTS){ lastScan.truncated = true; break; }
+    if(overBudget()){ lastScan.truncated = true; break; }
+    const { dir, rel, depth } = queue[qi++];
+    lastScan.visited++;
+    if(depth > lastScan.depth) lastScan.depth = depth;
+    if(onProgress && lastScan.visited % 100 === 0) onProgress(lastScan);
+    const entries = await listDir(dir);
+    const files = entries.filter(e => e[1] && e[1].kind === 'file');
+    const dirs  = entries.filter(e => e[1] && e[1].kind === 'directory');
+    const langs = new Set();
+    for(const [n] of files){
+      if(MARK_FILES[n]) langs.add(MARK_FILES[n]);
+      const i = n.lastIndexOf('.');
+      if(i > 0 && SUFFIX_MARKS[n.slice(i).toLowerCase()]) langs.add(SUFFIX_MARKS[n.slice(i).toLowerCase()]);
+    }
+    const git = dirs.some(([n]) => n === '.git');
+    if(git || langs.size) hits.push({ rel, dir, git, langs:[...langs] });
+    if(depth >= W.depth) continue;
+    /* 分层配额：浅层目录动辄成千上万，不设配额的话预算在第 1-2 层就被吃光，
+       深层的项目根本轮不到。超配额的分支直接跳过，并把 truncated 置上，
+       这样「0 结果」时提示会说清是跳过了、而不是扫过了。 */
+    const layerCap = W.layer[depth] !== undefined ? W.layer[depth] : Infinity;
+    let pushed = 0;
+    for(const [n, h] of dirs){
+      if(SKIP_DIRS.has(n) || n.startsWith('.')) continue;
+      if(pushed >= layerCap) continue;
+      pushed++;
+      queue.push({ dir: h, rel: rel ? rel + '/' + n : n, depth: depth + 1 });
+    }
+  }
+  return hits;
+}
+
+/* 量一个项目：字节数 / 文件数 / 语言分布 / README 首段 / 声明端口。
+   全部有上限（文件数 + 深度 + 截止时间），保证单个超大目录也不会把整次扫描拖住。
+   体积用「采样 + 外推」：逐文件 getFile() 在大项目上是 2500 次异步 IO，
+   150 个项目下来会把整次扫描拖到预算之外，结果卡片上体积全是 0。
+   改为精确测前 EXACT_MEASURE 个文件，之后只计数并按均值外推，返回的 estimated 会让 UI 加 ~ 前缀。
+   语言分布与文件数始终是全量统计，不受采样影响。 */
+async function measureDir(dir, deadline){
+  let size = 0, files = 0, truncated = false, mtime = 0, measured = 0, estimated = false;
+  const langs = new Map(), samples = [];
+  async function walk(d, rel, depth){
+    if(truncated || depth > WALK().depth) return;
+    if(scanAbort){ truncated = true; return; }
+    if(deadline && Date.now() > deadline){ truncated = true; return; }
+    const entries = await listDir(d);
+    entries.sort((a, b) => a[1].kind === b[1].kind ? a[0].localeCompare(b[0], 'zh') : (a[1].kind === 'directory' ? -1 : 1));
+    for(const [n, h] of entries){
+      if(files >= MAX_MEASURE){ truncated = true; return; }
+      if(h.kind === 'directory'){
+        if(SKIP_DIRS.has(n) || n.startsWith('.')) continue;
+        await walk(h, rel ? rel + '/' + n : n, depth + 1);
+        continue;
+      }
+      files++;
+      const i = n.lastIndexOf('.');
+      const lang = i > 0 ? EXT_LANG[n.slice(i).toLowerCase()] : '';
+      if(lang) langs.set(lang, (langs.get(lang) || 0) + 1);
+      if(measured >= EXACT_MEASURE){ estimated = true; continue; }
+      try {
+        const f = await h.getFile();
+        size += f.size; measured++;
+        if(f.lastModified > mtime) mtime = f.lastModified;
+        if(depth === 0 && samples.length < MAX_SAMPLES && f.size < 262144) samples.push({ p:rel ? rel + '/' + n : n, t:await f.text() });
+      } catch(e){}
+    }
+  }
+  await walk(dir, '', 0);
+  if(estimated && measured > 0 && files > measured) size = Math.round(size / measured * files);
+  const pkg = await readSmallText(dir, 'package.json', 131072);
+  const readme = samples.find(s => /^readme(\.(md|markdown|txt|rst))?$/i.test(s.p));
+  const readmeTxt = readme ? readme.t : null;
+  return {
+    size, files, truncated, estimated, langs, samples,
+    readme: readmeTxt ? readmeTxt.slice(0, 400) : '',
+    ports: portsFromText(pkg || readmeTxt || ''),
+    mtime
+  };
+}
+/* 未测量（超出总预算）的项目用这份占位：语言仍由标记文件推导，体积/预览留空 */
+function emptyMeasure(){ return { size:0, files:0, truncated:true, estimated:false, langs:new Map(), samples:[], readme:'', ports:[], mtime:0 }; }
+
+function pickLangs(markerLangs, langMap){
+  const top = [...langMap.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
+  const out = [];
+  for(const l of markerLangs.concat(top)) if(out.indexOf(l) < 0) out.push(l);
+  return out.slice(0, 3);
+}
+function joinRootPath(rel){
+  const base = String(zeroScan.rootPath || '').replace(/[\\/]+$/, '');
+  const sep = /\\/.test(base) || /^[A-Za-z]:/.test(base) ? '\\' : '/';
+  const label = scanRootName || zeroScan.rootName || '本机目录';
+  if(!rel) return base || label;
+  const tail = rel.split('/').join(sep);
+  return base ? base + sep + tail : label + '/' + rel;
+}
+
+/* ---- 授权 / 续期 / 扫描 ---- */
+/* 默认只要「读」权限：扫描与浏览全都是只读操作，写权限留到用户真的点「保存」那一刻再去要。
+   这样选 C:\ 这类系统不允许写入的位置时，不会再出现「目录都选完了才报错」——
+   Chrome 的 showDirectoryPicker({mode:'readwrite'}) 会在返回句柄前先隐式申请写权限，
+   被 blocked-path 拦下时才抛 SecurityError，用户看到的就是选完之后才炸。
+   绝不在失败后再调第二次 showDirectoryPicker：第一次调用已经消耗掉用户手势，
+   重试必然失败，还会让用户再弹一次选择器。 */
+async function pickScanRoot(){
+  if(!CAN_FS){ toast('当前浏览器不支持原生目录访问，请改用「兼容模式扫描」（不需要该 API）', 'warn'); return; }
+  let h = null;
+  try {
+    h = await window.showDirectoryPicker({ mode:'read', id:'wt-root' });
+  } catch(e){
+    if(e && e.name === 'AbortError'){ toast('已取消选择目录'); return; }
+    /* 只报第一次的真实原因，不做链式重试（次生的「缺用户手势」会盖掉真实原因） */
+    pickFail = { name:'', msg:(e && e.message ? e.message : String(e)) };
+    renderDirBar();
+    toast('选择目录失败：' + pickFail.msg + ' · 可点「兼容模式扫描」继续（不需要任何权限）', 'warn');
+    return;
+  }
+  try {
+    pickFail = null;
+    scanRoot = h; scanRootName = h.name;
+    scanPerm = await permLevel(h);
+    flatFiles = null; flatTree = null; flatRootName = '';   // 切回句柄模式，兼容模式的旧清单作废
+    pendingAuth = [];
+    renderDirBar(); syncModeBadge();
+    toast('已授权目录 ' + h.name + ' · ' +
+      (scanPerm === 'write' ? '可读写' : '只读浏览（保存时会再向你要一次写权限）') + ' · 开始扫描', 'ok');
+    /* 句柄持久化放后台尽力而为：IndexedDB 无响应时也只影响「刷新后续用」，绝不挡本次扫描 */
+    idbPut(SCAN_ROOT_KEY, h).catch(() => toast('句柄未能写入浏览器存储 · 刷新后需重新授权', 'warn'));
+    await scanRootNow();
+  } catch(e){
+    toast('扫描失败：' + (e && e.message ? e.message : e), 'warn');
+    setScanState('扫描失败：' + (e && e.message ? e.message : String(e)));
+  }
+}
+/* 续期只要读权限：扫描与浏览都是只读操作，写权限等用户真的点「保存」时再要。
+   本函数只由「续期授权」按钮点击进入，requestPermission 处在手势窗口内。 */
+async function resumeScanRoot(){
+  const item = pendingAuth.find(x => x.key === SCAN_ROOT_KEY) || (scanRoot ? { handle:scanRoot } : null);
+  if(!item){ toast('没有待续期的目录授权', 'warn'); return; }
+  const r = await permResume(item.handle);
+  if(r !== 'granted'){
+    toast('未获授权，目录仍不可读 · 可点「兼容模式扫描」（不需要任何权限）', 'warn');
+    renderDirBar();
+    return;
+  }
+  scanRoot = item.handle; scanRootName = item.handle.name;
+  scanPerm = await permLevel(item.handle);
+  pendingAuth = pendingAuth.filter(x => x.key !== SCAN_ROOT_KEY);
+  renderDirBar(); syncModeBadge();
+  toast('已续期目录授权 · ' + (scanPerm === 'write' ? '可读写' : '只读浏览'), 'ok');
+  await scanRootNow();
+}
+async function clearScanRoot(){
+  scanRoot = null; scanRootName = ''; pendingAuth = []; localPorts = null;
+  scanPerm = '';                       // 易漏：不重置的话清除后 UI 仍显示旧权限
+  flatFiles = null; flatTree = null; flatRootName = ''; pickFail = null;
+  zeroScan = { scannedAt:'', rootName:'', rootPath:zeroScan.rootPath || '', mode:'', projects:[] };
+  Object.keys(dirHandles).forEach(k => { delete dirHandles[k]; });
+  Object.keys(dirPerm).forEach(k => { delete dirPerm[k]; });
+  store.write(LS.zero, zeroScan);
+  try { await idbDel(SCAN_ROOT_KEY); } catch(e){}
+  buildIndex(); renderAll(); syncModeBadge();
+  toast('已清除本机目录授权与扫描结果', 'warn');
+}
+async function scanRootNow(){
+  if(!scanRoot){ toast('先在控制室选择一个本机目录', 'warn'); return; }
+  if(scanning){ toast('已有扫描在跑，再点扫描按钮可取消', 'warn'); return; }
+  /* 只查询权限、绝不请求。
+     requestPermission 依赖用户手势，而本函数会被页面加载时的恢复路径调用（那时没有手势），
+     一请求就必然失败；旧实现失败后还不 return，继续拿没权限的句柄硬扫，
+     结果所有 entries() 都失败，报出一个误导性的「没找到项目」——这就是刷新后扫描不可用的根因。 */
+  scanPerm = await permLevel(scanRoot);
+  renderDirBar();
+  const btn = document.getElementById('dirScanBtn');
+  const unbusy = () => {
+    scanning = false;
+    if(btn){ btn.disabled = false; btn.textContent = deepScan ? '深度扫描' : '重新扫描'; }
+  };
+  if(scanPerm === 'denied'){
+    setScanState('目录不可读：权限已被拒绝或被系统阻止（常见于 C:\\ 盘根）· 请改选更靠近项目的父目录，或点「兼容模式扫描」');
+    unbusy();
+    return;
+  }
+  if(scanPerm === 'prompt'){
+    setScanState('浏览器已收回授权（刷新后的常态）· 请点「续期授权」后再扫描');
+    unbusy();
+    return;
+  }
+  scanning = true;
+  if(btn){ btn.textContent = '扫描中…点击取消'; }
+  setScanState('正在扫描…');
+  scanAbort = false;
+  const t0 = Date.now();
+  let roots = [];
+  try { roots = await findProjectRoots(scanRoot, p => setScanState('正在扫描… 已遍历 ' + p.visited + ' 个目录，最深 ' + p.depth + ' 层')); }
+  catch(e){
+    const msg = e && e.message ? e.message : String(e);
+    toast('扫描失败：' + msg, 'warn');
+    setScanState('扫描失败：' + msg + '（可换个更靠近项目的父目录再试）');
+    unbusy();
+    return;
+  }
+  const projects = [];
+  const measureDeadline = t0 + WALK().findMs + MEASURE_BUDGET_MS;
+  let measureStopped = false;
+  for(const r of roots){
+    if(scanAbort) break;
+    let m;
+    if(measureStopped || Date.now() > measureDeadline){ measureStopped = true; m = emptyMeasure(); }
+    else {
+      m = await measureDir(r.dir, measureDeadline);
+      setScanState('正在统计 ' + (projects.length + 1) + '/' + roots.length + ' 个项目…');
+    }
+    projects.push({
+      rel: r.rel,
+      name: r.rel ? r.rel.split('/').pop() : (scanRootName || '本机目录'),
+      path: joinRootPath(r.rel),
+      langs: pickLangs(r.langs, m.langs),
+      category: r.git ? '本机扫描 · git' : '本机扫描',
+      /* truncated 只表示「扫描被预算截断」，不能把 estimated（体积为采样外推值）算进来：
+         外推是正常结果，形状完整、只是体积取近似，把它当成截断会让每个中等项目
+         都背上一个「数据不完整」的标记。兼容模式那边只写 mtrunc，两边口径要一致。 */
+      sizeBytes: m.size, files: m.files, truncated: m.truncated, estimated: !!m.estimated,
+      updated: new Date(m.mtime || Date.now()).toISOString().slice(0, 10),
+      git: r.git, samples: m.samples, readme: m.readme, ports: m.ports, live: null
+    });
+  }
+  /* 用户主动取消：保留已扫到的部分，如实说明是半途停的，不假装扫完 */
+  if(scanAbort){
+    projects.sort((a, b) => b.sizeBytes - a.sizeBytes);
+    zeroScan = {
+      scannedAt: new Date().toISOString(), rootName: scanRootName,
+      rootPath: zeroScan.rootPath || '', mode:'handle', projects,
+      stats: { visited: lastScan.visited, depth: lastScan.depth, errors: lastScan.errors, truncated:true, measured: projects.filter(p => !p.truncated).length }
+    };
+    store.write(LS.zero, zeroScan);
+    if(localPorts) applyPorts();
+    setScanState('');
+    buildIndex(); renderAll(); unbusy();
+    toast('已取消扫描 · 保留已发现的 ' + projects.length + ' 个项目（结果不完整）', 'warn');
+    return;
+  }
+  projects.sort((a, b) => b.sizeBytes - a.sizeBytes);
+  const truncated = lastScan.truncated || measureStopped;
+  unbusy();
+  zeroScan = {
+    scannedAt: new Date().toISOString(), rootName: scanRootName,
+    rootPath: zeroScan.rootPath || '', mode:'handle', projects,
+    stats: { visited: lastScan.visited, depth: lastScan.depth, errors: lastScan.errors, truncated, measured: projects.filter(p => !p.truncated).length }
+  };
+  store.write(LS.zero, zeroScan);
+  if(localPorts) applyPorts();
+  setScanState('');
+  buildIndex(); renderAll();
+  if(!projects.length){
+    /* 权限提示放在第一位：旧版把它排在遍历统计之后，用户根本看不到重点 */
+    toast((scanPerm === 'read' ? '当前只有只读权限（不影响扫描）。' : '') +
+      '扫描完成：该目录下没找到项目（已遍历 ' + lastScan.visited + ' 个目录，最深 ' + lastScan.depth + ' 层' +
+      (lastScan.errors ? '，有 ' + lastScan.errors + ' 个目录读取失败' : '') + '）。' +
+      (lastScan.truncated ? '目录太大，扫描已达上限，可能没走到项目所在位置——请改选更靠近项目的父目录，或开「深度扫描」。' : '') +
+      '项目需含 .git 或工程标记文件（package.json / CMakeLists.txt / Cargo.toml / go.mod 等）；' +
+      '若项目在更深层，请改选更靠近项目的父目录。', 'warn');
+  } else if(truncated){
+    toast('扫描完成 · 发现 ' + projects.length + ' 个项目 · 用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's' +
+      '（已达扫描上限，结果可能不完整；选中的目录越大越容易漏，建议改选更靠近项目的父目录，或开「深度扫描」）', 'warn');
+  } else {
+    toast('扫描完成 · 发现 ' + projects.length + ' 个项目 · 用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's', 'ok');
+  }
+}
+async function restoreScanRoot(){
+  /* 兼容模式的结果不依赖句柄：刷新后项目列表仍在，只是「只读浏览」要重扫一次才有文件清单 */
+  if(zeroScan.mode === 'flat'){
+    scanRootName = zeroScan.rootName || '';
+    renderDirBar();
+    return;
+  }
+  let h = null;
+  try { h = await idbGet(SCAN_ROOT_KEY); } catch(e){ h = null; }
+  if(!h){ renderDirBar(); return; }
+  scanRootName = h.name;
+  /* 只读也算可用：旧版只认 readwrite，于是刷新后（浏览器把权限降级）扫描直接不可用。
+     这里也绝不能 requestPermission —— 页面加载时没有用户手势，一请求就必失败。 */
+  const lv = await permLevel(h);
+  if(lv === 'read' || lv === 'write'){
+    scanRoot = h; scanPerm = lv;
+    renderDirBar(); syncModeBadge();
+    if(!(zeroScan.projects || []).length) scanRootNow();
+    return;
+  }
+  scanRoot = null; scanPerm = lv;
+  pendingAuth = [{ key:SCAN_ROOT_KEY, handle:h }];
+  renderDirBar();
+}
+
+/* ============================================================
+   兼容模式扫描（兜底通道）：不依赖 showDirectoryPicker
+   ------------------------------------------------------------
+   <input webkitdirectory> 会把选中目录的完整文件清单交给页面，每个 File 自带
+   webkitRelativePath（形如 "root/sub/a.txt"）。据此在内存里重建一棵虚拟目录树，
+   再用与句柄模式完全相同的「命中 .git 或任一工程标记文件即认定为项目」规则识别项目。
+   好处：不需要任何权限、不需要安全上下文，file:// 下也能用，C:\ 这类系统拒绝写入的位置也能扫。
+   代价：拿不到目录句柄，所以只能只读浏览、不能写盘，且刷新后需要重新扫一次。 */
+const MAX_FLAT_FILES = 60000;   // 文件清单处理上限：选到 C:\ 这类根会枚举出百万级文件，必须截断，否则内存与耗时都失控
+
+function pickFlatRoot(){
+  const inp = document.getElementById('dirFlatInput');
+  if(!inp){ toast('当前环境不支持兼容模式扫描', 'warn'); return; }
+  inp.value = '';   // 清空后再次选同一个目录也能触发 change
+  inp.click();
+}
+function onFlatPicked(e){
+  const files = e && e.target && e.target.files;
+  if(!files || !files.length){ toast('没读到文件清单（目录为空或已取消选择）', 'warn'); return; }
+  const btn = document.getElementById('dirScanBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '扫描中…'; }
+  const done = () => { if(btn){ btn.disabled = false; btn.textContent = '重新扫描（兼容模式）'; } };
+  scanFlatList(files).then(done, err => {
+    const msg = err && err.message ? err.message : String(err);
+    setScanState('兼容模式扫描失败：' + msg);
+    toast('兼容模式扫描失败：' + msg, 'warn');
+    done();
+  });
+}
+async function scanFlatList(files){
+  const t0 = Date.now();
+  /* tree 提到模块级由 flatListAt 复用：旧版扫完就丢，导致每次列目录都要全量遍历几万条清单 */
+  const tree = new Map();   // rel -> { dirs:Set<string>, files:[{name,size,mtime,file}] }
+  const node = rel => { let n = tree.get(rel); if(!n){ n = { dirs:new Set(), files:[] }; tree.set(rel, n); } return n; };
+  node('');
+  const list = new Map();   // 相对路径 -> File，供仓库窗格只读浏览
+  let rootName = '', truncatedList = false, i = 0;
+  for(const f of files){
+    if(i >= MAX_FLAT_FILES){ truncatedList = true; break; }
+    const segs = String(f.webkitRelativePath || f.name).split('/');
+    if(!rootName) rootName = segs[0];
+    const rest = segs.slice(1);
+    if(!rest.length) continue;
+    const fname = rest.pop();
+    let cur = '';
+    for(const seg of rest){ node(cur).dirs.add(seg); cur = cur ? cur + '/' + seg : seg; }
+    node(cur).files.push({ name:fname, size:f.size, mtime:f.lastModified, file:f });
+    list.set(cur ? cur + '/' + fname : fname, f);
+    i++;
+    /* 分片让出主线程：几万个文件一次性整理会冻结界面数秒，用户会以为页面死了。
+       阈值取 4000：设太小会被后台标签页的 setTimeout 节流（最低 1s）拖慢整次扫描。 */
+    if(i % 4000 === 0){
+      setScanState('正在整理文件清单… ' + i + ' / ' + files.length + ' 个文件');
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+  if(!rootName){ toast('文件清单为空，无法识别目录名', 'warn'); return; }
+  setScanState('正在扫描… 已整理 ' + i + ' 个文件');
+
+  /* 广度优先识别项目根，规则与硬预算与句柄模式完全一致 */
+  const W = WALK();
+  const hits = [];
+  const stats = { visited:0, depth:0, errors:0, truncated:truncatedList };
+  const queue = [{ rel:'', depth:0 }];
+  let qi = 0;
+  while(qi < queue.length){
+    if(hits.length >= MAX_PROJECTS){ stats.truncated = true; break; }
+    if(stats.visited >= W.visited || Date.now() - t0 > W.findMs){ stats.truncated = true; break; }
+    const { rel, depth } = queue[qi++];
+    stats.visited++;
+    if(depth > stats.depth) stats.depth = depth;
+    if(stats.visited % 200 === 0) setScanState('正在扫描… 已遍历 ' + stats.visited + ' 个目录，最深 ' + stats.depth + ' 层');
+    const n = tree.get(rel);
+    if(!n) continue;
+    const langs = new Set();
+    for(const f of n.files){
+      if(MARK_FILES[f.name]) langs.add(MARK_FILES[f.name]);
+      const i2 = f.name.lastIndexOf('.');
+      if(i2 > 0 && SUFFIX_MARKS[f.name.slice(i2).toLowerCase()]) langs.add(SUFFIX_MARKS[f.name.slice(i2).toLowerCase()]);
+    }
+    const git = n.dirs.has('.git');
+    if(git || langs.size) hits.push({ rel, git, langs:[...langs] });
+    if(depth >= W.depth) continue;
+    const layerCap = W.layer[depth] !== undefined ? W.layer[depth] : Infinity;
+    let pushed = 0;
+    for(const d of n.dirs){
+      if(SKIP_DIRS.has(d) || d.startsWith('.')) continue;
+      if(pushed >= layerCap) continue;
+      pushed++;
+      queue.push({ rel: rel ? rel + '/' + d : d, depth: depth + 1 });
+    }
+  }
+
+  const projects = [];
+  const measureDeadline = Date.now() + MEASURE_BUDGET_MS;
+  for(const h of hits){
+    /* 兼容模式天然拿得到 size 与 mtime（File 对象自带），无需再遍历磁盘；仍设截止时间防极端清单 */
+    let size = 0, fileCount = 0, mtrunc = false, mtime = 0, readmeTxt = '';
+    const langMap = new Map();
+    const stack = [{ rel:h.rel, depth:0 }];
+    while(stack.length && !mtrunc){
+      if(Date.now() > measureDeadline){ mtrunc = true; break; }
+      const cur = stack.pop();
+      const n = tree.get(cur.rel);
+      if(!n) continue;
+      for(const f of n.files){
+        if(fileCount >= MAX_MEASURE){ mtrunc = true; break; }
+        fileCount++; size += f.size || 0;
+        if((f.mtime || 0) > mtime) mtime = f.mtime;
+        const i2 = f.name.lastIndexOf('.');
+        const lang = i2 > 0 ? EXT_LANG[f.name.slice(i2).toLowerCase()] : '';
+        if(lang) langMap.set(lang, (langMap.get(lang) || 0) + 1);
+      }
+      if(cur.depth >= 4) continue;
+      for(const d of n.dirs){
+        if(SKIP_DIRS.has(d) || d.startsWith('.')) continue;
+        stack.push({ rel: cur.rel ? cur.rel + '/' + d : d, depth: cur.depth + 1 });
+      }
+    }
+    /* README / package.json 是唯一需要真读文本的两个文件：用来出卡片预览与端口 */
+    const samples = [], ports = [];
+    const n0 = tree.get(h.rel);
+    if(n0 && Date.now() < measureDeadline){
+      const rd  = n0.files.find(f => /^readme(\.(md|markdown|txt|rst))?$/i.test(f.name) && f.size < 262144);
+      const pkg = n0.files.find(f => f.name === 'package.json' && f.size < 131072);
+      let txt = '', pkgTxt = '';
+      try { if(rd) txt = await rd.file.text(); } catch(e){}
+      try { if(pkg) pkgTxt = await pkg.file.text(); } catch(e){}
+      if(txt){ readmeTxt = txt.slice(0, 400); samples.push({ p:rd.name, t:txt.slice(0, 4096) }); }
+      if(pkgTxt) samples.push({ p:pkg.name, t:pkgTxt.slice(0, 4096) });
+      ports.push(...portsFromText(pkgTxt || txt || ''));
+    }
+    projects.push({
+      rel: h.rel,
+      name: h.rel ? h.rel.split('/').pop() : rootName,
+      path: joinRootPath(h.rel),
+      langs: pickLangs(h.langs, langMap),
+      category: h.git ? '本机扫描 · git' : '本机扫描',
+      sizeBytes: size, files: fileCount, truncated: mtrunc,
+      updated: new Date(mtime || Date.now()).toISOString().slice(0, 10),
+      git: h.git, samples, readme: readmeTxt, ports, live: null
+    });
+    setScanState('正在统计 ' + projects.length + '/' + hits.length + ' 个项目…');
+  }
+  projects.sort((a, b) => b.sizeBytes - a.sizeBytes);
+
+  flatFiles = list; flatTree = tree; flatRootName = rootName; pickFail = null;
+  scanRoot = null; pendingAuth = [];      // 兼容模式没有句柄，也就没有「续期」一说
+  scanPerm = '';                          // 兼容模式没有句柄，权限等级无从谈起
+  scanRootName = rootName;
+  Object.keys(dirHandles).forEach(k => { delete dirHandles[k]; });   // 切到兼容模式，清掉句柄模式的残留
+  Object.keys(dirPerm).forEach(k => { delete dirPerm[k]; });
+  zeroScan = {
+    scannedAt: new Date().toISOString(), rootName,
+    rootPath: zeroScan.rootPath || '', mode:'flat', projects,
+    stats: { visited:stats.visited, depth:stats.depth, errors:0, truncated:stats.truncated, measured:projects.filter(p => !p.truncated).length }
+  };
+  store.write(LS.zero, zeroScan);
+  if(localPorts) applyPorts();
+  setScanState('');
+  buildIndex(); renderAll(); syncModeBadge();
+
+  const took = ((Date.now() - t0) / 1000).toFixed(1);
+  if(!projects.length){
+    toast('兼容模式扫描完成：该目录下没找到项目（已遍历 ' + stats.visited + ' 个目录，最深 ' + stats.depth + ' 层）。' +
+      '项目需含 .git 或工程标记文件（package.json / CMakeLists.txt / Cargo.toml / go.mod 等）；' +
+      '若项目在更深层，请改选更靠近项目的父目录。', 'warn');
+  } else if(stats.truncated){
+    toast('兼容模式扫描完成 · 发现 ' + projects.length + ' 个项目 · 用时 ' + took + 's（清单或遍历已达上限，结果可能不完整；建议改选更靠近项目的父目录）', 'warn');
+  } else {
+    toast('兼容模式扫描完成 · 发现 ' + projects.length + ' 个项目 · 用时 ' + took + 's · 可只读浏览，不能写盘', 'ok');
+  }
+}
+
+/* 兼容模式：用文件清单在内存里还原目录树（只读浏览） */
+/* 文件清单里的路径是相对「扫描根」的，而窗格里的 rel 是相对「项目根」的，两者要换算 */
+function flatAbs(pid, rel){
+  const zp = zeroById(pid);
+  const base = (zp && zp.rel) ? zp.rel : '';
+  return base ? (rel ? base + '/' + rel : base) : rel;
+}
+/* 直接查扫描时建好的目录树：O(1)，不再全量遍历几万条文件清单。
+   没有树（例如刷新后清单已失效）时退回空结果，UI 会提示需要重扫一次。 */
+function flatListAt(rel){
+  if(!flatTree) return { dirs:[], files:[] };
+  const n = flatTree.get(rel || '');
+  if(!n) return { dirs:[], files:[] };
+  return {
+    dirs: [...n.dirs].sort((a, b) => a.localeCompare(b, 'zh')).map(x => ({ name:x })),
+    files: n.files.slice().sort((a, b) => a.name.localeCompare(b.name, 'zh')).map(f => ({ name:f.name, size:f.size }))
+  };
+}
+function flatFill(pid){
+  const host = document.querySelector('[data-flat-tree]');
+  if(!host) return;
+  const slot = +host.dataset.flatTree;
+  if(!flatFiles){
+    host.innerHTML = '<div class="empty" style="padding:14px;white-space:normal">' +
+      '兼容模式的只读浏览依赖本次会话的文件清单，刷新后已失效 · 到控制室点一次「兼容模式扫描」即可恢复</div>';
+    return;
+  }
+  const rel = (panesOfProject(pid)[slot] || {}).content || '';
+  const { dirs, files } = flatListAt(flatAbs(pid, rel));
+  host.innerHTML = dirs.concat(files).map(e => {
+    const isDir = e.size === undefined;
+    const full = rel ? rel + '/' + e.name : e.name;
+    return '<button class="tree-row" data-act="repo-' + (isDir ? 'nav' : 'open') + '" data-slot="' + slot + '" data-rel="' + esc(full) + '">' +
+      '<span class="ic">' + (isDir ? '▸' : '·') + '</span><span class="nm">' + esc(e.name) + (isDir ? '/' : '') + '</span>' +
+      (isDir ? '' : '<span class="sz">' + fmtBytes(e.size) + '</span>') + '</button>';
+  }).join('') || '<div class="empty" style="padding:14px">该目录为空</div>';
+  const rv = repoView[repoKey(pid, rel)];
+  if(rv && rv.file) flatOpen(pid, slot, rel ? rel + '/' + rv.file : rv.file);
+}
+async function flatOpen(pid, slot, rel){
+  const host = document.querySelector('[data-flat-file="' + slot + '"]');
+  if(!host) return;
+  const head = '<div class="file-head"><span class="fp">' + esc(rel) + '</span>' +
+    '<button class="mini-btn" data-act="repo-close" data-slot="' + slot + '">关闭</button></div>';
+  const f = flatFiles && flatFiles.get(flatAbs(pid, rel));
+  if(!f){ host.innerHTML = head + '<div class="note-line"><i>◇</i>文件不在本次清单内（刷新后需重扫一次）</div>'; return; }
+  if(f.size > 524288){
+    host.innerHTML = head + '<div class="note-line"><i>◇</i>文件 ' + fmtBytes(f.size) + ' 超过 512KB，不在窗格内打开</div>';
+    toast('文件过大，未在窗格内打开', 'warn');
+    return;
+  }
+  try {
+    const txt = await f.text();
+    host.innerHTML = head + '<pre class="code">' + esc(txt) + '</pre>' +
+      '<div class="pane-meta"><span>兼容模式只读浏览 · 不写盘</span><span>' + txt.length + ' 字符</span></div>';
+    toast('已读取 ' + rel + '（只读）', 'ok');
+  } catch(e){
+    host.innerHTML = head + '<div class="note-line"><i>◇</i>读取失败：' + esc(e.message || e) + '</div>';
+  }
+}
+
+/* ---- 端口试探（近似值：浏览器无法枚举本机端口，只探常见端口） ---- */
+const PROBE_PORTS = [3000,3001,3210,3080,3306,4000,4321,5000,5173,5174,5432,6379,7000,7331,7332,7333,
+  8000,8001,8080,8081,8443,8888,9000,9090,9200,11434,27017];
+async function probeLocalPorts(){
+  if(typeof fetch !== 'function'){ toast('当前环境不支持端口探测', 'warn'); return; }
+  const btn = document.getElementById('dirProbeBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '探测中…'; }
+  const hits = [];
+  await Promise.all(PROBE_PORTS.map(async port => {
+    let ctl = null, timer = null;
+    if(typeof AbortController === 'function'){ ctl = new AbortController(); timer = setTimeout(() => ctl.abort(), 900); }
+    try {
+      await fetch('http://127.0.0.1:' + port + '/', ctl ? { mode:'no-cors', cache:'no-store', signal:ctl.signal } : { mode:'no-cors', cache:'no-store' });
+      hits.push({ port, proc:'本机监听（近似）', address:'127.0.0.1' });
+    } catch(e){}
+    if(timer) clearTimeout(timer);
+  }));
+  hits.sort((a, b) => a.port - b.port);
+  localPorts = { scannedAt:new Date().toISOString(), ports:hits, attempted:PROBE_PORTS.length };
+  applyPorts();
+  renderAll();
+  if(btn){ btn.disabled = false; btn.textContent = '探测端口'; }
+  toast('端口探测完成 · 命中 ' + hits.length + ' 个（近似，浏览器无法枚举全端口）', hits.length ? 'ok' : 'warn');
+}
+function applyPorts(){
+  if(!localPorts) return;
+  const open = new Set(localPorts.ports.map(x => x.port));
+  (zeroScan.projects || []).forEach(sp => {
+    const hit = (sp.ports || []).find(pt => open.has(pt));
+    sp.live = hit ? { port:hit, proc:'本机监听（近似）' } : null;
+  });
+  store.write(LS.zero, zeroScan);
+}
+
+/* 零服务模式：把「扫描根 + 相对路径」解析成项目目录句柄，repo 窗格随即可读写 */
+async function ensureZeroHandle(pid){
+  if(SERVER || dirHandles[pid] || zeroPending[pid] || !scanRoot) return;
+  const zp = zeroProjects().find(p => p.id === pid);
+  if(!zp) return;
+  zeroPending[pid] = true;
+  try {
+    /* 只读即可建句柄：浏览与读取都只需要读权限，写留给「保存」时再升级。
+       旧版卡在 readwrite 上，导致只读目录里 repo 窗格连目录树都出不来。 */
+    let lv = scanPerm;
+    if(lv !== 'read' && lv !== 'write') lv = await permLevel(scanRoot);
+    if(lv !== 'read' && lv !== 'write') return;
+    let cur = scanRoot;
+    if(zp.rel) for(const seg of zp.rel.split('/')) cur = await cur.getDirectoryHandle(seg);
+    dirHandles[pid] = cur; dirPerm[pid] = lv;
+    if(activeId === pid) renderSplit();
+  } catch(e){ /* 目录被移动或删除，降级为快照视图 */ }
+  finally { zeroPending[pid] = false; }
+}
+
+/* ---- 控制室「本机目录」区块 ---- */
+function renderDirBar(){
+  const el = document.getElementById('dirBar');
+  if(!el) return;
+  const cntEl = document.getElementById('dirAuthCount');
+  const name = scanRootName || zeroScan.rootName || '';
+  const isFlat = zeroScan.mode === 'flat';
+  /* 六态由权限等级驱动，而不是「有没有句柄」：
+     write 可读写 / read 只读浏览 / prompt 需续期 / denied 该位置不可读 / flat 兼容模式 / none 未授权 */
+  const st = isFlat ? 'flat'
+    : (scanPerm ? scanPerm : (pendingAuth.length ? 'prompt' : 'none'));
+  const stTxt = st === 'write' ? '已授权 · 可读写'
+    : st === 'read'   ? '已授权 · 只读浏览'
+    : st === 'flat'   ? '已扫描 · 只读（兼容模式）'
+    : st === 'prompt' ? '需续期（点一次即恢复）'
+    : st === 'denied' ? '该位置不可读（被系统或浏览器阻止）'
+    : '未授权';
+  const stCls = (st === 'write' || st === 'read') ? 'var(--st-done)'
+    : (st === 'prompt' || st === 'denied') ? 'var(--st-needs)' : 'var(--txt-mute)';
+  const n = (zeroScan.projects || []).length;
+  const when = zeroScan.scannedAt ? String(zeroScan.scannedAt).replace('T', ' ').slice(0, 19) : '—';
+  if(cntEl) cntEl.textContent = st === 'write' ? '· 可读写' : (st === 'read' ? '· 只读' : (isFlat ? '· 只读' : '· 只读快照'));
+
+  el.innerHTML =
+    '<div class="dir-row"><span class="dir-k">状态</span>' +
+      '<span class="dir-v"><b style="color:' + stCls + '">' + esc(stTxt) + '</b>' +
+      (name ? '<span style="color:var(--txt-mute)"> · ' + esc(name) + '</span>' : '') + '</span></div>' +
+    (st === 'read' || st === 'write'
+      ? '<div class="dir-row"><span class="dir-k">权限</span><span class="dir-v">' +
+        (st === 'write'
+          ? '<b>读 + 写</b>'
+          : '<b>只读</b><span style="color:var(--txt-mute)"> · 读取与扫描正常，点文件「保存」时会再向你要一次写权限</span>') +
+        '</span></div>'
+      : '') +
+    (pickFail
+      ? '<div class="dir-row"><span class="dir-k">上次失败</span>' +
+          '<span class="dir-v" style="white-space:normal;overflow:visible"><span style="color:var(--st-needs)">' +
+          esc(pickFail.name ? pickFail.name + '：' : '') + esc(pickFail.msg) + '</span>' +
+          '<span style="color:var(--txt-mute)"> · 常见于选择 <code>C:\\</code> 这类系统不允许写入的位置。' +
+          '改用「兼容模式扫描」即可继续（不需要任何权限）。</span></span></div>'
+      : '') +
+    (name
+      ? '<div class="dir-row"><span class="dir-k">根路径</span>' +
+          '<span class="dir-v"><input class="mono" data-field="dir-path" value="' + esc(zeroScan.rootPath || '') +
+            '" placeholder="可选：填绝对路径，让显示与复制更准确" spellcheck="false" autocomplete="off" ' +
+            'style="width:100%;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:8px;color:var(--txt);padding:5px 9px;font-size:11.5px" /></span></div>'
+      : '') +
+    '<div class="dir-row"><span class="dir-k">扫描结果</span>' +
+      '<span class="dir-v">' + (n ? '<b>' + n + '</b> 个项目 · 扫描于 ' + esc(when)
+        : (zeroScan.scannedAt
+            ? '0 个项目（已遍历 ' + ((zeroScan.stats && zeroScan.stats.visited) || 0) + ' 个目录，最深 ' + ((zeroScan.stats && zeroScan.stats.depth) || 0) + ' 层）· 扫描于 ' + esc(when)
+            : '尚未扫描')) +
+        (zeroScan.stats && zeroScan.stats.truncated
+          ? '<span style="color:var(--st-needs)"> · 已达扫描上限，结果可能不完整</span>' : '') + '</span></div>' +
+    '<div class="dir-row" id="dirStateRow"' + (scanStateMsg ? '' : ' style="display:none"') + '>' +
+      (scanStateMsg ? '<span class="dir-k">进度</span><span class="dir-v">' + esc(scanStateMsg) + '</span>' : '') + '</div>' +
+    '<div class="dir-row"><span class="dir-k">端口</span><span class="dir-v">' +
+      esc(localPorts ? localPorts.ports.length + ' 个监听（近似）' : '未探测') + '</span></div>' +
+    '<div class="dir-row"><span class="dir-k">操作</span><span class="dir-v" style="display:flex;gap:8px;flex-wrap:wrap;white-space:normal;overflow:visible">' +
+      (CAN_FS ? '<button class="btn small primary" data-act="dir-pick">' + (name ? '更换目录' : '选择本机目录') + '</button>'
+              : '<button class="btn small" disabled>当前环境不支持目录访问</button>') +
+      '<button class="btn small' + (CAN_FS ? '' : ' primary') + '" data-act="dir-flat" title="把目录的文件清单交给页面自己扫描：不需要任何权限，file:// 下也能用">兼容模式扫描</button>' +
+      (st === 'prompt' ? '<button class="btn small primary" data-act="dir-resume">续期授权</button>' : '') +
+      (name && !isFlat
+        ? '<button class="btn small' + (deepScan ? ' primary' : '') + '" data-act="dir-deep" title="把遍历上限提到 8000 个目录、层数到 6 层，能扫到更深层的项目，代价是最长要等 20 秒">' +
+          (deepScan ? '深度扫描：开' : '深度扫描：关') + '</button>'
+        : '') +
+      (name ? '<button class="btn small" data-act="' + (isFlat ? 'dir-flat' : 'dir-scan') + '" id="dirScanBtn">' + (isFlat ? '重新扫描（兼容模式）' : (deepScan ? '深度扫描' : '重新扫描')) + '</button>' : '') +
+      (name ? '<button class="btn small" data-act="dir-probe" id="dirProbeBtn">探测端口</button>' : '') +
+      (name ? '<button class="btn small" data-act="dir-clear">清除</button>' : '') +
+    '</span></div>' +
+    '<div class="dir-note">' + (isFlat
+      ? '当前结果来自<b>兼容模式扫描</b>：页面用目录枚举拿到文件清单后自行识别项目，' +
+        '<b>不需要任何权限、不需要 Node、不需要安装</b>，' + (flatFiles ? '仓库窗格可只读浏览。' : '') +
+        '代价是拿不到目录句柄，因此<b>不能直接写盘</b>，刷新后需要重新扫一次。'
+      : '零服务模式：目录句柄存在浏览器 IndexedDB 里，<b>不需要 Node、不需要安装</b>。' +
+        '只申请<b>读</b>权限，扫描与浏览都够用；要保存文件时才临时再向你要一次写权限。' +
+        '刷新或换机后浏览器会把权限降级为「待确认」，点一次「续期授权」即恢复。') +
+      (n ? '当前扫描根下的项目已直接并入项目栏与本地检索窗格。' : '') +
+    '</div>' +
+    '<div class="dir-tip">' +
+      (CAN_FS
+        ? '<i>提示</i>：' + (SERVER ? '本地服务已接管读写，本机目录区块是可选第二通道。'
+            : '「选择本机目录」用浏览器原生目录选择器。扫描与浏览<b>只要读权限</b>，' +
+              '所以 <code>C:\\</code> 这类位置也能正常扫；只有保存时才需要写权限。' +
+              '若连读都被拦，改用<b>「兼容模式扫描」</b>——' +
+              '它只枚举文件清单，任何浏览器、任何地址（含 <code>file://</code>）都能用。' +
+              '扫不到深层项目时，开<b>「深度扫描」</b>能走到 6 层、最多 8000 个目录。')
+        : '<i>提示</i>：当前浏览器不支持原生目录访问，但<b>兼容模式扫描</b>依然可用（不需要该 API）。') +
+      ' 浏览器无法枚举本机全端口，端口探测只覆盖常见 ' + PROBE_PORTS.length + ' 个，结果为近似值；' +
+      '网页反代依赖本地服务，零服务模式下内联页会退化为直连 iframe。' +
+    '</div>';
+}
+
+/* ---------- 本地检索窗格的动作 ---------- */
+async function scanRefresh(slot){
+  if(!SERVER){
+    if(scanRoot){ await scanRootNow(); renderProjPane(slot); return; }
+    toast('实时重扫需先在控制室授权一个本机目录，或双击「启动工作台.bat」起本地服务', 'warn');
+    return;
+  }
+  const btn = document.querySelector('[data-act="scan-refresh"][data-slot="' + slot + '"]');
+  if(btn){ btn.disabled = true; btn.textContent = '扫描中…'; }
+  try {
+    scanCache = await srvJson('/api/scan');
+    toast('索引已刷新 · 发现 ' + ((scanCache.projects || []).length) + ' 个项目', 'ok');
+  } catch(e){
+    toast('重扫失败：' + (e.message || e), 'warn');
+  }
+  if(btn){ btn.disabled = false; btn.textContent = '刷新索引'; }
+  renderProjPane(slot);
+}
+
+function addFromScan(path, name, langs, sizeBytes, files, updated, git){
+  if(!path){ toast('该项目没有可用路径，无法加入', 'warn'); return; }
+  custom.push({
+    id:'custom-' + Date.now(), name, alias:name, path,
+    langs: langs ? langs.split(',').filter(Boolean) : ['Other'],
+    category:'扫描加入',
+    sizeMB: Math.round(((Number(sizeBytes) || 0) / 1048576) * 10) / 10,
+    files: Number(files) || 0,
+    git: git === '1',
+    updated: updated || new Date().toISOString().slice(0, 10),
+    custom:true
+  });
+  store.write(LS.custom, custom);
+  renderAll();
+  toast('已加入工作台：' + name, 'ok');
+}
+
+/* ---------- AI 对话窗格的动作 ---------- */
+function fbSet(key, title, detail, show){
+  const fb = document.querySelector('[data-fallback="' + key + '"]');
+  if(!fb) return;
+  if(title){
+    const slot = key.replace(/^chat-/, '');
+    fb.innerHTML = '<b>' + esc(title) + '</b><span>' + esc(detail) + '</span>' +
+      '<span class="fb-row"><button class="btn small" data-act="hide-fallback" data-fallback="' + esc(key) + '">仍然显示内嵌页</button>' +
+      '<button class="btn small primary" data-act="chat-open" data-slot="' + esc(slot) + '">在新标签打开</button></span>';
+  }
+  fb.style.display = show ? 'flex' : 'none';
+}
+
+async function chatReload(slot){
+  if(!activeId) return;
+  const pane = panesOfProject(activeId)[slot];
+  const url = normalizeUrl((pane && pane.content) || '');
+  const key = 'chat-' + slot;
+  const frame = document.querySelector('[data-frame="' + key + '"]');
+  if(!url){ toast('请先填写 AI 地址', 'warn'); return; }
+  if(pane) pane.content = url;
+  const inp = document.querySelector('[data-field="chat-url"][data-slot="' + slot + '"]');
+  if(inp && inp.value !== url) inp.value = url;
+
+  if(!SERVER){
+    if(frame) frame.src = url;
+    fbSet(key, '可能被站点拒绝内嵌', '快照模式无法探测可嵌入性。若长时间空白，多为该站点设置了 X-Frame-Options 或 CSP。', true);
+    toast('已载入 ' + url + ' · 若空白请点「新标签」');
+    return;
+  }
+
+  fbSet(key, '正在探测…', url, true);
+  try {
+    const j = await srvJson('/api/probe?url=' + encodeURIComponent(url));
+    if(!j.ok){ fbSet(key, '站点返回 HTTP ' + j.status, '上游拒绝了请求，请确认地址可访问，或改用「新标签」打开。', true); return; }
+    if(!j.embeddable){ fbSet(key, '该地址不是网页', 'content-type 为 ' + (j.contentType || '未知') + '，无法作为网页内嵌。', true); return; }
+    /* 探测已发现封锁头就直接给兜底，不要先假装成功、再让用户对着空白页发呆 */
+    if(j.frameBlock){
+      if(frame) frame.src = url;
+      fbSet(key, '该站点声明了禁止内嵌', j.frameBlock + '。内嵌大概率是空白页，建议改用「新标签」或本机自托管的 AI 前端。', true);
+      return;
+    }
+    if(frame) frame.src = url;
+    fbSet(key, '', '', false);
+    toast('已内嵌 ' + url, 'ok');
+  } catch(e){
+    fbSet(key, '探测失败', String(e.message || e), true);
+  }
+}
+
+function copyContext(pid){
+  const p = projectById(pid);
+  if(!p){ toast('没有可复制的项目', 'warn'); return; }
+  const { dirs, files } = listAt(pid, '');
+  const lines = [
+    '## 项目：' + (p.alias || p.name) + '（' + p.name + '）',
+    '- 路径：' + p.path,
+    '- 语言：' + ((p.langs || []).join(', ') || '—'),
+    '- 类别 / 体积 / 更新：' + (p.category || '—') + ' / ' + fmtSize(p.sizeMB, p.estimated) + ' / ' + (p.updated || '—'),
+    '- 运行中端口：' + (p.live ? ':' + p.live.port + ' · ' + p.live.proc : '未监听'),
+    '### 目录结构（快照摘要）',
+    '```',
+    dirs.slice(0, 14).map(d => d.name + '/').join('\n') || '（无子目录）'
+  ];
+  if(files.length) lines.push(files.slice(0, 10).map(f => f.name).join('\n'));
+  lines.push('```');
+  copyText(lines.join('\n'), '已复制项目上下文 · 粘贴到 AI 对话框即可');
+}
+
+/* ============================================================
+   事件委托
+   ============================================================ */
+const root = document.body;
+
+root.addEventListener('click', e => {
+  const nav = e.target.closest('[data-view]');
+  if(nav){ setView(nav.dataset.view); return; }
+
+  const el = e.target.closest('[data-act]');
+  if(!el) return;
+  const a = el.dataset.act;
+  const slot = el.dataset.slot === undefined || el.dataset.slot === '' ? null : +el.dataset.slot;
+
+  switch(a){
+    case 'cycle-status': e.stopPropagation(); cycleStatus(el.dataset.pid); break;
+    case 'open-project':
+      e.stopPropagation();
+      if(selectMode && el.classList.contains('pitem')){ toggleSel(el.dataset.pid); break; }
+      openProject(el.dataset.pid);
+      break;
+    case 'toggle-select': setSelectMode(!selectMode); break;
+    case 'sel-all':       listSelectAll(); break;
+    case 'sel-none':      clearSel(); break;
+    case 'sel-delete':    deleteSelected(); break;
+    case 'restore-removed': restoreRemoved(); break;
+    case 'close-project': closeProject(); break;
+    case 'goto-control':  setView('control'); break;
+    case 'focus-search': {
+      setView('control');
+      setTimeout(() => { const i = document.getElementById('searchInput'); if(i && i.focus) i.focus(); }, 40);
+      break;
+    }
+    case 'set-preset':    setPreset(el.dataset.preset); break;
+    case 'pane-kind':     setPaneKind(slot, el.dataset.kind); break;
+    case 'clear-pane':    clearPane(slot); break;
+    case 'reset-panes':   resetPanes(); break;
+    case 'todo-toggle':   todoToggle(slot, +el.dataset.idx); break;
+    case 'todo-del':      todoDel(slot, +el.dataset.idx); break;
+    case 'todo-add': {
+      const inp = document.querySelector('[data-field="todo-new"][data-slot="' + slot + '"]');
+      if(inp){ todoAdd(slot, inp.value); }
+      break;
+    }
+    case 'copy-path':     copyText((projectById(el.dataset.pid) || {}).path || ''); break;
+    case 'copy-text':     copyText(el.dataset.text || ''); break;
+    case 'open-url': {
+      const pane = panesOfProject(activeId)[slot];
+      openUrl(pane.content || '');
+      break;
+    }
+    case 'reload-frame': {
+      const f = document.querySelector('[data-frame="' + slot + '"]');
+      const fb = document.querySelector('[data-fallback="' + slot + '"]');
+      if(fb) fb.style.display = 'flex';
+      if(f){ const pane = panesOfProject(activeId)[slot]; f.src = pane.content || ''; }
+      toast('已重载内嵌页面');
+      break;
+    }
+    case 'hide-fallback': {
+      const key = el.dataset.fallback !== undefined ? el.dataset.fallback : String(slot);
+      const fb = document.querySelector('[data-fallback="' + key + '"]');
+      if(fb) fb.style.display = 'none';
+      toast('已隐藏提示层 · 若空白说明服务未运行或禁止内嵌');
+      break;
+    }
+    case 'repo-nav':      repoNav(slot === null ? (el.dataset.navrel !== undefined ? repoSlotOf(el) : 0) : slot, el.dataset.rel || ''); break;
+    case 'repo-open':     repoOpen(slot, el.dataset.rel); break;
+    case 'repo-close':    repoClose(slot); break;
+    case 'connect-dir':   connectDir(el.dataset.pid); break;
+    case 'live-nav': {
+      const pid = el.dataset.pid, s = +el.dataset.slot;
+      panesOfProject(pid)[s].content = el.dataset.rel;
+      persistPanes();
+      renderSplit();
+      break;
+    }
+    case 'live-open':     liveOpen(el.dataset.pid, +el.dataset.slot, el.dataset.rel); break;
+    case 'live-save':     liveSave(el.dataset.pid, el.dataset.rel, el); break;
+    case 'srv-nav': {
+      const s = +el.dataset.slot;
+      panesOfProject(activeId)[s].content = el.dataset.rel || '';
+      persistPanes();
+      renderSplit();
+      break;
+    }
+    case 'srv-open': {
+      const s = +el.dataset.slot;
+      const rel = el.dataset.rel || '';
+      const parts = rel.split('/');
+      const name = parts.pop();
+      srvOpen(activeId, s, parts.join('/'), name);
+      break;
+    }
+    case 'srv-save':      srvSave(+el.dataset.slot, el.dataset.rel, el); break;
+    case 'srv-close': {
+      const s = +el.dataset.slot;
+      delete repoView[repoKey(activeId, panesOfProject(activeId)[s].content || '')];
+      const host = document.querySelector('[data-srv-file="' + s + '"]');
+      if(host) host.innerHTML = '';
+      break;
+    }
+    case 'proj-open':     openProject(el.dataset.pid); break;
+    case 'proj-add':      addFromScan(el.dataset.path, el.dataset.name, el.dataset.langs, el.dataset.size, el.dataset.files, el.dataset.updated, el.dataset.git); break;
+    case 'proj-group':    projGroup = el.dataset.group; renderProjPane(+el.dataset.slot); break;
+    case 'proj-filter':   projFilter = el.dataset.filter; renderProjPane(+el.dataset.slot); break;
+    case 'scan-refresh':  scanRefresh(+el.dataset.slot); break;
+    case 'chat-reload':   chatReload(+el.dataset.slot); break;
+    case 'chat-open': {
+      const pane = panesOfProject(activeId)[+el.dataset.slot];
+      openUrl((pane && pane.content) || '');
+      break;
+    }
+    case 'copy-context':  copyContext(el.dataset.pid); break;
+    case 'mode-help':
+      if(SERVER) toast('本地服务已接管文件读写 · 仓库窗格无需点选目录', 'ok');
+      else toast('快照模式只读：双击「启动工作台.bat」起本地服务后即可读写文件', 'warn');
+      break;
+    case 'filter-state':
+      stateFilter = el.dataset.state;
+      store.write(LS.filter, stateFilter);
+      renderControl();
+      toast(stateFilter === 'all' ? '已显示全部状态' : '筛选：' + STATES[stateFilter].label);
+      break;
+    case 'refresh':
+      toast('视图已刷新 · 数据来自本地扫描快照 ' + DATA.snapshot, 'ok');
+      renderAll();
+      break;
+    case 'add-project':   openModal(); break;
+    case 'close-modal':   closeModal(); break;
+    case 'confirm-add':   confirmAdd(); break;
+    case 'remove-custom': {
+      custom = custom.filter(x => x.id !== el.dataset.pid);
+      store.write(LS.custom, custom);
+      if(activeId === el.dataset.pid) closeProject();
+      renderAll();
+      toast('已移除自定义项目', 'warn');
+      break;
+    }
+    case 'dir-pick':      pickScanRoot(); break;
+    case 'dir-flat':      pickFlatRoot(); break;
+    case 'dir-resume':    resumeScanRoot(); break;
+    /* 扫描中再点一次＝取消，避免在超大根目录上干等又没法中断 */
+    case 'dir-scan':      if(scanning){ scanAbort = true; setScanState('正在取消…'); } else scanRootNow(); break;
+    case 'dir-deep':      deepScan = !deepScan; renderDirBar();
+                          toast(deepScan ? '深度扫描已开：最多 8000 个目录 / 6 层，最长约 20 秒' : '已恢复普通扫描', deepScan ? 'warn' : 'ok'); break;
+    case 'dir-probe':     probeLocalPorts(); break;
+    case 'dir-clear':     clearScanRoot(); break;
+  }
+});
+
+function repoSlotOf(el){
+  const pane = el.closest('.pane');
+  return pane ? +pane.dataset.slot : 0;
+}
+
+/* 卡片悬停光斑 */
+root.addEventListener('mousemove', e => {
+  const card = e.target.closest('.card');
+  if(!card) return;
+  const r = card.getBoundingClientRect();
+  card.style.setProperty('--mx', (e.clientX - r.left) + 'px');
+  card.style.setProperty('--my', (e.clientY - r.top) + 'px');
+});
+
+/* 键盘可达 */
+root.addEventListener('keydown', e => {
+  if((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('project-card')){
+    e.preventDefault(); openProject(e.target.dataset.pid); return;
+  }
+  const inp = e.target.closest && e.target.closest('[data-field="todo-new"]');
+  if(inp && e.key === 'Enter'){ e.preventDefault(); todoAdd(+inp.dataset.slot, inp.value); inp.value = ''; return; }
+  if(e.key === 'Escape'){
+    if(document.getElementById('scrim').classList.contains('show')){ closeModal(); return; }
+    if(selectMode){ setSelectMode(false); return; }
+  }
+});
+
+/* 输入：不整页重渲染，避免丢焦点 */
+let saveTimer = null;
+function schedulePersist(){ clearTimeout(saveTimer); saveTimer = setTimeout(persistPanes, 350); }
+
+root.addEventListener('input', e => {
+  const el = e.target.closest('[data-field]');
+  if(!el || !activeId) return;
+  const slot = +el.dataset.slot, field = el.dataset.field;
+  const pane = panesOfProject(activeId)[slot];
+  if(!pane) return;
+  if(field === 'proj-q'){ projQuery = el.value; renderProjPane(slot); return; }
+  if(field === 'pane-title') pane.title = el.value;
+  else if(field === 'note'){
+    pane.content = el.value;
+    const c = document.querySelector('[data-count="' + slot + '"]');
+    if(c) c.textContent = el.value.length + ' 字符';
+  }
+  else if(field === 'link-url'){ pane.content = el.value; }
+  else if(field === 'web-url'){
+    pane.content = el.value;
+  }
+  else if(field === 'chat-url'){ pane.content = el.value; }
+  schedulePersist();
+});
+
+root.addEventListener('change', e => {
+  const sel = e.target.closest('[data-act="chat-preset"]');
+  if(sel && sel.tagName === 'SELECT' && activeId){
+    const slot = +sel.dataset.slot;
+    const pane = panesOfProject(activeId)[slot];
+    if(pane && pane.kind === 'chat'){
+      pane.content = sel.value;
+      persistPanes();
+      const inp = document.querySelector('[data-field="chat-url"][data-slot="' + slot + '"]');
+      if(inp) inp.value = sel.value;
+      chatReload(slot);
+    }
+    return;
+  }
+  const el = e.target.closest('[data-act="todo-toggle"]');
+  if(el && el.tagName === 'INPUT') todoToggle(+el.dataset.slot, +el.dataset.idx);
+});
+
+document.getElementById('searchInput').addEventListener('input', e => {
+  query = e.target.value.trim();
+  renderControl();
+});
+
+/* 控制室「本机目录」区块：根路径是可选输入，填了能让显示路径与复制更准确 */
+document.getElementById('dirBar').addEventListener('change', e => {
+  const inp = e.target.closest && e.target.closest('[data-field="dir-path"]');
+  if(!inp) return;
+  zeroScan.rootPath = String(inp.value || '').trim();
+  (zeroScan.projects || []).forEach(sp => { sp.path = joinRootPath(sp.rel); });
+  store.write(LS.zero, zeroScan);
+  renderAll();
+  toast(zeroScan.rootPath ? '已按根路径重算显示路径' : '已清空根路径，改用「目录名/相对路径」显示');
+});
+
+/* 兼容模式扫描入口：webkitdirectory 选择器返回文件清单，交给页面自己识别项目 */
+const flatInput = document.getElementById('dirFlatInput');
+if(flatInput) flatInput.addEventListener('change', onFlatPicked);
+
+/* ============================================================
+   添加项目弹窗
+   ============================================================ */
+const scrim = document.getElementById('scrim');
+function openModal(){ scrim.classList.add('show'); document.getElementById('fName').focus(); }
+function closeModal(){ scrim.classList.remove('show'); }
+scrim.addEventListener('click', e => { if(e.target === scrim) closeModal(); });
+['fName','fPath','fLangs'].forEach(k => {
+  document.getElementById(k).addEventListener('keydown', e => { if(e.key === 'Enter') confirmAdd(); });
+});
+function confirmAdd(){
+  const name = document.getElementById('fName').value.trim();
+  const path = document.getElementById('fPath').value.trim();
+  const langs = document.getElementById('fLangs').value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  if(!name){ toast('请填写项目名称', 'warn'); return; }
+  const id = 'custom-' + Date.now();
+  const rec = {
+    id, name, alias:name, path: path || '（未填写路径）',
+    langs: langs.length ? langs : ['Other'], category:'自定义',
+    sizeMB:0, git:false, updated: new Date().toISOString().slice(0,10), files:0, custom:true
+  };
+  custom.push(rec);
+  store.write(LS.custom, custom);
+  ['fName','fPath','fLangs'].forEach(k => { document.getElementById(k).value = ''; });
+  closeModal();
+  toast('已添加项目 ' + name, 'ok');
+  renderAll();
+  if(SERVER && path) registerToServer(rec);
+}
+
+/* 服务模式下把自定义目录登记进登记表，仓库窗格才能读写它 */
+async function registerToServer(rec){
+  try {
+    await srvJson('/api/register', {
+      method:'POST',
+      headers:{ 'content-type':'application/json' },
+      body: JSON.stringify({ id:rec.id, name:rec.name, path:rec.path })
+    });
+    toast('已登记到本地服务 · 仓库窗格可直接读写该目录', 'ok');
+    if(activeId === rec.id) renderSplit();
+  } catch(e){
+    toast('本地服务登记失败：' + (e.message || e) + ' · 仓库窗格仍可手动选目录', 'warn');
+  }
+}
+
+/* ============================================================
+   项目栏多选移除 / 恢复
+   ============================================================ */
+function setSelectMode(on){
+  selectMode = !!on;
+  if(!selectMode){ selected.clear(); armedDelete = false; }
+  renderPlist();
+  toast(selectMode ? '多选已开启 · 勾选项目后点「移除」' : '已退出多选');
+}
+function toggleSel(pid){
+  if(selected.has(pid)) selected.delete(pid); else selected.add(pid);
+  armedDelete = false;
+  renderPlist();
+}
+function clearSel(){ selected.clear(); armedDelete = false; renderPlist(); }
+function listSelectAll(){
+  const list = allProjects();
+  if(list.length && selected.size === list.length) selected.clear();
+  else list.forEach(p => selected.add(p.id));
+  armedDelete = false;
+  renderPlist();
+}
+function deleteSelected(){
+  if(!selected.size){ toast('先勾选要移除的项目', 'warn'); return; }
+  if(!armedDelete){
+    armedDelete = true;
+    renderPlist();
+    toast('再点一次「确认移除」才会生效 · 磁盘上的文件不会被删除', 'warn');
+    return;
+  }
+  const ids = Array.from(selected);
+  const customs = ids.filter(id => custom.some(c => c.id === id));
+  if(customs.length) custom = custom.filter(c => customs.indexOf(c.id) < 0);
+  ids.forEach(id => { if(customs.indexOf(id) < 0 && removed.indexOf(id) < 0) removed.push(id); });
+  store.write(LS.custom, custom);
+  store.write(LS.removed, removed);
+  if(activeId && ids.indexOf(activeId) >= 0){ activeId = null; store.write(LS.active, null); }
+  selected.clear(); armedDelete = false; selectMode = false;
+  renderAll();
+  toast('已从项目栏移除 ' + ids.length + ' 个项目' +
+        (customs.length ? '（其中 ' + customs.length + ' 个自定义项需重新添加）' : '') +
+        ' · 磁盘文件未动', 'warn');
+}
+function restoreRemoved(){
+  if(!removed.length) return;
+  const n = removed.length;
+  removed = [];
+  store.write(LS.removed, removed);
+  renderAll();
+  toast('已恢复 ' + n + ' 个扫描项目', 'ok');
+}
+
+/* ============================================================
+   启动
+   ============================================================ */
+buildIndex();
+if(activeId && !projectById(activeId)) activeId = null;
+if(activeId && !presetOf[activeId]) presetOf[activeId] = 'l13';
+renderAll();
+if(view === 'workbench' && activeId) toast('已恢复上次的工作台：' + (projectById(activeId) || {}).alias);
+detectServer();
+restoreScanRoot();
+</script>
+</body>
+</html>

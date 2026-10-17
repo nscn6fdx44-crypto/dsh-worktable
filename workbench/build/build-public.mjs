@@ -131,9 +131,19 @@ const out = template.replace('/*__DATA__*/', payload);
 const outPath = path.join(ROOT, 'index.html');
 fs.writeFileSync(outPath, out, 'utf8');
 
+/* 另写一份到 public/ 用于静态托管 / 一键发布：该目录只含单文件，绝不含 serve.mjs，
+   上线后页面必然进入零服务模式（访问者扫自己的机器），主机信息零暴露。 */
+const pubDir = path.join(ROOT, 'public');
+fs.mkdirSync(pubDir, { recursive: true });
+const pubPath = path.join(pubDir, 'index.html');
+fs.writeFileSync(pubPath, out, 'utf8');
+
 const leaks = ['jinshuaiyu', 'C:\\Users\\', 'AppData\\Roaming', 'LAPTOP-'];
 const hit = leaks.filter((k) => out.includes(k));
-if (hit.length) throw new Error('公开版疑似含本机标识：' + hit.join(' / '));
+if (hit.length) {
+  fs.rmSync(pubPath, { force: true });
+  throw new Error('公开版疑似含本机标识：' + hit.join(' / '));
+}
 
 console.log('snapshot :', SNAPSHOT);
 console.log('projects :', projects.length);
@@ -141,3 +151,4 @@ console.log('trees    :', Object.keys(trees).length);
 console.log('ports    :', ports.length);
 console.log('leak scan:', hit.length ? hit.join(',') : 'clean ✓');
 console.log('output   :', outPath, (out.length / 1024).toFixed(1) + ' KB');
+console.log('deploy   :', pubPath);
