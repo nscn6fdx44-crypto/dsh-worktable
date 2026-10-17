@@ -12,6 +12,8 @@
 | TraeWork 工作台 | Skill + 单文件 HTML | 见 [`traework/`](traework/README.md)：Skill 管数据、HTML 做视觉 |
 | workbench 单文件工作台 | 自包含 HTML + 本地服务 | 见 [`workbench/`](workbench/README.md)：快照数据内嵌进单文件，双击即开，另附零依赖本地服务 |
 
+**在线试用 workbench**：<https://nscn6fdx44-crypto.github.io/trae-usage/workbench/> —— 纯静态页（GitHub Pages），在浏览器里直接扫描访客自己机器的项目，无需安装任何东西。
+
 TraeWork **不支持**导入 `.vsix`，其扩展面是面向任务场景的插件 / Skill，没有自定义 UI 容器，
 因此工作台在 TraeWork 侧换了形态实现（数据走 CLI，视觉走自包含 HTML）。
 

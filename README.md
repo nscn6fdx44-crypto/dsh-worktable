@@ -14,6 +14,8 @@ The repository ships **three artifacts** that do not interfere with each other:
 | TraeWork worktable | Skill + single-file HTML | See [`traework/`](traework/README.md): the Skill manages data, the HTML does the visuals |
 | Single-file workbench | Self-contained HTML + local service | See [`workbench/`](workbench/README.md): snapshot data baked into one HTML file, plus a zero-dependency local service |
 
+**Try the workbench online**: <https://nscn6fdx44-crypto.github.io/trae-usage/workbench/> — a pure static page (GitHub Pages) that scans the visitor's own machine in the browser, no install needed.
+
 TraeWork **cannot** import `.vsix`. Its extension surface is a task-scoped plugin / Skill with no custom UI container, so the worktable takes a different shape there (data via CLI, visuals via a self-contained HTML file).
 
 ---
