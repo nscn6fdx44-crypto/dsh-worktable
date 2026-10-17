@@ -45,6 +45,7 @@
 - **GitHub Pages 上线**：`https://nscn6fdx44-crypto.github.io/trae-usage/workbench/`（Pages 源 = `feat/workbench` 分支 `/workbench` 目录），线上产物与仓库构建产物逐字节一致（LF 行尾 203,725 字节；本地 CRLF 签出大 3.7KB 为 autocrlf 行尾差，内容零差异），实测 HTTP 200 且含全部最新功能（整盘引导 / 空数据 / 重命名 / 侧边栏滚动 / 扫描信息栏刷新）
 - **文档补齐**：`workbench/README.md` 按「是什么 → 怎么用 → 遇到过什么问题 → 纯网页前端的固有限制」重写——新增「遇到的问题与解决方案」11 条（权限循环请求、扫描卡死、大目录秒回、采样外推误标截断、侧边栏不滚动、信息栏不刷新、公开页暴露风险、schannel、CRLF 等，均按现象 → 原因 → 解法记述）与「纯网页前端的固有限制」10 条（只能扫本机、端口探测不全、权限会被收回、`file://` 受限、扫描预算上限、数据只存浏览器、需 Chrome/Edge 86+ 等，说明边界成因与替代路径）；根 `README.md` / `README.zh.md` 补「在线试用 workbench」链接
 - **首页 README 展开 workbench**：根 `README.md` / `README.zh.md` 在「功能」章节后新增 `## Single-file workbench` / `## workbench 单文件工作台` 小节——一句话定位 + Pages 链接 + 三个核心能力（扫本机项目 / 读写文件 / 项目工作台）+ 三步上手 + 兼容模式与深度扫描一句带过，完整文档指向 `workbench/README.md`；首页首屏的三产物表格后保留一行在线试用链接作入口
+- **workbench 全文上首页，扩展降为测试版小节**：按「扩展只是测试版、不做过多介绍」的定位重排首页——`README.md` / `README.zh.md` 改为以 workbench 为唯一主体（在线链接 + 三个核心能力 + 五步用法 + 问题与解决方案表 + 纯网页前端固有限制表 + 目录 / 命令 / 安全边界 / 隐私 / 致谢，与 `workbench/README.md` 同文同表），原 TraeCode 扩展的 M1/M4/M11/M12 详解全部移除，压缩为文末「其他产物（测试版）」：安装一段 + 命令清单一行 + 设置清单一行 + 范围边界一段；TraeWork 工作台一句话带过
 
 ### 项目栏管理：自定义添加 + 多选移除
 
