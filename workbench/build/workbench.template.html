@@ -708,6 +708,21 @@
     background:rgba(240,180,41,.035)
   }
   .dir-tip i{color:var(--amber);font-style:normal}
+  /* 「正在扫描」指示器：可跟随扫描状态出现的 spinner + 进度条 */
+  .dir-scanning{display:inline-flex;align-items:center;gap:7px;color:var(--accent,#4ea1ff);font-weight:600}
+  .dir-scanning .spin{
+    width:13px;height:13px;flex:none;border:2px solid rgba(78,161,255,.26);
+    border-top-color:var(--accent,#4ea1ff);border-radius:50%;
+    animation:wtSpin .8s linear infinite
+  }
+  .dir-v.err{color:var(--st-bad,#ff6b6b);font-weight:600}
+  .scan-bar{height:4px;border-radius:3px;background:rgba(78,161,255,.14);overflow:hidden;margin-top:6px;width:100%}
+  .scan-bar > i{
+    display:block;height:100%;width:0;
+    background:linear-gradient(90deg,var(--accent,#4ea1ff),#8fd0ff);
+    transition:width .25s ease
+  }
+  @keyframes wtSpin{to{transform:rotate(360deg)}}
 
   .port-chip{
     display:inline-flex;align-items:center;gap:8px;padding:7px 11px;border-radius:10px;
@@ -2490,7 +2505,7 @@ const EXACT_MEASURE = 400;
    只加深会让扫描更慢，但浅层照样先把预算吃光，深层还是轮不到。 */
 function WALK(){
   return deepScan
-    ? { depth:6, visited:8000, findMs:15000, layer:[1500, 800] }
+    ? { depth:8, visited:20000, findMs:40000, layer:[2500, 1200, 700, 450, 300, 200, 150, 100] }
     : { depth:4, visited:2500, findMs:5000,  layer:[400, 200] };
 }
 let lastScan = { visited:0, depth:0, errors:0, truncated:false };   // 最近一次扫描的遍历统计，用于「0 结果」时给出可诊断的提示
@@ -2498,14 +2513,22 @@ let scanStateMsg = '';   // 扫描进度文案；扫描期间实时刷新，避�
 
 /* 扫描是异步且可能耗时的（选到 C:\ 这类超大根时尤甚），必须给出实时进度。
    只更新进度行本身，不整块重绘 dirBar，避免扫描期间反复重建按钮。 */
-function setScanState(msg){
+/* 扫描进度提示：opts.spinner 给一个转圈，opts.progress(0-100) 给一条进度条。
+   失败 / 取消等终态不加 spinner，避免「转圈却已停」的误导。 */
+function setScanState(msg, opts){
+  opts = opts || {};
   scanStateMsg = msg || '';
   const el = document.getElementById('dirStateRow');
   if(!el) return;
   el.style.display = scanStateMsg ? '' : 'none';
-  el.innerHTML = scanStateMsg
-    ? '<span class="dir-k">进度</span><span class="dir-v">' + esc(scanStateMsg) + '</span>'
+  if(!scanStateMsg) return;
+  const inner = opts.spinner
+    ? '<span class="dir-scanning"><span class="spin"></span>' + (opts.err ? '<span class="dir-v err" style="color:inherit">' : '') + esc(scanStateMsg) + (opts.err ? '</span>' : '') + '</span>'
+    : (opts.err ? '<span class="dir-v err">' + esc(scanStateMsg) + '</span>' : esc(scanStateMsg));
+  const bar = (opts.spinner && typeof opts.progress === 'number')
+    ? '<div class="scan-bar"><i style="width:' + Math.max(2, Math.min(100, opts.progress)) + '%"></i></div>'
     : '';
+  el.innerHTML = '<span class="dir-k">进度</span><span class="dir-v">' + inner + bar + '</span>';
 }
 
 /* 每次 next() 单独计时：网络驱动器、脱机盘、U 盘拔出、被杀软拦下的目录
@@ -2767,84 +2790,89 @@ async function scanRootNow(){
     return;
   }
   scanning = true;
-  if(btn){ btn.textContent = '扫描中…点击取消'; }
-  setScanState('正在扫描…');
+  if(btn){ btn.textContent = '扫描中…点击取消'; btn.disabled = true; }
+  setScanState('正在扫描…（随时可点「更换目录」或「兼容模式扫描」换目标）', { spinner:true });
   scanAbort = false;
   const t0 = Date.now();
   let roots = [];
-  try { roots = await findProjectRoots(scanRoot, p => setScanState('正在扫描… 已遍历 ' + p.visited + ' 个目录，最深 ' + p.depth + ' 层')); }
-  catch(e){
-    const msg = e && e.message ? e.message : String(e);
-    toast('扫描失败：' + msg, 'warn');
-    setScanState('扫描失败：' + msg + '（可换个更靠近项目的父目录再试）');
-    unbusy();
-    return;
-  }
-  const projects = [];
-  const measureDeadline = t0 + WALK().findMs + MEASURE_BUDGET_MS;
-  let measureStopped = false;
-  for(const r of roots){
-    if(scanAbort) break;
-    let m;
-    if(measureStopped || Date.now() > measureDeadline){ measureStopped = true; m = emptyMeasure(); }
-    else {
-      m = await measureDir(r.dir, measureDeadline);
-      setScanState('正在统计 ' + (projects.length + 1) + '/' + roots.length + ' 个项目…');
-    }
-    projects.push({
-      rel: r.rel,
-      name: r.rel ? r.rel.split('/').pop() : (scanRootName || '本机目录'),
-      path: joinRootPath(r.rel),
-      langs: pickLangs(r.langs, m.langs),
-      category: r.git ? '本机扫描 · git' : '本机扫描',
-      /* truncated 只表示「扫描被预算截断」，不能把 estimated（体积为采样外推值）算进来：
-         外推是正常结果，形状完整、只是体积取近似，把它当成截断会让每个中等项目
-         都背上一个「数据不完整」的标记。兼容模式那边只写 mtrunc，两边口径要一致。 */
-      sizeBytes: m.size, files: m.files, truncated: m.truncated, estimated: !!m.estimated,
-      updated: new Date(m.mtime || Date.now()).toISOString().slice(0, 10),
-      git: r.git, samples: m.samples, readme: m.readme, ports: m.ports, live: null
+  try {
+    const W = WALK();
+    roots = await findProjectRoots(scanRoot, p => {
+      const pct = W.visited ? Math.min(100, Math.round(p.visited / W.visited * 100)) : null;
+      setScanState('正在扫描… 已遍历 ' + p.visited + ' 个目录，最深 ' + p.depth + ' 层', { spinner:true, progress: pct });
     });
-  }
-  /* 用户主动取消：保留已扫到的部分，如实说明是半途停的，不假装扫完 */
-  if(scanAbort){
+    const projects = [];
+    const measureDeadline = t0 + W.findMs + MEASURE_BUDGET_MS;
+    let measureStopped = false;
+    for(const r of roots){
+      if(scanAbort) break;
+      let m;
+      if(measureStopped || Date.now() > measureDeadline){ measureStopped = true; m = emptyMeasure(); }
+      else {
+        m = await measureDir(r.dir, measureDeadline);
+        setScanState('正在统计 ' + (projects.length + 1) + '/' + roots.length + ' 个项目…', { spinner:true });
+      }
+      projects.push({
+        rel: r.rel,
+        name: r.rel ? r.rel.split('/').pop() : (scanRootName || '本机目录'),
+        path: joinRootPath(r.rel),
+        langs: pickLangs(r.langs, m.langs),
+        category: r.git ? '本机扫描 · git' : '本机扫描',
+        /* truncated 只表示「扫描被预算截断」，不能把 estimated（体积为采样外推值）算进来：
+           外推是正常结果，形状完整、只是体积取近似，把它当成截断会让每个中等项目
+           都背上一个「数据不完整」的标记。兼容模式那边只写 mtrunc，两边口径要一致。 */
+        sizeBytes: m.size, files: m.files, truncated: m.truncated, estimated: !!m.estimated,
+        updated: new Date(m.mtime || Date.now()).toISOString().slice(0, 10),
+        git: r.git, samples: m.samples, readme: m.readme, ports: m.ports, live: null
+      });
+    }
+    /* 用户主动取消：保留已扫到的部分，如实说明是半途停的，不假装扫完 */
+    if(scanAbort){
+      projects.sort((a, b) => b.sizeBytes - a.sizeBytes);
+      zeroScan = {
+        scannedAt: new Date().toISOString(), rootName: scanRootName,
+        rootPath: zeroScan.rootPath || '', mode:'handle', projects,
+        stats: { visited: lastScan.visited, depth: lastScan.depth, errors: lastScan.errors, truncated:true, measured: projects.filter(p => !p.truncated).length }
+      };
+      store.write(LS.zero, zeroScan);
+      if(localPorts) applyPorts();
+      setScanState('');
+      buildIndex(); renderAll();
+      toast('已取消扫描 · 保留已发现的 ' + projects.length + ' 个项目（结果不完整）', 'warn');
+      return;   // finally 负责 unbusy，绝不卡在「已有扫描在跑」
+    }
     projects.sort((a, b) => b.sizeBytes - a.sizeBytes);
+    const truncated = lastScan.truncated || measureStopped;
     zeroScan = {
       scannedAt: new Date().toISOString(), rootName: scanRootName,
       rootPath: zeroScan.rootPath || '', mode:'handle', projects,
-      stats: { visited: lastScan.visited, depth: lastScan.depth, errors: lastScan.errors, truncated:true, measured: projects.filter(p => !p.truncated).length }
+      stats: { visited: lastScan.visited, depth: lastScan.depth, errors: lastScan.errors, truncated, measured: projects.filter(p => !p.truncated).length }
     };
     store.write(LS.zero, zeroScan);
     if(localPorts) applyPorts();
     setScanState('');
-    buildIndex(); renderAll(); unbusy();
-    toast('已取消扫描 · 保留已发现的 ' + projects.length + ' 个项目（结果不完整）', 'warn');
-    return;
-  }
-  projects.sort((a, b) => b.sizeBytes - a.sizeBytes);
-  const truncated = lastScan.truncated || measureStopped;
-  unbusy();
-  zeroScan = {
-    scannedAt: new Date().toISOString(), rootName: scanRootName,
-    rootPath: zeroScan.rootPath || '', mode:'handle', projects,
-    stats: { visited: lastScan.visited, depth: lastScan.depth, errors: lastScan.errors, truncated, measured: projects.filter(p => !p.truncated).length }
-  };
-  store.write(LS.zero, zeroScan);
-  if(localPorts) applyPorts();
-  setScanState('');
-  buildIndex(); renderAll();
-  if(!projects.length){
-    /* 权限提示放在第一位：旧版把它排在遍历统计之后，用户根本看不到重点 */
-    toast((scanPerm === 'read' ? '当前只有只读权限（不影响扫描）。' : '') +
-      '扫描完成：该目录下没找到项目（已遍历 ' + lastScan.visited + ' 个目录，最深 ' + lastScan.depth + ' 层' +
-      (lastScan.errors ? '，有 ' + lastScan.errors + ' 个目录读取失败' : '') + '）。' +
-      (lastScan.truncated ? '目录太大，扫描已达上限，可能没走到项目所在位置——请改选更靠近项目的父目录，或开「深度扫描」。' : '') +
-      '项目需含 .git 或工程标记文件（package.json / CMakeLists.txt / Cargo.toml / go.mod 等）；' +
-      '若项目在更深层，请改选更靠近项目的父目录。', 'warn');
-  } else if(truncated){
-    toast('扫描完成 · 发现 ' + projects.length + ' 个项目 · 用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's' +
-      '（已达扫描上限，结果可能不完整；选中的目录越大越容易漏，建议改选更靠近项目的父目录，或开「深度扫描」）', 'warn');
-  } else {
-    toast('扫描完成 · 发现 ' + projects.length + ' 个项目 · 用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's', 'ok');
+    buildIndex(); renderAll();
+    if(!projects.length){
+      /* 权限提示放在第一位：旧版把它排在遍历统计之后，用户根本看不到重点 */
+      toast((scanPerm === 'read' ? '当前只有只读权限（不影响扫描）。' : '') +
+        '扫描完成：该目录下没找到项目（已遍历 ' + lastScan.visited + ' 个目录，最深 ' + lastScan.depth + ' 层' +
+        (lastScan.errors ? '，有 ' + lastScan.errors + ' 个目录读取失败' : '') + '）。' +
+        (lastScan.truncated ? '目录太大，扫描已达上限，可能没走到项目所在位置——请改选更靠近项目的父目录，或开「深度扫描」。' : '') +
+        '项目需含 .git 或工程标记文件（package.json / CMakeLists.txt / Cargo.toml / go.mod 等）；' +
+        '若项目在更深层，请改选更靠近项目的父目录。', 'warn');
+    } else if(truncated){
+      toast('扫描完成 · 发现 ' + projects.length + ' 个项目 · 用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's' +
+        '（已达扫描上限，结果可能不完整；选中的目录越大越容易漏，建议改选更靠近项目的父目录，或开「深度扫描」）', 'warn');
+    } else {
+      toast('扫描完成 · 发现 ' + projects.length + ' 个项目 · 用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's', 'ok');
+    }
+  } catch(e){
+    const msg = e && e.message ? e.message : String(e);
+    toast('扫描失败：' + msg, 'warn');
+    /* 关键：失败后仍保留已选目录，并明确引导重新选择，绝不卡在「已有扫描在跑」 */
+    setScanState('扫描失败：' + msg + ' · 可点「更换目录」重新选，或点「兼容模式扫描」继续（不需要任何权限）', { err:true });
+  } finally {
+    unbusy();
   }
 }
 async function restoreScanRoot(){
@@ -2896,7 +2924,7 @@ function onFlatPicked(e){
   const done = () => { if(btn){ btn.disabled = false; btn.textContent = '重新扫描（兼容模式）'; } };
   scanFlatList(files).then(done, err => {
     const msg = err && err.message ? err.message : String(err);
-    setScanState('兼容模式扫描失败：' + msg);
+    setScanState('兼容模式扫描失败：' + msg + ' · 可重新点「兼容模式扫描」再选一次', { err:true });
     toast('兼容模式扫描失败：' + msg, 'warn');
     done();
   });
@@ -2924,12 +2952,12 @@ async function scanFlatList(files){
     /* 分片让出主线程：几万个文件一次性整理会冻结界面数秒，用户会以为页面死了。
        阈值取 4000：设太小会被后台标签页的 setTimeout 节流（最低 1s）拖慢整次扫描。 */
     if(i % 4000 === 0){
-      setScanState('正在整理文件清单… ' + i + ' / ' + files.length + ' 个文件');
+      setScanState('正在整理文件清单… ' + i + ' / ' + files.length + ' 个文件', { spinner:true, progress: files.length ? Math.round(i / files.length * 100) : null });
       await new Promise(r => setTimeout(r, 0));
     }
   }
   if(!rootName){ toast('文件清单为空，无法识别目录名', 'warn'); return; }
-  setScanState('正在扫描… 已整理 ' + i + ' 个文件');
+  setScanState('正在扫描… 已整理 ' + i + ' 个文件', { spinner:true });
 
   /* 广度优先识别项目根，规则与硬预算与句柄模式完全一致 */
   const W = WALK();
@@ -2943,7 +2971,7 @@ async function scanFlatList(files){
     const { rel, depth } = queue[qi++];
     stats.visited++;
     if(depth > stats.depth) stats.depth = depth;
-    if(stats.visited % 200 === 0) setScanState('正在扫描… 已遍历 ' + stats.visited + ' 个目录，最深 ' + stats.depth + ' 层');
+    if(stats.visited % 200 === 0) setScanState('正在扫描… 已遍历 ' + stats.visited + ' 个目录，最深 ' + stats.depth + ' 层', { spinner:true, progress: W.visited ? Math.min(100, Math.round(stats.visited / W.visited * 100)) : null });
     const n = tree.get(rel);
     if(!n) continue;
     const langs = new Set();
@@ -3216,7 +3244,9 @@ function renderDirBar(){
         (zeroScan.stats && zeroScan.stats.truncated
           ? '<span style="color:var(--st-needs)"> · 已达扫描上限，结果可能不完整</span>' : '') + '</span></div>' +
     '<div class="dir-row" id="dirStateRow"' + (scanStateMsg ? '' : ' style="display:none"') + '>' +
-      (scanStateMsg ? '<span class="dir-k">进度</span><span class="dir-v">' + esc(scanStateMsg) + '</span>' : '') + '</div>' +
+      (scanStateMsg ? '<span class="dir-k">进度</span><span class="dir-v">' +
+        (scanning ? '<span class="dir-scanning"><span class="spin"></span>' + esc(scanStateMsg) + '</span>' : esc(scanStateMsg)) +
+        '</span>' : '') + '</div>' +
     '<div class="dir-row"><span class="dir-k">端口</span><span class="dir-v">' +
       esc(localPorts ? localPorts.ports.length + ' 个监听（近似）' : '未探测') + '</span></div>' +
     '<div class="dir-row"><span class="dir-k">操作</span><span class="dir-v" style="display:flex;gap:8px;flex-wrap:wrap;white-space:normal;overflow:visible">' +
@@ -3225,7 +3255,7 @@ function renderDirBar(){
       '<button class="btn small' + (CAN_FS ? '' : ' primary') + '" data-act="dir-flat" title="把目录的文件清单交给页面自己扫描：不需要任何权限，file:// 下也能用">兼容模式扫描</button>' +
       (st === 'prompt' ? '<button class="btn small primary" data-act="dir-resume">续期授权</button>' : '') +
       (name && !isFlat
-        ? '<button class="btn small' + (deepScan ? ' primary' : '') + '" data-act="dir-deep" title="把遍历上限提到 8000 个目录、层数到 6 层，能扫到更深层的项目，代价是最长要等 20 秒">' +
+        ? '<button class="btn small' + (deepScan ? ' primary' : '') + '" data-act="dir-deep" title="把遍历上限提到 20000 个目录、层数到 8 层，能扫到更深层的项目，代价是最长要等约 1 分钟">' +
           (deepScan ? '深度扫描：开' : '深度扫描：关') + '</button>'
         : '') +
       (name ? '<button class="btn small" data-act="' + (isFlat ? 'dir-flat' : 'dir-scan') + '" id="dirScanBtn">' + (isFlat ? '重新扫描（兼容模式）' : (deepScan ? '深度扫描' : '重新扫描')) + '</button>' : '') +
@@ -3248,7 +3278,7 @@ function renderDirBar(){
               '所以 <code>C:\\</code> 这类位置也能正常扫；只有保存时才需要写权限。' +
               '若连读都被拦，改用<b>「兼容模式扫描」</b>——' +
               '它只枚举文件清单，任何浏览器、任何地址（含 <code>file://</code>）都能用。' +
-              '扫不到深层项目时，开<b>「深度扫描」</b>能走到 6 层、最多 8000 个目录。')
+              '扫不到深层项目时，开<b>「深度扫描」</b>能走到 8 层、最多 20000 个目录。')
         : '<i>提示</i>：当前浏览器不支持原生目录访问，但<b>兼容模式扫描</b>依然可用（不需要该 API）。') +
       ' 浏览器无法枚举本机全端口，端口探测只覆盖常见 ' + PROBE_PORTS.length + ' 个，结果为近似值；' +
       '网页反代依赖本地服务，零服务模式下内联页会退化为直连 iframe。' +
@@ -3505,7 +3535,7 @@ root.addEventListener('click', e => {
     /* 扫描中再点一次＝取消，避免在超大根目录上干等又没法中断 */
     case 'dir-scan':      if(scanning){ scanAbort = true; setScanState('正在取消…'); } else scanRootNow(); break;
     case 'dir-deep':      deepScan = !deepScan; renderDirBar();
-                          toast(deepScan ? '深度扫描已开：最多 8000 个目录 / 6 层，最长约 20 秒' : '已恢复普通扫描', deepScan ? 'warn' : 'ok'); break;
+                          toast(deepScan ? '深度扫描已开：最多 20000 个目录 / 8 层，最长约 1 分钟' : '已恢复普通扫描', deepScan ? 'warn' : 'ok'); break;
     case 'dir-probe':     probeLocalPorts(); break;
     case 'dir-clear':     clearScanRoot(); break;
   }

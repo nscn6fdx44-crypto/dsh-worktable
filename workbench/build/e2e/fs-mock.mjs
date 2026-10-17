@@ -37,7 +37,9 @@ const STRATS = {
   /* 只读，但点保存时升级成功 */
   'upgrade-ok':  { read: 'granted', write: 'prompt',  grant: { read:'granted', write:'granted' } },
   /* 只读，点保存时升级被用户拒绝 */
-  'upgrade-deny':{ read: 'granted', write: 'prompt',  grant: { read:'granted', write:'denied' } }
+  'upgrade-deny':{ read: 'granted', write: 'prompt',  grant: { read:'granted', write:'denied' } },
+  /* 只读 + 遍历故意变慢（每列一个目录 sleep 18ms），专门用来在测试里稳定捕捉「正在扫描」spinner */
+  'slow':        { read: 'granted', write: 'prompt',  grant: { read:'granted', write:'granted' } }
 };
 
 export function fsMockSource(plan, treeKind) {
@@ -54,6 +56,7 @@ export function fsMockSource(plan, treeKind) {
     log: [], writes: [], plan: ${planJson}, upgraded: false, picks: 0, reg: {},
     granted: { read: false, write: false }   /* 用户点过弹窗之后浏览器记住的授权 */
   };
+  var SLOW = (KIND === 'slow');   /* slow 策略：遍历变慢，方便测试捕捉 spinner */
   function L(o){ o.t = Date.now(); F.log.push(o); }
 
   /* 结构化克隆只抄「可枚举的字符串键」，遇到函数值直接抛 DataCloneError。
@@ -114,7 +117,7 @@ export function fsMockSource(plan, treeKind) {
     (children || []).forEach(function(c){ map[c.name] = c; });
     var h = hide({
       kind: 'directory', name: name, _children: children || [], __reg: name,
-      async *entries(){ for (var i = 0; i < h._children.length; i++) yield [h._children[i].name, h._children[i]]; },
+      async *entries(){ for (var i = 0; i < h._children.length; i++){ if(SLOW) await new Promise(function(r){ setTimeout(r, 18); }); yield [h._children[i].name, h._children[i]]; } },
       async *values(){ for (var i = 0; i < h._children.length; i++) yield h._children[i]; },
       async getDirectoryHandle(n){
         var c = map[n];
@@ -190,6 +193,11 @@ export function fsMockSource(plan, treeKind) {
     }
     tops.push(d('zz-late', [ f('package.json', '{"name":"zz-late"}') ]));
     ROOT = d('BigDrive', tops);
+  } else if (KIND === 'slow') {
+    /* 90 个顶层目录：配合 SLOW=18ms，遍历约 1.6s，足够测试稳定捕捉「正在扫描」spinner */
+    var slowTops = [];
+    for (var si = 0; si < 90; si++) slowTops.push(d('proj' + si, [ f('package.json', '{"name":"proj' + si + '"}') ]));
+    ROOT = d('SlowRoot', slowTops);
   } else {
     ROOT = d('MyProjects', [
       d('smart-car', [ f('README.md', '# 智能小车\\n\\n基于 STM32F103 的两轮差速小车。\\n'),

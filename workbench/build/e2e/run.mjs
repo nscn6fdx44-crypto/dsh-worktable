@@ -316,6 +316,43 @@ async function caseBigProject(conn) {
 
 /* ------------------------------------------------------------------ */
 
+async function caseScanUI(conn) {
+  /* M14：扫描进行中显示「正在扫描」spinner 进度提示；扫描结束后按钮恢复可点
+     （不再卡在「已有扫描在跑」——旧实现测量阶段若抛错，scanning 永久为 true）。
+     slow 树遍历约 1.6s，足以稳定捕捉 spinner。 */
+  const tab = await newScenario(conn, 'slow', 'slow');
+  try {
+    await goControl(tab);
+    await tab.click('[data-act="dir-pick"]');
+    let spinnerSeen = false;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 5000) {
+      const has = await tab.evalJs(`(() => {
+        const r = document.getElementById('dirStateRow');
+        return !!(r && (r.textContent || '').trim() && r.querySelector('.dir-scanning .spin'));
+      })()`);
+      if (has) { spinnerSeen = true; break; }
+      await sleep(20);
+    }
+    ck('M14', '扫描进行中显示「正在扫描」spinner 进度提示', spinnerSeen, spinnerSeen ? 'seen' : 'not seen');
+    await scanDone(tab);
+    const disabled = await tab.evalJs(`(() => {
+      const b = document.querySelector('[data-act="dir-scan"]');
+      return b ? b.disabled : null;
+    })()`);
+    ck('M14b', '扫描结束后「重新扫描」按钮恢复可点（不再卡死）', disabled === false, 'disabled=' + disabled);
+    const stillSpin = await tab.evalJs(`!!document.querySelector('#dirStateRow .dir-scanning .spin')`);
+    ck('M14c', '扫描结束后 spinner 已清除', !stillSpin, stillSpin ? '残留' : '已清除');
+    /* 不卡死的反向证明：能再次点开选择器（不报「已有扫描在跑」） */
+    await tab.click('[data-act="dir-pick"]');
+    await sleep(300);
+    const rePick = await tab.evalJs('window.__FS__.picks');
+    ck('M14d', '扫描结束后可再次发起扫描（未卡在已有扫描在跑）', rePick >= 2, 'pick 次数 ' + rePick);
+  } finally { await tab.close(); }
+}
+
+/* ------------------------------------------------------------------ */
+
 /* 唯一事实来源：既决定 --only 的可选值，也决定全量跑的顺序（Object.keys 保序）。
    早先这里是「CASES 表 + main 里另一份硬编码执行清单」两套，加用例时只改一处就会漏跑，
    而漏跑的用例会静默从总数里消失，看不出来。现在只有这一张表。 */
@@ -329,7 +366,8 @@ const CASES = {
   M10: { title: '深度扫描',               fn: caseDeepScan },
   M11: { title: '超大根',                 fn: caseHugeRoot },
   M12: { title: '兼容模式大清单',         fn: caseFlatBigList },
-  M13: { title: '单个大项目 · 外推≠截断', fn: caseBigProject }
+  M13: { title: '单个大项目 · 外推≠截断', fn: caseBigProject },
+  M14: { title: '扫描 UI 提示 · 不卡死',  fn: caseScanUI }
 };
 
 async function main() {
