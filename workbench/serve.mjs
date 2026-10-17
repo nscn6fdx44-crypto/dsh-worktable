@@ -17,9 +17,28 @@ import {
   closeSync, existsSync, openSync, readFileSync, readdirSync, readSync,
   statSync, writeFileSync
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+
+/* 访问令牌：设了 WB_TOKEN 后，除本机（127.0.0.1）外，所有 /api 与 /proxy 请求
+   必须带 ?token=… 或请求头 x-wb-token / Authorization: Bearer。本机豁免，自己无感。 */
+const REQUIRED_TOKEN = process.env.WB_TOKEN || "";
+function isLocalAddress(addr) {
+  if (!addr) return false;
+  const a = String(addr).replace(/^::ffff:/, "");
+  return a === "127.0.0.1" || a === "::1" || a === "localhost";
+}
+function tokenOk(req) {
+  if (!REQUIRED_TOKEN) return true;
+  if (isLocalAddress(req.socket.remoteAddress)) return true;
+  const u = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
+  const q = u.searchParams.get("token") || "";
+  const h = String(req.headers["x-wb-token"] || "");
+  const auth = String(req.headers["authorization"] || "");
+  const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+  return q === REQUIRED_TOKEN || h === REQUIRED_TOKEN || bearer === REQUIRED_TOKEN;
+}
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 /* 个人版 workbench.html 优先；只有公开版 index.html 时也能跑 */
@@ -511,13 +530,23 @@ async function handle(req, res) {
   const registry = loadRegistry();
 
   if (url.pathname === "/" || url.pathname === "/index.html") return sendHtml(res);
+  if (!tokenOk(req)) throw new HttpError(401, "需要访问令牌：在 URL 加 ?token=… 或用请求头 x-wb-token", "token-required");
 
   if (url.pathname === "/api/health") {
+    const lan = [];
+    try {
+      for (const list of Object.values(networkInterfaces())) {
+        for (const n of list || []) if (n.family === "IPv4" && !n.internal) lan.push(n.address);
+      }
+    } catch { /* 取不到网卡信息不影响主功能 */ }
     return sendJson(res, 200, {
       ok: true,
       mode: "server",
       version: VERSION,
       root: ROOT,
+      host: process.env.WB_HOST || "127.0.0.1",
+      lan,
+      tokenRequired: !!REQUIRED_TOKEN,
       projects: registry.projects.length,
       scanRoots: registry.scanRoots.length,
       aiPresets: registry.aiPresets
@@ -626,7 +655,8 @@ if (isMain) {
     console.error("找不到 workbench.html，请先运行： node build/build.mjs");
     process.exit(1);
   }
-  const { url, port } = await startServer({ port: Number(process.env.WB_PORT) || 7331 });
+  const host = process.env.WB_HOST || "127.0.0.1";
+  const { url, port } = await startServer({ port: Number(process.env.WB_PORT) || 7331, host });
   const registry = loadRegistry();
   console.log("");
   console.log("  工作台本地服务已启动");

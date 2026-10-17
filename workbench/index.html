@@ -1805,7 +1805,7 @@ function repoBody(pane, slot, pid){
         ? '<div class="note-line"><i>●</i>兼容模式扫描（只读）：可浏览文件内容，<b>不能写盘</b> · 想直接写盘就到控制室点「选择本机目录」</div>'
         : isZero
           ? '<div class="note-line"><i>●</i>本机目录（零服务）：正在解析目录句柄，稍候即可浏览；保存时会再按需要写权限</div>'
-          : '<div class="note-line"><i>◇</i>快照浏览模式（只读）· 想直接读写磁盘文件，就在控制室授权一个本机目录，或双击「启动工作台.bat」起本地服务</div>';
+          : '<div class="note-line"><i>◇</i>快照浏览模式（只读）· 想直接读写磁盘文件，就在控制室授权一个本机目录，或双击「启动工作台.bat」/ 打开 <a href="//127.0.0.1:7339/" target="_blank" rel="noopener">启动器网页</a> 起本地服务</div>';
 
   let body = '';
   if(mode === 'server'){
