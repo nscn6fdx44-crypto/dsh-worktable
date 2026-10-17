@@ -247,6 +247,8 @@
     "workbench:build": "node workbench/build/build-public.mjs",
     "workbench:check": "node workbench/build/verify.mjs && node workbench/build/smoke.mjs && node workbench/build/serve.test.mjs",
     "workbench:e2e": "node workbench/build/e2e.mjs && node workbench/build/e2e/run.mjs",
+    "dsh:build": "node dsh/build.mjs",
+    "dsh:check": "node --check dsh/lib/index.js && node --check dsh/lib/client.js",
     "verify:sync": "node traework/test/core-sync.test.mjs",
     "verify:package": "node scripts/verify-package.mjs",
     "traework:install": "node scripts/install-traework-skill.mjs",

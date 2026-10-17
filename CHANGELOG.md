@@ -1,5 +1,18 @@
 # 变更日志
 
+## dsh 插件（开发中 · P0 骨架）
+
+### 注册三件套 + 双 bundle 构建
+
+- 新增 `dsh/` 目录：DeepSeek Harness（Cordis）插件形态——导师指定的主力方向。注入结构对齐上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) v0.4.0：侧边栏 `sidebar.footer.action` 座位 + children 声明 `sidebar.worktable.project` 项目子座位；分栏浮层 `shell.overlay` 留到 P1
+- 注册三件套：`package.json`（`main`=host 入口、`exports["./client"]`=客户端包、`dsh` 配置块含 `bundle.patch`/`client.inject`/`compatibility.dsh`）+ `dsh.plugin.json`（元数据，版本与 package.json 由 build.mjs 断言一致）+ `cordis.patch.yml`（insert 挂进 Cordis）
+- `build.mjs`：esbuild 双 bundle——host 侧 ESM（`external: @deepseek-ai/*`，构建期 `define __WT_VERSION__`），client 侧 CJS 包进 `window.__ModuleLoader__.load` 握手外壳（banner/footer），react / `@deepseek-ai/*` 全部 external 由宿主 require 提供
+- host 半侧（`src/index.js`）：`inject=['webServer']`，注册 `/api/worktable/health`（返回 plugin/version/node/platform）；headless profile 下降级不注册，不影响宿主其他插件
+- client 半侧（`src/client/index.js`）：`inject=['slots']`，注册侧边栏底部「工作台」区块（order 20，P0 徽标）；样式经 `ctx.effect` 注入、随销毁移除；面板页拉一次 health，把 host 半侧存活证据直接显示在页面上
+- 兼容声明只写已验证的一版：DSH **0.2.0-rc.2 + Windows 桌面端**（`dsh.compatibility.dsh`）；网页端安装语法同上游但未验证
+- 安装方式（桌面端须先从菜单/托盘完整退出应用）：`& "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:<仓库绝对路径>\dsh"`——`dsh plugin add` 底层是 profile 工作区的 pnpm add，装完重启生效
+- 根 `package.json` 增加 `dsh:build` / `dsh:check` 脚本；`dsh/README.md` 记录目录结构、构建、安装、验证步骤与 P1-P4 路线（P1 项目抽屉 → P2 文件/终端/git → P3 控制室 → P4 发布打包）
+
 ## workbench（未发布）
 
 ### 本地目录扫描：授权链路 + 遍历健壮性
