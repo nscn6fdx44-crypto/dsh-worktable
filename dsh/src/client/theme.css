@@ -699,19 +699,48 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 .wt-scope .term-in input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--txt); font-size: 11.5px; }
 
 /* 浏览器 */
-.wt-scope .web-body { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; overflow: hidden; }
-.wt-scope .wb-bar { display: flex; align-items: center; gap: 5px; flex: none; }
-.wt-scope .wb-bar .wb-url { flex: 1; min-width: 0; }
-.wt-scope .wb-sub { gap: 4px; flex-wrap: wrap; row-gap: 4px; }
-.wt-scope .wb-vps { display: flex; gap: 3px; }
-.wt-scope .wb-vps .mini-btn { padding: 2px 7px; font-size: 9.5px; }
-.wt-scope .wb-ports { display: flex; gap: 3px; }
-.wt-scope .wb-ports .mini-btn { padding: 2px 6px; font-size: 9px; color: var(--txt-mute); }
-.wt-scope .wb-spacer { flex: 1; }
-.wt-scope .wb-state { font-size: 9.5px; color: var(--txt-mute); white-space: nowrap; }
-.wt-scope .wb-state.loading { color: #e9c778; }
-.wt-scope .wb-state.ok { color: #63c98a; }
-.wt-scope .wb-state.blocked, .wt-scope .wb-state.error { color: #f0897d; }
+.wt-scope .web-body {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px;
+  overflow: hidden; position: relative; container-type: inline-size;
+}
+/* 单行工具条：不换行、不溢出，输入框吃掉剩下的宽度 */
+.wt-scope .wb-bar { display: flex; align-items: center; gap: 4px; flex: none; min-width: 0; }
+.wt-scope .wb-bar > .mini-btn { flex: none; }
+.wt-scope .wb-url { flex: 1 1 auto; min-width: 28px; }
+.wt-scope .wb-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,.22); }
+.wt-scope .wb-dot.loading { background: #e9c778; box-shadow: 0 0 0 3px rgba(233,199,120,.14); }
+.wt-scope .wb-dot.ok { background: #63c98a; }
+.wt-scope .wb-dot.blocked, .wt-scope .wb-dot.error { background: #f0897d; }
+
+/* 窄面板里先牺牲「打开」—— 回车一样能开，把宽度全让给地址栏 */
+@container (max-width: 340px) {
+  .wt-scope .wb-bar .wb-go { display: none; }
+}
+
+/* 「⋯」下拉：绝对定位，开合都不改变页面高度 */
+.wt-scope .wb-more {
+  position: absolute; top: 35px; right: 10px; z-index: 20;
+  display: none; flex-direction: column; gap: 6px;
+  width: 210px; max-width: calc(100% - 20px); padding: 8px;
+  border-radius: 10px; border: 1px solid var(--line-strong);
+  background: var(--panel); box-shadow: 0 14px 34px rgba(0,0,0,.5);
+}
+.wt-scope .wb-more.open { display: flex; }
+.wt-scope .wb-more-state { font-size: 9.5px; color: var(--txt-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wt-scope .wb-more-state.loading { color: #e9c778; }
+.wt-scope .wb-more-state.ok { color: #63c98a; }
+.wt-scope .wb-more-state.blocked, .wt-scope .wb-more-state.error { color: #f0897d; }
+.wt-scope .wb-more-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.wt-scope .wb-more-label { flex: none; width: 24px; font-size: 9px; color: var(--txt-mute); }
+.wt-scope .wb-more .mini-btn { padding: 0 7px; font-size: 9.5px; }
+
+/* 空态里的三条用法 */
+.wt-scope .wb-help {
+  margin: 0; padding: 0; list-style: none; max-width: 430px; text-align: left;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.wt-scope .wb-help li { position: relative; padding-left: 12px; font-size: 10.5px; line-height: 1.65; color: var(--txt-mute); }
+.wt-scope .wb-help li::before { content: '·'; position: absolute; left: 3px; color: var(--amber); font-weight: 700; }
 
 /* 舞台：固定视口宽度时居中给一条「设备边框」 */
 .wt-scope .wb-stage { flex: 1; min-height: 0; display: flex; justify-content: center; border-radius: 10px; border: 1px solid var(--line); background: #0b0e14; overflow: hidden; }

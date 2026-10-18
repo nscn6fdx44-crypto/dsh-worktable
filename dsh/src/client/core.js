@@ -223,6 +223,8 @@ export const store = {
     pid: '', defaultUrl: '', url: '', state: 'idle', error: '',
     at: 0, startedAt: 0, ms: 0, viewport: 'auto',
     history: [], index: -1,
+    /* 「⋯」下拉是否展开：跟 fs.menu 一样走 store，重渲染不掉 */
+    more: false,
     probe: { state: 'idle', url: '', ok: false, status: 0, ms: 0, title: '', frameable: true, reason: '', error: '', at: 0 },
   },
   /* 自定义窗口库：列表 / 当前条目 / 编辑副本 / 三种视图（生成 · 预览 · 编辑） */
@@ -1354,6 +1356,7 @@ export function webSync(project) {
       viewport: store.web.viewport || 'auto',
       history: url ? [url] : [],
       index: url ? 0 : -1,
+      more: false,
       probe: { ...store.web.probe, state: 'idle', url, ok: false, status: 0, ms: 0, title: '', frameable: true, reason: '', error: '', at: 0 },
     },
   })
@@ -1427,6 +1430,7 @@ export function webGoto(raw, opts = {}) {
       at: now,
       history,
       index,
+      more: false,
       probe: { ...w.probe, state: 'idle' },
     },
   })
@@ -1462,6 +1466,13 @@ export function webForward() {
 export function webSetViewport(v) {
   const allowed = ['auto', 'tablet', 'mobile']
   emit({ web: { ...store.web, viewport: allowed.includes(v) ? v : 'auto' } })
+}
+
+/** 「⋯」下拉开合。放 store 而不是组件 state：切标签页、重渲染都不会莫名收起。 */
+export function webSetMore(v) {
+  const next = !!v
+  if (store.web.more === next) return
+  emit({ web: { ...store.web, more: next } })
 }
 
 /** 站内相对地址（项目静态托管）要探测就得补成 absolute —— 宿主只认带协议的 URL */

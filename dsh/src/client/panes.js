@@ -19,7 +19,7 @@ import {
   sessionsOf, primarySession, stateOf, jumpToSession,
   openModal, siteUrlOf, cycleStatus, updateProject, projectOf, toast,
   webSync, webGoto, webBack, webForward, webReload, webLoaded, webProbe,
-  webSetViewport, webOpenExternal,
+  webSetViewport, webOpenExternal, webSetMore,
   loadCustom, openCustom, newCustomDraft, editCustom, setCustomView, saveCustom,
   deleteCustom, buildCustomPrompt, fillHostInput, setCustomPrompt, setCustomRequirement,
 } from './core.js'
@@ -685,9 +685,21 @@ export function WebPane({ project }) {
   useStore()
   const web = store.web
   const [draft, setDraft] = useState('')
+  const more = !!web.more
+  const menuRef = useRef(null)
 
   /* 切项目时把地址 / 历史 / 探测结果都换到那个项目上 */
   useEffect(() => { webSync(project) }, [project?.id])
+
+  /* 点面板别处收起「更多」—— 否则它会一直盖在页面上 */
+  useEffect(() => {
+    if (!more) return undefined
+    const onDown = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) webSetMore(false)
+    }
+    document.addEventListener('pointerdown', onDown)
+    return () => document.removeEventListener('pointerdown', onDown)
+  }, [more])
 
   const url = web.url
   const shown = draft || url
@@ -695,10 +707,26 @@ export function WebPane({ project }) {
   const vp = VIEWPORTS.find((v) => v.id === web.viewport) || VIEWPORTS[0]
   const atStart = web.index <= 0
   const atEnd = web.index >= web.history.length - 1
+  const extUrl = draft || url
 
   const go = (raw) => { if (webGoto(raw)) setDraft('') }
+  /* 下拉里的动作点完就收起，别挡着页面 */
+  const pick = (fn) => () => { webSetMore(false); fn() }
+
+  const probeText = probe.state === 'loading' ? '探测中…'
+    : probe.state === 'error' ? '探测失败：' + probe.error
+      : probe.ok
+        ? '✅ HTTP ' + (probe.status || '?') + ' · ' + probe.ms + 'ms'
+          + (probe.title ? ' · ' + probe.title : '')
+          + (probe.frameable ? ' · 可以嵌入' : ' · 不能嵌入（' + probe.reason + '）')
+        : '❌ 连不上：' + (probe.error || '没有响应')
 
   return el('div', { className: 'pane-body web-body' },
+    /*
+     * 只有一条工具条：面板一窄，两行控件会折成三行，把 iframe 挤没。
+     * 低频操作（探测 / 项目页 / 端口 / 视口 / 系统浏览器）全收进右边的「⋯」，
+     * 主行永远只有 ← → ⟳ 地址 打开 状态点 ⋯。
+     */
     el('div', { className: 'wb-bar' },
       el('button', { type: 'button', className: 'mini-btn', title: '后退', disabled: atStart, onClick: () => webBack() }, '←'),
       el('button', { type: 'button', className: 'mini-btn', title: '前进', disabled: atEnd, onClick: () => webForward() }, '→'),
@@ -708,49 +736,61 @@ export function WebPane({ project }) {
       }, '⟳'),
       el('input', {
         className: 'mono wb-url', value: shown, spellCheck: false, autoComplete: 'off',
-        placeholder: 'http://localhost:5173',
+        placeholder: 'localhost:5173',
         onChange: (e) => setDraft(e.target.value),
         onKeyDown: (e) => {
           if (e.key === 'Enter') go(draft || url)
           if (e.key === 'Escape') setDraft('')
         },
       }),
-      el('button', { type: 'button', className: 'mini-btn', onClick: () => go(draft || url) }, '打开'),
+      el('button', { type: 'button', className: 'mini-btn wb-go', onClick: () => go(draft || url) }, '打开'),
+      el('span', { className: 'wb-dot ' + web.state, title: webStateText(web), 'aria-hidden': 'true' }),
       el('button', {
-        type: 'button', className: 'mini-btn',
-        title: '探测：服务在不在、能不能被 iframe 嵌',
-        onClick: () => webProbe(draft || url),
-      }, probe.state === 'loading' ? '探测中…' : '探测'),
+        type: 'button',
+        className: 'mini-btn wb-more-btn' + (more ? ' on' : ''),
+        title: '更多：探测 / 项目页 / 端口 / 视口 / 系统浏览器',
+        'aria-expanded': more ? 'true' : 'false',
+        onClick: () => webSetMore(!more),
+      }, '⋯'),
     ),
 
-    el('div', { className: 'wb-bar wb-sub' },
-      el('button', {
-        type: 'button', className: 'mini-btn',
-        title: '项目静态托管页（宿主 /site/<项目>/）',
-        onClick: () => { setDraft(''); go(siteUrlOf(project)) },
-      }, '项目页'),
-      el('div', { className: 'wb-ports' },
+    el('div', { ref: menuRef, className: 'wb-more' + (more ? ' open' : '') },
+      el('div', { className: 'wb-more-state ' + web.state }, webStateText(web)),
+      el('div', { className: 'wb-more-row' },
+        el('button', {
+          type: 'button', className: 'mini-btn',
+          title: '探测：服务在不在、能不能被 iframe 嵌',
+          onClick: pick(() => webProbe(extUrl)),
+        }, probe.state === 'loading' ? '探测中…' : '探测'),
+        el('button', {
+          type: 'button', className: 'mini-btn',
+          title: '项目静态托管页（宿主 /site/<项目>/）',
+          onClick: () => { setDraft(''); go(siteUrlOf(project)) },
+        }, '项目页'),
+        el('button', { type: 'button', className: 'mini-btn', title: '复制地址', onClick: () => copyText(url) }, '⧉ 复制'),
+        el('button', {
+          type: 'button', className: 'mini-btn',
+          title: '用系统浏览器打开（iframe 被拒时唯一出路）',
+          onClick: pick(() => webOpenExternal(extUrl)),
+        }, '🚀 系统浏览器'),
+      ),
+      el('div', { className: 'wb-more-row' },
+        el('span', { className: 'wb-more-label' }, '端口'),
         LOCAL_PORTS.map((p) => el('button', {
           key: p, type: 'button', className: 'mini-btn',
           title: '切到 ' + localPortUrl(url, p),
           onClick: () => { setDraft(''); go(localPortUrl(url, p)) },
         }, ':' + p)),
       ),
-      el('div', { className: 'wb-vps' },
+      el('div', { className: 'wb-more-row' },
+        el('span', { className: 'wb-more-label' }, '视口'),
         VIEWPORTS.map((v) => el('button', {
           key: v.id, type: 'button',
           className: 'mini-btn' + (web.viewport === v.id ? ' on' : ''),
           title: '视口宽度：' + v.label,
-          onClick: () => webSetViewport(v.id),
+          onClick: pick(() => webSetViewport(v.id)),
         }, v.label)),
       ),
-      el('span', { className: 'wb-spacer' }),
-      el('span', { className: 'wb-state ' + web.state }, webStateText(web)),
-      el('button', { type: 'button', className: 'mini-btn', title: '复制地址', onClick: () => copyText(url) }, '⧉'),
-      el('button', {
-        type: 'button', className: 'mini-btn', title: '用系统浏览器打开（iframe 被拒时唯一出路）',
-        onClick: () => webOpenExternal(draft || url),
-      }, '🚀 系统浏览器'),
     ),
 
     el('div', { className: 'wb-stage' },
@@ -783,25 +823,23 @@ export function WebPane({ project }) {
             : el('div', { className: 'pane-empty' },
               el('span', { className: 'pe-ico' }, '◍'),
               el('p', null, '浏览器窗格'),
-              el('p', { className: 'hint' }, '默认打开项目的静态托管地址；也可以填本地开发服务器，例如 http://localhost:5173（省略 http:// 也认）。'),
+              el('ul', { className: 'wb-help' },
+                el('li', null, '地址栏填 localhost:5173 或 http://localhost:5173，回车即开；省略 http:// 也认。'),
+                el('li', null, '点右上「⋯」→ 探测：先确认服务活着、以及它允不允许被 iframe 嵌。'),
+                el('li', null, '若被 X-Frame-Options / CSP 拒绝，会出一张说明卡，用「🚀 系统浏览器」打开。'),
+              ),
             ),
         web.state === 'loading' ? el('div', { className: 'wb-loading', 'aria-hidden': 'true' }) : null,
       ),
     ),
 
+    /* 探测结果才占一行；没探测过就不摆提示，把高度全留给页面 */
     probe.state !== 'idle'
       ? el('p', {
         className: 'wb-note ' + (probe.state === 'error' || !probe.ok ? 'warn' : (probe.frameable ? 'ok' : 'warn')),
-      },
-        probe.state === 'loading' ? '探测中…'
-          : probe.state === 'error' ? '探测失败：' + probe.error
-            : probe.ok
-              ? '✅ HTTP ' + (probe.status || '?') + ' · ' + probe.ms + 'ms'
-                + (probe.title ? ' · ' + probe.title : '')
-                + (probe.frameable ? ' · 可以嵌入' : ' · 不能嵌入（' + probe.reason + '）')
-              : '❌ 连不上：' + (probe.error || '没有响应'),
-      )
-      : el('p', { className: 'wb-note' }, '提示：dev server 若带 X-Frame-Options / CSP，iframe 会白屏。先点「探测」，它会提前告诉你能不能嵌。'),
+        title: probeText,
+      }, probeText)
+      : null,
   )
 }
 
