@@ -18,11 +18,29 @@ import { Component } from 'react'
 import CSS from './theme.css'
 import {
   store, useStore, hydrate, setHost, setWorkspace, loadSessions, loadDefaults,
-  closeMenu, closeModal, closeOverlay, startTicker, VERSION, openFile,
+  closeMenu, closeModal, closeOverlay, startTicker, VERSION, openFile, createSessionInDir, switchHostSession, openSearch,
+  searchUrl, webGotoSmart, setTheme, resetTheme, themeStyle, themeAttrs, webHome,
+  moveProjectBefore, setProjectFolder,
+  LAYOUTS, setLayout, setSecondTab, setSplit, uiOf,
+  openTab, closeTab,
+  updateProject, projectOf,
+  loadArtifacts, openArtifact, sendArtifactToChat, openMedia, ARTIFACT_FILE,
+  PROJECT_TEMPLATES, applyTemplate, exportSnapshot, exportSnapshotText, importSnapshot,
+  openModal,
+  registerExternalProject, unregisterExternalProject, openExternalProject, clearExternalProjects,
+  removeProject, undoRemoveProject, toastUndo,
+  overviewProjects, setOverview, OVERVIEW_SORTS, OVERVIEW_FILTERS, setGridTab,
+  handleHotkey, HOTKEYS,
+  setRunConfig, runProject, stopProject, openRunPort,
+  termExec,
+  setSideProject, setSideSplit, sideProjectOf,
+  enterProject,
+  listMediaDir,
 } from './core.js'
 import { el } from './ui.js'
 import { WorktableSidebar } from './sidebar.js'
-import { MainView } from './overlay.js'
+import { MainView, PaneBoundary } from './overlay.js'
+import { kindOfMediaPath, mediaRowsOf } from './panes.js'
 
 const PANEL_ID = 'trae-usage-worktable'
 const OVERLAY_ID = PANEL_ID + '-main'
@@ -30,9 +48,18 @@ const OVERLAY_ID = PANEL_ID + '-main'
 export const inject = ['slots']
 export { VERSION }
 /* 让位接口出口（离线自测用）：宽度换算 + 施加/还原，不参与运行时调用 */
-export { computeDock, attachHost, applyDock, releaseDock } from './hostdock.js'
+export { computeDock, attachHost, applyDock, releaseDock, dockAspect } from './hostdock.js'
 /* 离线自测出口：暴露编辑器状态与 openFile，便于断言「未保存改动不被覆盖」守卫 */
-export { store, openFile }
+export { store, openFile, createSessionInDir, switchHostSession, searchUrl, webGotoSmart, setTheme, resetTheme, themeStyle, themeAttrs, webHome, openSearch, moveProjectBefore, setProjectFolder,
+  LAYOUTS, setLayout, setSecondTab, setSplit, uiOf, openTab, closeTab, updateProject,
+  loadArtifacts, openArtifact, sendArtifactToChat, openMedia,
+  PROJECT_TEMPLATES, applyTemplate, exportSnapshot, exportSnapshotText, importSnapshot, openModal, closeModal,
+  registerExternalProject, unregisterExternalProject, openExternalProject,
+  removeProject, undoRemoveProject, toastUndo, PaneBoundary,
+  overviewProjects, setOverview, setGridTab,
+  handleHotkey, HOTKEYS,
+  setRunConfig, runProject, stopProject, openRunPort, hydrate, termExec,
+  setSideProject, setSideSplit, sideProjectOf, enterProject, kindOfMediaPath, mediaRowsOf, listMediaDir }
 
 class SidebarBoundary extends Component {
   constructor(props) { super(props); this.state = { err: null } }
@@ -97,6 +124,8 @@ export function apply(ctx) {
   /* Esc：先关菜单 → 再关弹窗 → 最后关主区 */
   ctx.effect(() => {
     const onKey = (e) => {
+      /* 统一入口：搜索 / 新建 / 总览 / 切标签 / 关标签 / 切项目 */
+      if (handleHotkey(e)) return
       if (e.key !== 'Escape') return
       if (store.menu) { closeMenu(); return }
       if (store.modal) { closeModal(); return }
@@ -106,12 +135,35 @@ export function apply(ctx) {
     return () => document.removeEventListener('keydown', onKey, true)
   }, 'trae-usage-worktable: esc')
 
+  /* 对外注册表：其他插件把项目塞进工作台（只挂函数，dispose 时摘掉） */
+  ctx.effect(() => {
+    if (typeof window === 'undefined') return () => {}
+    window.__WT_REGISTER_PROJECT__ = registerExternalProject
+    window.__WT_UNREGISTER_PROJECT__ = unregisterExternalProject
+    window.__WT_OPEN_PROJECT__ = openExternalProject
+    return () => {
+      try {
+        delete window.__WT_REGISTER_PROJECT__
+        delete window.__WT_UNREGISTER_PROJECT__
+        delete window.__WT_OPEN_PROJECT__
+      } catch { /* 只读环境 */ }
+      clearExternalProjects()
+    }
+  }, 'trae-usage-worktable: external api')
+
   /* 心跳：控制室计时 */
   ctx.effect(() => startTicker(), 'trae-usage-worktable: ticker')
 
   /* 会话快照轮询：只读宿主内存，不调模型。4s 一次，状态灯才跟得上对话 */
+  /* 会话快照轮询：可见时 4s；窗口隐藏时每 8 拍（32s）才拉一次，省电也少打扰宿主 */
   ctx.effect(() => {
-    const timer = setInterval(() => { loadSessions() }, 4_000)
+    let ticks = 0
+    const timer = setInterval(() => {
+      ticks += 1
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
+      if (hidden && ticks % 8 !== 0) return
+      loadSessions()
+    }, 4_000)
     return () => clearInterval(timer)
   }, 'trae-usage-worktable: poll')
 

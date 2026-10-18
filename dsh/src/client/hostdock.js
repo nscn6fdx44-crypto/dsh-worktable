@@ -15,15 +15,35 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 
 /** 右边至少留这么多给对话，否则输入框会挤成一条 */
-const MIN_CHAT = 380
+const MIN_CHAT = 220
 /** 首次进入项目时，工作台占中间轨道的大致比例（偏大，工作区才够用） */
-const AUTO_RATIO = 0.64
+const AUTO_RATIO = 0.95
 /** 再窄就不像工作台了 */
-const MIN_DOCK = 420
+const MIN_DOCK = 560
 
 const host = { layer: null, frame: null, center: null, saved: '', ready: false }
 let applied = 0
 let geo = { ready: false, left: 0, top: 0, width: 0, height: 0, track: 0, max: 0 }
+
+/** 最近一次实际让位后的主区尺寸：主题小窗的取景框要跟它同比例 */
+let lastSize = { width: 0, height: 0 }
+
+/**
+ * 主区宽高比（取景框按它来，所见即所得）。
+ * 还没让位过就按窗口比例 × 0.8 估算；实在拿不到退回 1.6。
+ */
+export function dockAspect() {
+  if (lastSize.width > 0 && lastSize.height > 0) return lastSize.width / lastSize.height
+  const w = (typeof window !== 'undefined' && window.innerWidth) || 0
+  const h = (typeof window !== 'undefined' && window.innerHeight) || 0
+  if (w > 0 && h > 0) {
+    /* 用同一套 computeDock 估算：中间轨道 ≈ 窗口宽 - 宿主侧边栏（280），高度就是窗口高 */
+    const track = Math.max(0, w - 280)
+    const est = computeDock({ track, preferred: 0 }).width || Math.round(track * AUTO_RATIO)
+    if (est > 0 && h > 0) return Math.max(0.5, Math.min(3.2, est / h))
+  }
+  return 1.6
+}
 
 /**
  * 纯函数：算出工作台该占多宽。
@@ -33,6 +53,8 @@ export function computeDock({ track, preferred }) {
   const t = Math.max(0, Math.round(Number(track) || 0))
   if (!t) return { width: 0, max: 0 }
   const max = Math.max(0, t - MIN_CHAT)
+  /* 轨道窄到连最小工作台都放不下时干脆不让位（返回 0） */
+  if (max < 320) return { width: 0, max }
   const want = Number(preferred) > 0 ? Math.round(Number(preferred)) : Math.round(t * AUTO_RATIO)
   const lo = Math.min(MIN_DOCK, max)
   return { width: Math.max(lo, Math.min(want, max)), max }
@@ -77,6 +99,7 @@ function measure() {
       width: applied,
       max: Math.max(0, track - MIN_CHAT),
     }
+    if (geo.width > 0 && geo.height > 0) lastSize = { width: geo.width, height: geo.height }
   } catch {
     geo = { ...geo, ready: false }
   }

@@ -112,7 +112,15 @@ export function Toasts() {
   useStore()
   if (!store.toasts.length) return null
   return el('div', { className: 'toasts' },
-    store.toasts.map((t) => el('div', { key: t.id, className: 'toast ' + (t.kind || '') }, t.text)),
+    store.toasts.map((t) => el('div', { key: t.id, className: 'toast ' + (t.kind || '') },
+      el('span', { className: 'toast-text' }, t.text),
+      typeof t.onUndo === 'function'
+        ? el('button', {
+          type: 'button', className: 'toast-undo',
+          onClick: (e) => { e.preventDefault(); e.stopPropagation(); t.onUndo() },
+        }, '撤销')
+        : null,
+    )),
   )
 }
 

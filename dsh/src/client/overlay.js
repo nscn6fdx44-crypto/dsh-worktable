@@ -8,7 +8,7 @@
  *
  * 让位几何全部来自 hostdock.js，组件只消费 geo，不直接碰宿主 DOM。
  */
-import { useRef } from 'react'
+import { Component, useRef } from 'react'
 import { el, Light, Splitter, ContextMenu, Toasts } from './ui.js'
 import { ModalHost } from './modals.js'
 import { useHostDock } from './hostdock.js'
@@ -16,10 +16,15 @@ import {
   store, useStore, STATES, normState, PANE_TABS, INFO_TAB, GRID_TABS, GRID_PID,
   fmtDuration, relTime, shortPath, projEmoji, openGrid, enterProject, closeOverlay,
   openModal, openMenu, setDockPx, openTab, closeTab, setActiveTab,
-  loadSessions, stateOf, sessionsOf, primarySession, projectBySession, createFromSession,
+  loadSessions, stateOf, sessionsOf, primarySession, projectBySession, createFromSession, startSessionDrag, switchHostSession, emit,
+  LAYOUTS, setLayout, setSecondTab, setSplit,
+  themeStyle, themeAttrs,
   jumpToSession, setGridTab, uiOf, flushUi,
+  overviewProjects, setOverview, OVERVIEW_SORTS, OVERVIEW_FILTERS,
+  runProject, stopProject, openRunPort,
+  setSideProject, setSideSplit, sideProjectOf,
 } from './core.js'
-import { InfoPane, FilesPane, EditorPane, TermPane, WebPane, CustomPane } from './panes.js'
+import { InfoPane, FilesPane, EditorPane, TermPane, WebPane, CustomPane, MediaPane, NotesPane } from './panes.js'
 
 export function MainView() {
   useStore()
@@ -49,6 +54,8 @@ export function MainView() {
     'data-ns': 'worktable',
     'data-dock': dockedFit ? '1' : '0',
     ref: rootRef,
+    style: themeStyle(),
+    ...themeAttrs(),
   },
     el('div', {
       className: 'wt-dock' + (dockedFit ? ' is-docked' : ' is-full'),
@@ -83,6 +90,8 @@ export function MainView() {
 function Overview({ ui, geo }) {
   useStore()
   const projects = store.projects.filter((p) => !p.hidden)
+  /* 卡片页用筛选/排序后的列表；页签角标仍显示总数 */
+  const shown = overviewProjects(projects)
   const rows = store.sessions.rows || []
   const running = rows.filter((s) => normState(s.state) === 'working')
   const waiting = rows.filter((s) => normState(s.state) === 'needs-you')
@@ -105,7 +114,7 @@ function Overview({ ui, geo }) {
     setDockPx(GRID_PID, next, persist)
   }
 
-  const board = el(OverviewPane, { tab, projects, rows, running, waiting, badgeOf })
+  const board = el(OverviewPane, { tab, projects, shown, rows, running, waiting, badgeOf })
 
   return el('div', { className: 'dock-wrap' },
     el('header', { className: 'dock-head' },
@@ -140,7 +149,7 @@ function Overview({ ui, geo }) {
 }
 
 /** 总览面板本体：一条页签栏 + 页签内容，和 MainPane 同款 */
-function OverviewPane({ tab, projects, rows, running, waiting, badgeOf }) {
+function OverviewPane({ tab, projects, shown, rows, running, waiting, badgeOf }) {
   return el('div', { className: 'pane pane-main' },
     el('div', { className: 'pane-head tabhead' },
       el('div', { className: 'tabs' },
@@ -160,18 +169,40 @@ function OverviewPane({ tab, projects, rows, running, waiting, badgeOf }) {
       ? el(SessionsTab, { rows })
       : tab === 'running'
         ? el(RunningTab, { running, waiting })
-        : el(ProjectsTab, { projects }),
+        : el(ProjectsTab, { projects: shown, total: projects.length }),
   )
 }
 
-function ProjectsTab({ projects }) {
+function ProjectsTab({ projects, total }) {
+  const ov = store.overview || { q: '', sort: 'recent', filter: 'all' }
   return el('div', { className: 'pane-body overview-body' },
+    el('div', { className: 'ov-filter' },
+      el('input', {
+        className: 'ov-search', value: ov.q, spellCheck: false,
+        placeholder: '搜项目名 / 目录 / 分组 / 备注…',
+        onChange: (e) => setOverview({ q: e.target.value }),
+      }),
+      el('select', {
+        className: 'wt-select ov-sort', value: ov.sort, title: '排序',
+        onChange: (e) => setOverview({ sort: e.target.value }),
+      }, OVERVIEW_SORTS.map((s) => el('option', { key: s.id, value: s.id }, s.label))),
+      el('div', { className: 'ov-chips' },
+        OVERVIEW_FILTERS.map((f) => el('button', {
+          key: f.id, type: 'button',
+          className: 'mini-btn' + (ov.filter === f.id ? ' on' : ''),
+          onClick: () => setOverview({ filter: f.id }),
+        }, f.label)),
+      ),
+      total !== undefined && projects.length !== total
+        ? el('span', { className: 'ov-count mono' }, projects.length + ' / ' + total)
+        : null,
+    ),
     el('div', { className: 'grid' },
       projects.map((p) => el(ProjectCard, { key: p.id, project: p })),
       el(AddCard),
       projects.length ? null : el('div', { className: 'empty' }, '还没有项目，点「＋ 新建」开始'),
     ),
-    el('p', { className: 'grid-note' }, '右击项目或卡片：编辑 · 绑定 · 删除 · 隐藏'),
+    el('p', { className: 'grid-note' }, '右击项目或卡片：编辑 · 绑定 · 删除 · 隐藏；上面可搜索 / 排序 / 筛选'),
   )
 }
 
@@ -190,7 +221,7 @@ function SessionsTab({ rows }) {
   }
   return el('div', { className: 'pane-body overview-body' },
     el('div', { className: 'ov-list' }, rows.map((s) => el(SessionRow, { key: s.id, session: s }))),
-    el('p', { className: 'grid-note' }, '「建为项目」会以会话标题和它自己的工作目录新建一个项目，并立刻进入'),
+    el('p', { className: 'grid-note' }, '「建为项目」会以会话标题和它自己的工作目录新建一个项目并立刻进入；也可以把整行拖到左侧工作台'),
   )
 }
 
@@ -218,7 +249,12 @@ function RunningTab({ running, waiting }) {
 function SessionRow({ session, timing }) {
   const st = normState(session.state)
   const project = projectBySession(session.id)
-  return el('div', { className: 'ov-row', 'data-state': st },
+  return el('div', {
+    className: 'ov-row', 'data-state': st,
+    draggable: 'true',
+    title: '按住拖到左侧工作台，可直接用这条会话新建项目',
+    onDragStart: (e) => startSessionDrag(e, session),
+  },
     el('span', { className: 'light ' + st, 'aria-hidden': 'true' }),
     el('div', { className: 'ov-main' },
       el('b', { className: 'ov-title', title: session.id }, session.title || session.id),
@@ -292,6 +328,8 @@ function AddCard() {
 
 function Workspace({ project, ui, geo }) {
   const primary = primarySession(project)
+  const sideProject = sideProjectOf(project.id)
+  const sideUi = sideProject ? uiOf(sideProject.id) : null
 
   /* 工作台右边缘：直接改让位宽度，拖的同时右侧对话跟着变宽变窄 */
   const onDock = (next, persist) => {
@@ -309,11 +347,45 @@ function Workspace({ project, ui, geo }) {
         el('span', { className: 'dh-dot', 'aria-hidden': 'true' }, '·'),
         el('span', { className: 'dh-sub mono', title: project.path }, shortPath(project.path || '未设置目录', 30)),
         /* 状态灯只留左边那一个（项目聚合状态）；这里别再放灯，两个灯会互相打脸 */
-        primary ? el('span', { className: 'dh-chat', title: '右侧对话：' + (primary.title || primary.id) },
-          String(primary.title || primary.id).slice(0, 14),
-        ) : el('span', { className: 'dh-chat off' }, '未绑定对话'),
+        primary ? el('button', {
+          type: 'button',
+          className: 'dh-chat',
+          title: '把右侧对话切到「' + (primary.title || primary.id) + '」（宿主没切过来时点这里）',
+          onClick: () => {
+            switchHostSession(primary.id).then((r) => {
+              toast(r.ok ? '已切到对话：' + (primary.title || primary.id) : '切对话失败：' + (r.error || '未知原因'), r.ok ? 'ok' : 'warn')
+              if (r.ok) loadSessions()
+            })
+          },
+        }, String(primary.title || primary.id).slice(0, 14)) : el('span', { className: 'dh-chat off' }, '未绑定对话'),
       ),
       el('div', { className: 'dh-tools' },
+        el('button', {
+          type: 'button',
+          className: 'mini-btn' + (sideProject ? ' on' : ''),
+          title: sideProject ? '取消并排（现在是「' + (sideProject.alias || sideProject.name) + '」）' : '并排放一个项目',
+          onClick: () => (sideProject ? setSideProject('') : openModal('side', project.id)),
+        }, '⫼'),
+        el('button', {
+          type: 'button',
+          className: 'mini-btn run-btn' + ((store.run.pid === project.id && store.run.state === 'running') ? ' on' : ''),
+          title: (project.run && project.run.cmd)
+            ? ((store.run.pid === project.id && store.run.state === 'running') ? '停止：' + project.run.cmd : '运行：' + project.run.cmd)
+            : '还没配运行命令（编辑项目里填）',
+          onClick: () => {
+            if (store.run.pid === project.id && store.run.state === 'running') { stopProject(project.id); return }
+            const res = runProject(project.id)
+            if (!res.ok && res.error === 'no-run-config') openModal('edit', project.id)
+          },
+        }, (store.run.pid === project.id && store.run.state === 'running') ? '■' : '▶'),
+        el('div', { className: 'layout-switch' },
+          LAYOUTS.map((L) => el('button', {
+            key: L.id, type: 'button',
+            className: 'mini-btn' + ((ui.layout || 'single') === L.id ? ' on' : ''),
+            title: L.hint,
+            onClick: () => setLayout(project.id, L.id),
+          }, L.icon)),
+        ),
         el('button', {
           type: 'button',
           className: 'mini-btn' + (ui.activeTab === INFO_TAB.id ? ' on' : ''),
@@ -326,7 +398,33 @@ function Workspace({ project, ui, geo }) {
     ),
 
     el('div', { className: 'ws' },
-      el(MainPane, { key: 'main', project, ui }),
+      sideProject && sideUi
+        ? el('div', { className: 'ws-side' },
+          el('div', { className: 'ws-cell side-cell', style: { width: ((store.side && store.side.split) || 50) + '%' } },
+            el('div', { className: 'side-head' },
+              el('span', { className: 'dh-ico', 'aria-hidden': 'true' }, projEmoji(project)),
+              el('b', null, project.alias || project.name),
+              el('button', {
+                type: 'button', className: 'mini-btn', title: '把这一侧设为主项目',
+                onClick: () => { const other = sideProject.id; setSideProject(''); enterProject(other) },
+              }, '⇄'),
+            ),
+            el(Panes, { key: 'a', project, ui }),
+          ),
+          el(PaneSplit, { vertical: true, onPct: (v) => setSideSplit(v) }),
+          el('div', { className: 'ws-cell side-cell side-b' },
+            el('div', { className: 'side-head' },
+              el('span', { className: 'dh-ico', 'aria-hidden': 'true' }, projEmoji(sideProject)),
+              el('b', null, sideProject.alias || sideProject.name),
+              el('button', {
+                type: 'button', className: 'mini-btn', title: '关闭并排',
+                onClick: () => setSideProject(''),
+              }, '✕'),
+            ),
+            el(Panes, { key: 'b', project: sideProject, ui: sideUi }),
+          ),
+        )
+        : el(Panes, { key: 'panes', project, ui }),
       /* 右边缘 = 工作台 / 对话的分界，拖动即改让位宽度 */
       el(Splitter, {
         key: 'edge', pid: project.id, side: 'left', className: 'dock-edge',
@@ -336,14 +434,70 @@ function Workspace({ project, ui, geo }) {
   )
 }
 
-function MainPane({ project, ui, nest }) {
+function Panes({ project, ui }) {
+  const layout = ui.layout || 'single'
+  const tabs = ui.tabs || []
+  /* 分栏但没有第二个窗口可用时退回单窗格，避免出现半块空白 */
+  if (layout === 'single' || tabs.length < 2) return el(MainPane, { key: 'main', project, ui, slot: 'a' })
+  const vertical = layout === 'vsplit'
+  const pct = ui.split > 0 ? ui.split : 50
+  const box = (which) => (vertical
+    ? { width: (which === 'a' ? pct : 100 - pct) + '%' }
+    : { height: (which === 'a' ? pct : 100 - pct) + '%' })
+  return el('div', { className: 'ws-split ' + (vertical ? 'v' : 'h') },
+    el('div', { className: 'ws-cell', style: box('a') }, el(MainPane, { key: 'a', project, ui, slot: 'a' })),
+    el(PaneSplit, { vertical, onPct: (v) => setSplit(project.id, v) }),
+    el('div', { className: 'ws-cell', style: box('b') }, el(MainPane, { key: 'b', project, ui, slot: 'b' })),
+  )
+}
+
+/** 两栏之间的拖动条（按父容器尺寸换算百分比，横竖都支持） */
+function PaneSplit({ vertical, onPct }) {
+  const down = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const parent = e.currentTarget.parentElement
+    if (!parent || !parent.getBoundingClientRect) return
+    const rect = parent.getBoundingClientRect()
+    const move = (ev) => {
+      const pct = vertical
+        ? ((ev.clientX - rect.left) / Math.max(1, rect.width)) * 100
+        : ((ev.clientY - rect.top) / Math.max(1, rect.height)) * 100
+      onPct(Math.max(20, Math.min(80, Math.round(pct))))
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      document.body.classList.remove('wt-dragging')
+    }
+    document.body.classList.add('wt-dragging')
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  return el('div', {
+    className: 'pane-split ' + (vertical ? 'v' : 'h'),
+    role: 'separator',
+    'aria-orientation': vertical ? 'vertical' : 'horizontal',
+    title: '拖动调整两栏比例（双击回到 50/50）',
+    onPointerDown: down,
+    onDoubleClick: () => onPct(0),
+  }, el('i', null))
+}
+
+function MainPane({ project, ui, nest, slot }) {
   const tabs = ui.tabs
-  const activeKey = ui.activeTab || (tabs[0] ? tabs[0].key : '')
+  const isB = slot === 'b'
+  /* 第二窗格默认挑一个和第一窗格不同的标签页 */
+  const fallbackB = (tabs.find((t) => t.key !== ui.activeTab) || tabs[0] || {}).key || ''
+  const activeKey = isB
+    ? (ui.secondTab || fallbackB)
+    : (ui.activeTab || (tabs[0] ? tabs[0].key : ''))
   const active = tabs.find((t) => t.key === activeKey) || null
 
   const titleOf = (t) => (t.kind === 'editor' ? (store.editor.name || '编辑器') : t.title)
+  const pick = (key) => (isB ? setSecondTab(project.id, key) : setActiveTab(project.id, key))
 
-  return el('div', { className: 'pane pane-main' + (nest ? ' pane-nest' : '') },
+  return el('div', { className: 'pane pane-main' + (nest ? ' pane-nest' : '') + (isB ? ' pane-b' : '') },
     el('div', { className: 'pane-head tabhead' },
       el('div', { className: 'tabs' },
         tabs.length
@@ -351,7 +505,8 @@ function MainPane({ project, ui, nest }) {
             key: t.key,
             className: 'tab' + (t.key === activeKey ? ' on' : ''),
             role: 'button',
-            onClick: () => setActiveTab(project.id, t.key),
+            title: isB ? '在这一栏打开：' + titleOf(t) : '打开：' + titleOf(t),
+            onClick: () => pick(t.key),
           },
             el('span', { className: 'tab-title' }, titleOf(t)),
             el('button', {
@@ -362,29 +517,73 @@ function MainPane({ project, ui, nest }) {
           : el('span', { className: 'tab-empty' }, '工作区'),
       ),
       el('div', { className: 'tab-add' },
-        PANE_TABS.map((t) => el('button', {
-          key: t.id, type: 'button', className: 'mini-btn', title: '打开' + t.label,
-          onClick: () => openTab(project.id, t.id),
-        }, t.icon + ' ' + t.label)),
+        el('button', {
+          type: 'button',
+          className: 'mini-btn' + (store.tabMenu ? ' on' : ''),
+          title: '新建窗口',
+          onClick: () => emit({ tabMenu: !store.tabMenu }),
+        }, '＋ 窗口'),
+        el('div', { className: 'tab-menu' + (store.tabMenu ? ' open' : '') },
+          PANE_TABS.map((t) => el('button', {
+            key: t.id, type: 'button', className: 'ctx-item',
+            onClick: () => { emit({ tabMenu: false }); openTab(project.id, t.id) },
+          }, el('span', null, t.icon + ' ' + t.label))),
+        ),
       ),
     ),
 
     active
-      ? renderPane(active.kind, project)
+      ? el(PaneBoundary, { key: active.key }, renderPane(active.kind, project))
       : el('div', { className: 'pane-body' },
         el('div', { className: 'pane-empty' },
           el('span', { className: 'pe-ico' }, '◫'),
-          el('p', null, '工作区还没有打开任何窗口'),
-          el('p', { className: 'hint' }, '用右上角的按钮打开「文件管理器」/ 编辑器 / 终端 / 浏览器 / 自定义窗口；文件管理器会直接弹系统窗口。'),
-          el('div', { className: 'pe-actions' },
-            PANE_TABS.map((t) => el('button', {
-              key: t.id, type: 'button', className: 'btn small',
-              onClick: () => openTab(project.id, t.id),
-            }, t.icon + ' ' + t.label)),
-          ),
+          el('p', null, '这一栏还没有内容'),
+          el('p', { className: 'hint' }, '点标签页把窗口放到这一栏；顶部 ◫ / ⬓ 可以切成两栏同时看。'),
         ),
       ),
   )
+}
+
+/**
+ * 窗格级错误边界：某一格渲染崩了只坏这一格，其余（标签页、另一栏、对话）照常。
+ * 支持「重试」（重挂子树）。
+ */
+export class PaneBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { err: null, tries: 0 }
+    this.retry = this.retry.bind(this)
+  }
+
+  static getDerivedStateFromError(err) {
+    return { err }
+  }
+
+  componentDidCatch(err) {
+    /* 只记录，不往上抛：其它窗格要活着 */
+    if (typeof console !== 'undefined' && console.warn) console.warn('[worktable] 窗格渲染失败', err)
+  }
+
+  retry() {
+    this.setState({ err: null, tries: (this.state.tries || 0) + 1 })
+  }
+
+  render() {
+    const err = this.state.err
+    if (!err) {
+      return el('div', { className: 'pane-boundary', 'data-tries': String(this.state.tries || 0) }, this.props.children)
+    }
+    return el('div', { className: 'pane-body pane-crash' },
+      el('div', { className: 'pane-empty' },
+        el('span', { className: 'pe-ico' }, '⚠'),
+        el('p', null, '这个窗格渲染失败了'),
+        el('p', { className: 'hint mono' }, String((err && err.message) || err)),
+        el('div', { className: 'pe-actions' },
+          el('button', { type: 'button', className: 'btn small primary', onClick: this.retry }, '重新加载此窗格'),
+        ),
+      ),
+    )
+  }
 }
 
 function renderPane(kind, project) {
@@ -393,5 +592,7 @@ function renderPane(kind, project) {
   if (kind === 'term') return el(TermPane, { project })
   if (kind === 'web') return el(WebPane, { project })
   if (kind === 'custom') return el(CustomPane, { project })
+  if (kind === 'media') return el(MediaPane, { project })
+  if (kind === 'notes') return el(NotesPane, { project })
   return el(EditorPane, { project })
 }

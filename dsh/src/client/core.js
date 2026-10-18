@@ -13,6 +13,9 @@ export const VERSION = typeof __WT_VERSION__ === 'undefined' ? 'dev' : __WT_VERS
 
 /* ============================ 常量 ============================ */
 
+/** 让位宽度记忆版本：默认占比/最小值一变就 +1，旧项目存的像素值自动作废、回到「自动」 */
+const DOCK_VERSION = 2
+
 const LS = {
   projects: 'wt.projects',
   bindings: 'wt.bindings',
@@ -22,6 +25,12 @@ const LS = {
   view: 'wt.view',
   termHist: 'wt.termHistory',
   web: 'wt.web',
+  search: 'wt.search',
+  theme: 'wt.theme',
+  dockVer: 'wt.dockVer',
+  overview: 'wt.overview',
+  gridTab: 'wt.gridTab',
+  side: 'wt.side',
 }
 
 export const STATES = {
@@ -53,6 +62,8 @@ export const PANE_TABS = [
   { id: 'term', label: '终端', icon: '›_' },
   { id: 'web', label: '浏览器', icon: '◍' },
   { id: 'custom', label: '自定义', icon: '❖' },
+  { id: 'media', label: '媒体', icon: '🖼' },
+  { id: 'notes', label: '笔记', icon: '✎' },
 ]
 
 /** 项目信息（状态 / 绑定 / git）不在快捷按钮里，单独从顶栏进 */
@@ -204,6 +215,17 @@ export const store = {
   status: {},                   // 手工覆盖态（跟绑定会话冲突时以手工为准）
   defaults: { workspace: '', home: '', shell: '', loaded: false },
   sessions: { state: 'pending', counts: null, rows: [], at: 0, error: '', source: '' },
+  dragOver: false,              // 有会话/目录正拖到侧边栏上（决定高亮与提示）
+  theme: { accent: 'amber', bg: 'glass', image: '', brightness: 100, crop: { x: 0, y: 0, w: 100, h: 100 } },   // 自定义主题与背景（wt.theme）
+  external: [],   // 别的插件透过 __WT_REGISTER_PROJECT__ 注册进来的项目（不落盘，插件重启会重注册）
+  trash: [],      // 最近删除的项目（内存里留 5 个，供「撤销」）
+  run: { pid: '', state: 'idle', cmd: '', at: 0, error: '' },   // 当前项目的运行状态（内存）
+  /* 并排：同一块让位区里再放一个项目的工作区（存 wt.side） */
+  side: { pid: '', split: 50 },
+  /* 总览的排序 / 筛选 / 就地搜索（存 wt.overview） */
+  overview: { q: '', sort: 'recent', filter: 'all' },
+  media: { pid: '', path: '' },   // 媒体窗当前预览的文件（由「产物」或编辑器推过来）
+  artifacts: { pid: '', dir: '', file: '', items: [], error: '', at: 0 },   // 项目目录 .wt/artifact.json
   /* 文件管理器：一次只列一个目录，path/parent 用于面包屑与「上一级」；pid 记住是哪个项目的树 */
   tree: { state: 'idle', pid: '', path: '', name: '', parent: '', writable: true, entries: [], total: 0, truncated: false, error: '', at: 0 },
   /* 文件管理器的视图偏好（排序 / 过滤 / 选中项），纯前端 */
@@ -221,10 +243,11 @@ export const store = {
   /* 浏览器窗格：地址栏历史 + 加载态 + 视口 + 探测结果（探测能提前知道「能不能嵌」） */
   web: {
     pid: '', defaultUrl: '', url: '', state: 'idle', error: '',
-    at: 0, startedAt: 0, ms: 0, viewport: 'auto',
+    at: 0, startedAt: 0, ms: 0, viewport: 'auto', engine: 'bing',
     history: [], index: -1,
     /* 「⋯」下拉是否展开：跟 fs.menu 一样走 store，重渲染不掉 */
     more: false,
+    home: false,
     probe: { state: 'idle', url: '', ok: false, status: 0, ms: 0, title: '', frameable: true, reason: '', error: '', at: 0 },
   },
   /* 自定义窗口库：列表 / 当前条目 / 编辑副本 / 三种视图（生成 · 预览 · 编辑） */
@@ -283,6 +306,12 @@ function normalizeProject(raw) {
     created: String(p.created || p.updated || new Date().toISOString().slice(0, 10)),
     updated: String(p.updated || new Date().toISOString().slice(0, 10)),
     sessions,
+    /* 运行配置：一键起服务用的命令（不自动执行任何东西，用户点了才跑） */
+    run: {
+      cmd: String((p.run && p.run.cmd) || p.runCmd || ''),
+      port: Number((p.run && p.run.port) || p.runPort || 0) || 0,
+      cwd: String((p.run && p.run.cwd) || ''),
+    },
   }
 }
 
@@ -303,6 +332,29 @@ export function hydrate() {
     return rec
   })
 
+  /* 旧版本存的是「当时的默认占比」算出的像素：占比一改就跟预期不符，这里整批作废回自动 */
+  const dockVer = readLS(LS.dockVer, 0)
+  if (dockVer !== DOCK_VERSION) {
+    for (const key of Object.keys(ui)) {
+      if (ui[key] && typeof ui[key] === 'object') ui[key] = { ...ui[key], dock: 0 }
+    }
+    writeLS(LS.ui, ui)
+    writeLS(LS.dockVer, DOCK_VERSION)
+  }
+
+  const ovRaw = readLS(LS.overview, {}) || {}
+  const overview = {
+    q: typeof ovRaw.q === 'string' ? ovRaw.q : '',
+    sort: OVERVIEW_SORTS.some((s) => s.id === ovRaw.sort) ? ovRaw.sort : 'recent',
+    filter: OVERVIEW_FILTERS.some((f) => f.id === ovRaw.filter) ? ovRaw.filter : 'all',
+  }
+
+  /* 并排项目被删了：静默清掉，免得每次渲染都找人 */
+  const rawSide = normalizeSide(readLS(LS.side, {}))
+  const sideClean = rawSide.pid && !projects.some((p) => p.id === rawSide.pid) ? { ...rawSide, pid: '' } : rawSide
+  if (sideClean.pid !== rawSide.pid) writeLS(LS.side, sideClean)
+
+  const engine = readLS(LS.search, 'bing')
   emit({
     ready: true,
     projects,
@@ -310,6 +362,11 @@ export function hydrate() {
     ui: ui && typeof ui === 'object' ? ui : {},
     view: readLS(LS.view, 'grid') === 'project' ? 'project' : 'grid',
     terms: {},
+    web: { ...store.web, engine: SEARCH_ENGINES.some((e) => e.id === engine) ? engine : 'bing' },
+    theme: normalizeTheme(readLS(LS.theme, DEFAULT_THEME)),
+    overview,
+    gridTab: GRID_TABS.some((t) => t.id === readLS(LS.gridTab, '')) ? readLS(LS.gridTab, '') : 'projects',
+    side: sideClean,
   })
 }
 
@@ -328,6 +385,10 @@ export function uiOf(pid) {
     dock: Number.isFinite(dock) && dock > 0 ? Math.round(dock) : 0,
     tabs: Array.isArray(raw.tabs) ? raw.tabs : [],
     activeTab: typeof raw.activeTab === 'string' ? raw.activeTab : '',
+    /* 布局预设：单窗格 / 左右 / 上下；split=0 表示 50/50 */
+    layout: LAYOUTS.some((l) => l.id === raw.layout) ? raw.layout : 'single',
+    secondTab: typeof raw.secondTab === 'string' ? raw.secondTab : '',
+    split: Number.isFinite(Number(raw.split)) && Number(raw.split) > 0 ? Math.round(Number(raw.split)) : 0,
   }
 }
 
@@ -337,6 +398,95 @@ function patchUi(pid, patch, persist = true) {
   emit({ ui })
   if (persist) writeLS(LS.ui, ui)
   return next
+}
+
+
+/* ============================ 主题与背景 ============================ */
+
+/** 强调色预设（只换色相，深浅关系不变） */
+export const ACCENTS = [
+  { id: 'amber', label: '琥珀金', rgb: '240, 180, 41', ink: '246, 218, 156' },
+  { id: 'blue', label: '深海蓝', rgb: '78, 161, 255', ink: '198, 222, 255' },
+  { id: 'green', label: '松石绿', rgb: '63, 185, 80', ink: '200, 240, 210' },
+  { id: 'violet', label: '夜紫', rgb: '167, 139, 250', ink: '225, 214, 255' },
+  { id: 'rose', label: '玫瑰红', rgb: '244, 114, 182', ink: '255, 214, 235' },
+]
+
+/** 背景风格 */
+export const BACKDROPS = [
+  { id: 'glass', label: '玻璃渐变', hint: '默认：暖色光斑 + 玻璃底' },
+  { id: 'grid', label: '蓝图网格', hint: '30px 井字格，工程感更重' },
+  { id: 'plain', label: '纯色', hint: '只留深底，最省电' },
+  { id: 'image', label: '自定义图片', hint: '填图片 URL，铺满并压暗' },
+]
+
+const DEFAULT_THEME = { accent: 'amber', bg: 'glass', image: '', brightness: 100, crop: { x: 0, y: 0, w: 100, h: 100 } }
+const EMPTY_CROP = { x: 0, y: 0, w: 100, h: 100 }
+
+/** 取景框：图片区域百分比；最小 15%，不许出界 */
+function normalizeCrop(raw) {
+  const c = raw && typeof raw === 'object' ? raw : EMPTY_CROP
+  const num = (v, dv) => (Number.isFinite(Number(v)) ? Math.round(Number(v)) : dv)
+  /* 取景台本身是主区比例，所以「宽高百分比相等」的框 = 和主区同比例 */
+  const size = Math.min(100, Math.max(15, num(c.w, 100)))
+  return {
+    w: size,
+    h: size,
+    x: Math.min(100 - size, Math.max(0, num(c.x, 0))),
+    y: Math.min(100 - size, Math.max(0, num(c.y, 0))),
+  }
+}
+
+function normalizeTheme(raw) {
+  const t = raw && typeof raw === 'object' ? raw : {}
+  return {
+    accent: ACCENTS.some((a) => a.id === t.accent) ? t.accent : DEFAULT_THEME.accent,
+    bg: BACKDROPS.some((b) => b.id === t.bg) ? t.bg : DEFAULT_THEME.bg,
+    image: typeof t.image === 'string' && /^(https?:|data:image\/)/i.test(t.image) ? t.image : '',
+    brightness: Math.min(160, Math.max(40, Number.isFinite(Number(t.brightness)) ? Math.round(Number(t.brightness)) : 100)),
+    crop: normalizeCrop(t.crop),
+  }
+}
+
+/** 改主题：只传要改的字段，非法值会被归一掉，落 localStorage */
+export function setTheme(patch) {
+  const theme = normalizeTheme({ ...store.theme, ...(patch || {}) })
+  emit({ theme })
+  writeLS(LS.theme, theme)
+}
+
+export function resetTheme() {
+  setTheme(DEFAULT_THEME)
+  toast('已恢复默认主题', 'ok')
+}
+
+/** 根节点行内样式：把强调色拆成 RGB 变量，CSS 里 rgba(var(--amber-rgb), x) 全部跟着变 */
+export function themeStyle() {
+  const t = store.theme || DEFAULT_THEME
+  const a = ACCENTS.find((x) => x.id === t.accent) || ACCENTS[0]
+  const style = {
+    '--amber-rgb': a.rgb,
+    '--amber-ink-rgb': a.ink,
+    '--amber': 'rgb(' + a.rgb + ')',
+    '--amber-soft': 'rgba(' + a.rgb + ', .12)',
+    '--amber-line': 'rgba(' + a.rgb + ', .30)',
+  }
+  style['--wt-bright'] = String((Number(t.brightness) || 100) / 100)
+  const c = t.crop || EMPTY_CROP
+  /* 取景框 → 背景：放大到框宽占满，再用百分比对位（pos% = x / (100 - w)） */
+  style['--wt-bg-size'] = (10000 / Math.max(1, c.w)).toFixed(2) + '% auto'
+  style['--wt-bg-px'] = (c.w >= 100 ? 0 : (c.x / (100 - c.w)) * 100).toFixed(2) + '%'
+  style['--wt-bg-py'] = (c.h >= 100 ? 0 : (c.y / (100 - c.h)) * 100).toFixed(2) + '%'
+  style['--wt-bg-x'] = (c.x + c.w / 2).toFixed(0) + '%'
+  style['--wt-bg-y'] = (c.y + c.h / 2).toFixed(0) + '%'
+  if (t.image) style['--wt-bg-image'] = 'url("' + t.image.replace(/"/g, '%22') + '")'
+  return style
+}
+
+/** 根节点 data 属性：背景风格靠它切 CSS */
+export function themeAttrs() {
+  const t = store.theme || DEFAULT_THEME
+  return { 'data-bg': t.bg, 'data-accent': t.accent }
 }
 
 /* ============================ 会话绑定 ============================ */
@@ -460,6 +610,19 @@ export function toast(text, kind) {
   setTimeout(() => emit({ toasts: store.toasts.filter((t) => t.id !== id) }), 3400)
 }
 
+/** 带「撤销」按钮的 toast：留 9 秒，点了就执行 onUndo */
+export function toastUndo(text, onUndo) {
+  const id = ++seq
+  const item = { id, text: String(text), kind: 'info', onUndo }
+  emit({ toasts: store.toasts.concat([item]) })
+  setTimeout(() => emit({ toasts: store.toasts.filter((t) => t.id !== id) }), 9000)
+  return id
+}
+
+export function dismissToast(id) {
+  emit({ toasts: store.toasts.filter((t) => t.id !== id) })
+}
+
 /* ============================ 宿主会话服务 ============================ */
 
 let hostCtx = null
@@ -484,9 +647,42 @@ export function setWorkspace(ui) {
  * 全都不可用就返回 ''，由调用方退化成「先建项目，稍后手动绑定」。
  */
 export async function createSessionInDir(dir) {
-  const cwd = String(dir || '').trim()
+  const cwd = String(dir || '').trim() || String(store.defaults.workspace || '')
+
+  /* 0) 客户端 sessions.create：与 GUI「新会话」完全同一条链路，并且会把新会话
+        立刻写进客户端目录 —— 紧接着 openSession 才打得开（host 路由建的不会进目录） */
+  let hostError = ''
+  const client = clientSessions()
+  if (client && typeof client.create === 'function') {
+    try {
+      const id = await client.create(cwd ? { cwd } : {})
+      if (id) {
+        await loadSessions()
+        toast('已新建对话并绑定', 'ok')
+        return String(id)
+      }
+    } catch (err) {
+      hostError = String(err?.message ?? err)
+    }
+  }
+
+  /* 1) 退到宿主路由 /session/create：host 侧调 sessionController.create */
+  try {
+    const data = await apiPost('/session/create', { cwd }, { timeout: 20_000 })
+    const id = data && data.ok !== false ? String(data.sessionId || '') : ''
+    if (id) {
+      await loadSessions()
+      toast('已新建对话并绑定', 'ok')
+      return id
+    }
+    if (data && data.error) hostError = String(data.error)
+  } catch (err) {
+    hostError = String(err?.message ?? err)
+  }
+
+  /* 2) 老宿主没有这条路由时，退回客户端服务猜测（保留兼容） */
   const svcs = [workspaceUi, hostCtx && hostCtx.uiWorkspace, hostCtx && hostCtx.sessions].filter(Boolean)
-  const methods = ['createSession', 'newSession', 'create', 'openSession']
+  const methods = ['createSession', 'newSession', 'create']
   for (const svc of svcs) {
     for (const method of methods) {
       const fn = svc && svc[method]
@@ -505,7 +701,8 @@ export async function createSessionInDir(dir) {
       }
     }
   }
-  toast('宿主没提供新建对话的入口，项目已建好，可稍后手动绑定', 'warn')
+  if (hostError) toast('宿主新建对话失败：' + hostError, 'warn')
+  else toast('宿主没提供新建对话的入口，项目已建好，可稍后手动绑定', 'warn')
   return ''
 }
 
@@ -520,13 +717,81 @@ function sessionIdOf(out) {
   return ''
 }
 
+
+/** 客户端会话服务（提供 create / refresh / retain 的那个）；拿不到就 null */
+function clientSessions() {
+  try {
+    const svc = hostCtx && typeof hostCtx.get === 'function' ? hostCtx.get('sessions') : null
+    if (svc) return svc
+  } catch { /* 未注册 */ }
+  return (hostCtx && hostCtx.sessions) || null
+}
+
+/** uiWorkspace：宿主「打开某条对话」的入口；懒取一次，拿不到就 null */
+function workspaceService() {
+  if (workspaceUi) return workspaceUi
+  try {
+    const svc = hostCtx && typeof hostCtx.get === 'function' ? hostCtx.get('uiWorkspace') : null
+    if (svc) return svc
+  } catch { /* 未注册 */ }
+  return (hostCtx && hostCtx.uiWorkspace) || null
+}
+
+/**
+ * 把宿主主视图切到某条对话（进项目时右侧要显示项目绑定的那条）。
+ *
+ * 只调 openSession 不够：它内部走 sessions.retain()，会话不在**客户端目录**里就会抛
+ * （刚新建 / 还没同步的会话最常见），所以失败后先 sessions.refresh() 把目录拉一遍再重试。
+ * @param sessionId - 目标对话 id。
+ * @returns {Promise<{ok:boolean, error?:string}>} 失败时带原因，调用方决定要不要提示。
+ */
+export async function switchHostSession(sessionId) {
+  const id = String(sessionId || '')
+  if (!id) return { ok: false, error: '没有对话 id' }
+
+  let lastError = ''
+  const attempt = () => {
+    const ui = workspaceService()
+    for (const method of ['openSession', 'open', 'revealSession']) {
+      const fn = ui && ui[method]
+      if (typeof fn !== 'function') continue
+      try { fn.call(ui, id); return true } catch (err) { lastError = String(err?.message ?? err) }
+    }
+    return false
+  }
+
+  if (attempt()) return { ok: true }
+
+  /* 目录可能还没同步这条会话：拉一次再来 */
+  const svc = clientSessions()
+  if (svc && typeof svc.refresh === 'function') {
+    try { await svc.refresh() } catch (err) { lastError = lastError || String(err?.message ?? err) }
+    if (attempt()) return { ok: true }
+  }
+
+  /* 最后再试客户端的 sessions.open（老宿主可能有） */
+  if (svc && typeof svc.open === 'function') {
+    try { svc.open(id); return { ok: true } } catch (err) { lastError = String(err?.message ?? err) }
+  }
+
+  return { ok: false, error: lastError || '宿主没有提供打开对话的入口' }
+}
+
 export function jumpToSession(sessionId) {
   const id = String(sessionId || '')
   if (!id) return false
-  const cands = [workspaceUi, hostCtx && hostCtx.uiWorkspace]
-  for (const ui of cands) {
-    if (ui && typeof ui.openSession === 'function') {
-      try { ui.openSession(id); return true } catch { /* 换下一个入口 */ }
+  /* 宿主可能在不同版本里换过名字：服务上是 openSession，也有把 open 挂出来的 */
+  const svcs = [workspaceUi, hostCtx && hostCtx.uiWorkspace]
+  try {
+    const lazy = hostCtx && typeof hostCtx.get === 'function' ? hostCtx.get('uiWorkspace') : null
+    if (lazy) svcs.push(lazy)
+  } catch { /* 无该服务 */ }
+  for (const svc of svcs) {
+    if (!svc) continue
+    for (const method of ['openSession', 'open', 'revealSession']) {
+      const fn = svc[method]
+      if (typeof fn !== 'function') continue
+      try { fn.call(svc, id); return true } catch { /* 换下一个入口 */ }
     }
   }
   try {
@@ -572,6 +837,11 @@ export async function loadDefaults() {
 
 /* ============================ 视图切换 ============================ */
 
+/** ⌘K / Ctrl+K 全局搜索：项目 + 宿主对话 */
+export function openSearch() {
+  emit({ modal: { kind: 'search', pid: null }, menu: null })
+}
+
 export function openGrid() {
   emit({ open: true, view: 'grid', activeId: null, modal: null, menu: null })
   writeLS(LS.view, 'grid')
@@ -583,17 +853,31 @@ export function openGrid() {
 export function setGridTab(id) {
   if (!GRID_TAB_IDS.includes(id)) return
   if (store.gridTab !== id) emit({ gridTab: id })
+  writeLS(LS.gridTab, id)
 }
 
 export function enterProject(pid) {
+  /* 要进的项目正好在并排位里：先撤掉并排，避免自己和自己并排 */
+  if (store.side && store.side.pid === pid) {
+    emit({ side: { ...store.side, pid: '' } })
+    writeLS(LS.side, { ...store.side, pid: '' })
+  }
+  /* 进项目就把产物清单拉一次（没有 .wt/artifact.json 就安静跳过） */
+  loadArtifacts(pid)
   const project = projectOf(pid)
   if (!project) return
   emit({ open: true, view: 'project', activeId: pid, modal: null, menu: null })
   writeLS(LS.view, 'project')
   /* 右侧就是宿主对话：进项目就把宿主切到主绑定对话，所见即所聊 */
+  /* 右侧就是宿主对话：进项目就把宿主切到主绑定对话。
+     走 switchHostSession：openSession 失败会先 refresh 客户端目录再重试，
+     新建/未同步的会话也能切过去；真失败才提示，并可从顶栏对话名手点重试。 */
   const primary = primarySession(project)
-  const switched = primary ? jumpToSession(primary.id) : false
-  if (primary && !switched) toast('没找到宿主打开对话的入口，右侧可能停在别的对话', 'warn')
+  if (primary) {
+    switchHostSession(primary.id).then((r) => {
+      if (!r.ok) toast('切到绑定对话失败：' + (r.error || '未知原因') + '（点顶栏对话名可重试）', 'warn')
+    })
+  }
   loadSessions()
   if (!store.defaults.loaded) loadDefaults()
   /* 第一次进项目先摆「项目信息」：工作区不至于空着，也不会一进来就弹系统窗口 */
@@ -642,6 +926,108 @@ export function workspaceDirOf(project) {
   return cwd || String((project && project.path) || '')
 }
 
+
+/* ============================ 音乐插件桥 ============================ */
+
+
+
+/* ============================ 拖拽：会话 / 目录 → 新项目 ============================ */
+
+const DRAG_SESSION = 'application/x-dsh-session'
+
+/**
+ * 会话行拖拽起点：把会话身份写进 dataTransfer。
+ * 宿主自己的侧边栏会话行没有实现拖拽（ui-sidebar 里没有 drag 代码），
+ * 所以「从工作区拖一条会话进来」由工作台的会话列表提供拖拽源，落到侧边栏即建项目。
+ */
+export function startSessionDrag(e, session) {
+  const dt = e && e.dataTransfer
+  if (!dt || !session) return
+  try {
+    dt.setData(DRAG_SESSION, JSON.stringify({
+      id: session.id, title: session.title || '', cwd: session.cwd || '', state: session.state || '',
+    }))
+    dt.setData('text/plain', String(session.id || ''))
+    dt.effectAllowed = 'copy'
+  } catch { /* 某些环境禁止写 dataTransfer */ }
+}
+
+/** 这次拖拽的数据能不能落到工作台（决定 dragover 要不要 preventDefault） */
+export function canDropOnWorktable(e) {
+  const dt = e && e.dataTransfer
+  if (!dt) return false
+  const types = Array.from(dt.types || [])
+  if (types.includes(DRAG_SESSION)) return true
+  if (types.includes('text/plain') || types.includes('text/uri-list') || types.includes('Files')) return true
+  return !!(dt.files && dt.files.length)
+}
+
+/** 从 dataTransfer 里认出「会话」或「目录路径」 */
+export function readDrop(e) {
+  const dt = e && e.dataTransfer
+  if (!dt) return null
+  const get = (fmt) => { try { return String(dt.getData(fmt) || '') } catch { return '' } }
+
+  const custom = get(DRAG_SESSION)
+  if (custom) {
+    try {
+      const j = JSON.parse(custom)
+      if (j && j.id) {
+        return { session: { id: String(j.id), title: String(j.title || ''), cwd: String(j.cwd || ''), state: String(j.state || '') } }
+      }
+    } catch { /* 继续看别的格式 */ }
+  }
+
+  for (const fmt of ['application/json', 'text/plain', 'text/uri-list']) {
+    const raw = get(fmt).trim()
+    if (!raw) continue
+    if (raw.startsWith('{')) {
+      try {
+        const j = JSON.parse(raw)
+        const id = j && (j.id || j.sessionId)
+        if (id) return { session: { id: String(id), title: String(j.title || ''), cwd: String(j.cwd || '') } }
+      } catch { /* 不是 JSON，按文本继续判 */ }
+    }
+    const hit = raw.match(/session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
+    if (hit) return { session: { id: hit[0] } }
+    if (/^session-\S+$/i.test(raw)) return { session: { id: raw } }
+    const filePath = raw.replace(/^file:\/\//i, '')
+    if (/^[a-zA-Z]:[\\/]/.test(filePath)) return { path: filePath }
+  }
+
+  const files = dt.files
+  if (files && files.length) {
+    const f = files[0]
+    const p = String((f && (f.path || f.webkitRelativePath)) || '')
+    if (p) return { path: p }
+  }
+  return null
+}
+
+/** 松手：会话 → 建一个绑定它的项目并进入；目录 → 按目录建项目 */
+export function dropOnWorktable(e) {
+  clearDragOver()
+  const payload = readDrop(e)
+  if (!payload) { toast('没认出拖进来的是会话还是目录', 'warn'); return }
+  if (payload.session) {
+    createFromSession(sessionById(payload.session.id) || payload.session)
+    return
+  }
+  if (payload.path) {
+    const name = baseName(payload.path) || '新项目'
+    const pid = addProject({ name, path: payload.path })
+    if (pid) { toast('已按目录添加项目：' + name, 'ok'); enterProject(pid) }
+    return
+  }
+  toast('没认出拖进来的是会话还是目录', 'warn')
+}
+
+export function setDragOver(on) {
+  const next = !!on
+  if (store.dragOver !== next) emit({ dragOver: next })
+}
+
+export function clearDragOver() { setDragOver(false) }
 /* ============================ 项目增删改 ============================ */
 
 function persistProjects(projects) {
@@ -677,6 +1063,12 @@ export function updateProject(pid, patch) {
 }
 
 export function removeProject(pid) {
+  const victim = projectOf(pid)
+  if (victim) {
+    /* 先记一笔，供 9 秒内撤销；只留最近 5 个 */
+    const at = store.projects.findIndex((p) => p.id === pid)
+    emit({ trash: [{ kind: 'project', project: victim, at, when: Date.now() }].concat(store.trash || []).slice(0, 4) })
+  }
   const projects = store.projects.filter((p) => p.id !== pid)
   persistProjects(projects)
   const status = { ...store.status }
@@ -686,7 +1078,45 @@ export function removeProject(pid) {
   if (store.activeId === pid) {
     emit({ activeId: null, view: 'grid' })
   }
-  toast('已移除项目（磁盘文件未动）', 'info')
+  toastUndo('已移除项目（磁盘文件未动）', () => undoRemoveProject())
+}
+
+/** 撤销最近一次删除：放回原来的位置 */
+export function undoRemoveProject() {
+  const last = (store.trash || []).find((t) => t.kind === 'project')
+  if (!last) {
+    toast('没有可撤销的删除', 'warn')
+    return false
+  }
+  const list = store.projects.slice()
+  const at = Math.max(0, Math.min(Number.isFinite(Number(last.at)) ? Number(last.at) : list.length, list.length))
+  list.splice(at, 0, last.project)
+  persistProjects(list.map((p, i) => ({ ...p, order: i })))
+  emit({ trash: store.trash.filter((t) => t !== last) })
+  toast('已撤销删除：' + (last.project.alias || last.project.name), 'ok')
+  return true
+}
+
+/** 把项目拖到另一个项目前面（beforePid 为空 = 放到最后） */
+export function moveProjectBefore(pid, beforePid) {
+  if (!pid || pid === beforePid) return
+  const list = store.projects.slice()
+  const from = list.findIndex((p) => p.id === pid)
+  if (from < 0) return
+  const [item] = list.splice(from, 1)
+  const at = beforePid ? list.findIndex((p) => p.id === beforePid) : list.length
+  list.splice(at < 0 ? list.length : at, 0, item)
+  persistProjects(list.map((p, i) => ({ ...p, order: i })))
+}
+
+/** 把项目拖进某个分组（folder 为空 = 拖回未分组） */
+export function setProjectFolder(pid, folder) {
+  const p = projectOf(pid)
+  if (!p) return
+  const next = String(folder || '')
+  if ((p.folder || '') === next) return
+  updateProject(pid, { folder: next })
+  toast(next ? '已归入分组「' + next + '」' : '已移出分组', 'ok')
 }
 
 export function moveProject(pid, delta) {
@@ -746,9 +1176,18 @@ export function createFromSession(session) {
     enterProject(existing.id)
     return
   }
-  const title = String(session?.title || '').trim() || baseName(session?.cwd || '') || '未命名对话'
-  const pid = addProject({ name: title.slice(0, 40), path: session?.cwd || '', sessionId: sid })
-  if (pid) enterProject(pid)
+  /* 取名顺序：会话标题 → 工作目录名 → 空（空就弹编辑窗让用户当场命名，别留 session-xxx） */
+  const rawTitle = String(session?.title || '').trim()
+  const usable = rawTitle && rawTitle !== sid && !/^session-[\w-]+$/i.test(rawTitle)
+  const title = (usable ? rawTitle : '') || baseName(session?.cwd || '') || ''
+  const pid = addProject({ name: title || '未命名项目', path: session?.cwd || '', sessionId: sid })
+  if (!pid) return
+  if (!title) {
+    openModal('edit', pid)
+    toast('这条对话没有标题，先给它起个名字', 'info')
+    return
+  }
+  enterProject(pid)
 }
 
 /* ============================ 状态 / 布局 ============================ */
@@ -770,6 +1209,564 @@ export function setDockPx(pid, px, persist = false) {
 /** 拖拽松手时把当前 ui 落盘（不能依赖闭包里的旧宽度） */
 export function flushUi() {
   writeLS(LS.ui, store.ui)
+}
+
+/* ============================ 并排项目 ============================ */
+
+function normalizeSide(raw) {
+  const s = raw && typeof raw === 'object' ? raw : {}
+  const split = Number(s.split)
+  return {
+    pid: typeof s.pid === 'string' ? s.pid : '',
+    split: Number.isFinite(split) && split >= 20 && split <= 80 ? Math.round(split) : 50,
+  }
+}
+
+/** 在右侧再放一个项目（传空 = 关掉并排） */
+export function setSideProject(pid) {
+  const key = String(pid || '')
+  if (key && !projectOf(key)) {
+    toast('找不到这个项目', 'warn')
+    return false
+  }
+  if (key && key === store.activeId) {
+    toast('它就是当前项目，换一个', 'warn')
+    return false
+  }
+  const side = { ...(store.side || { split: 50 }), pid: key }
+  emit({ side })
+  writeLS(LS.side, side)
+  return true
+}
+
+export function setSideSplit(pct) {
+  const n = Number(pct)
+  const split = Number.isFinite(n) && n > 0 ? Math.max(20, Math.min(80, Math.round(n))) : 50
+  const side = { ...(store.side || {}), split }
+  emit({ side })
+  writeLS(LS.side, side)
+  return split
+}
+
+/** 当前应该并排显示的项目（被删/等于当前项目时自动不显示） */
+export function sideProjectOf(activeId) {
+  const pid = store.side && store.side.pid
+  if (!pid || pid === activeId) return null
+  return projectOf(pid) || null
+}
+
+/* ============================ 运行配置 ============================ */
+
+export function setRunConfig(pid, patch) {
+  const project = projectOf(pid)
+  if (!project) return false
+  const run = {
+    ...(project.run || { cmd: '', port: 0, cwd: '' }),
+    ...(patch || {}),
+  }
+  const next = {
+    cmd: String(run.cmd || ''),
+    port: Number(run.port) || 0,
+    cwd: String(run.cwd || ''),
+  }
+  updateProject(pid, { run: next })
+  return true
+}
+
+/**
+ * 跑项目：打开终端标签页 → 把命令喂给终端（cwd = 项目目录）。
+ * 不会自动打开浏览器；端口配了就给一个「打开」入口（不探测，避免误报）。
+ */
+export function runProject(pid) {
+  const project = projectOf(pid)
+  if (!project) return { ok: false, error: '项目不存在' }
+  const cmd = String((project.run && project.run.cmd) || '').trim()
+  if (!cmd) {
+    toast('还没配运行命令：右击项目 → 编辑 → 运行命令', 'warn')
+    return { ok: false, error: 'no-run-config' }
+  }
+  openTab(pid, 'term')
+  emit({ run: { pid, state: 'running', cmd, at: Date.now(), error: '' } })
+  termExec(pid, cmd)
+  const port = Number((project.run && project.run.port) || 0)
+  if (port) toast('已启动：' + cmd + '（端口 ' + port + '）', 'ok')
+  else toast('已启动：' + cmd, 'ok')
+  return { ok: true, cmd }
+}
+
+export function stopProject(pid) {
+  const project = projectOf(pid)
+  if (!project) return false
+  termKill(pid)
+  emit({ run: { pid, state: 'idle', cmd: '', at: Date.now(), error: '' } })
+  toast('已请求停止', 'info')
+  return true
+}
+
+/** 项目配了端口就给个跳转入口 */
+export function openRunPort(pid) {
+  const project = projectOf(pid)
+  const port = Number((project && project.run && project.run.port) || 0)
+  if (!port) return false
+  if (project) webSync(project)
+  openTab(pid, 'web')
+  webGotoSmart('http://localhost:' + port)
+  return true
+}
+
+/* ============================ 快捷键 ============================ */
+
+export const HOTKEYS = [
+  { keys: 'Ctrl/⌘ + K', label: '全局搜索（项目 / 对话）' },
+  { keys: 'Ctrl/⌘ + N', label: '新建项目' },
+  { keys: 'Ctrl/⌘ + G', label: '打开总览' },
+  { keys: 'Ctrl/⌘ + 1…9', label: '切到第 N 个标签页' },
+  { keys: 'Ctrl/⌘ + W', label: '关闭当前标签页' },
+  { keys: 'Alt + ↑ / ↓', label: '上一个 / 下一个项目' },
+  { keys: 'Alt + Shift + ↓', label: '并排：把并排项目设为主项目（互换）' },
+  { keys: 'Alt + Shift + ↑', label: '并排：关闭并排' },
+  { keys: 'Esc', label: '关菜单 → 关弹窗 → 关工作台' },
+]
+
+/** 焦点在输入控件里时不抢键（Ctrl+K 例外：哪里都能搜） */
+function typingInField(e) {
+  const t = e && e.target
+  if (!t) return false
+  if (t.isContentEditable === true) return true
+  const tag = String(t.tagName || '').toUpperCase()
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+}
+
+/** 可见项目（按 order 排好的）——项目间上下切换用 */
+function visibleProjects() {
+  return store.projects.filter((p) => !p.hidden).slice().sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
+}
+
+/**
+ * 统一的快捷键入口：命中就处理并返回 true。
+ * 单独抽出来是为了能在自测里直接喂事件对象，不用挂真实监听。
+ */
+export function handleHotkey(e) {
+  if (!e || typeof e.key !== 'string') return false
+  const key = e.key
+  const lower = key.toLowerCase()
+  const mod = !!(e.ctrlKey || e.metaKey)
+
+  /* 搜索：输入框里也生效 */
+  if (mod && lower === 'k') {
+    e.preventDefault()
+    openSearch()
+    return true
+  }
+  if (typingInField(e)) return false
+
+  if (mod && lower === 'n') {
+    e.preventDefault()
+    openModal('add')
+    return true
+  }
+  if (mod && lower === 'g') {
+    e.preventDefault()
+    openGrid()
+    return true
+  }
+  if (mod && lower === 'w') {
+    const pid = store.activeId
+    if (!store.open || store.view !== 'project' || !pid) return false
+    const ui = uiOf(pid)
+    const key2 = ui.activeTab || (ui.tabs[0] ? ui.tabs[0].key : '')
+    if (!key2) return false
+    e.preventDefault()
+    closeTab(pid, key2)
+    return true
+  }
+  if (mod && /^[1-9]$/.test(key)) {
+    const pid = store.activeId
+    if (!store.open || store.view !== 'project' || !pid) return false
+    const ui = uiOf(pid)
+    const tab = ui.tabs[Number(key) - 1]
+    if (!tab) return false
+    e.preventDefault()
+    setActiveTab(pid, tab.key)
+    return true
+  }
+  /* 并排：Alt+Shift+↓ 互换，Alt+Shift+↑ 关闭 */
+  if (e.altKey && e.shiftKey && (key === 'ArrowUp' || key === 'ArrowDown')) {
+    const side = sideProjectOf(store.activeId || '')
+    if (!side) return false
+    e.preventDefault()
+    if (key === 'ArrowUp') { setSideProject(''); return true }
+    const main = store.activeId
+    setSideProject('')
+    enterProject(side.id)
+    if (main) setTimeout(() => setSideProject(main), 0)
+    return true
+  }
+  if (e.altKey && (key === 'ArrowUp' || key === 'ArrowDown')) {
+    const list = visibleProjects()
+    if (list.length < 2) return false
+    const at = list.findIndex((p) => p.id === store.activeId)
+    const step = key === 'ArrowDown' ? 1 : -1
+    const next = at < 0 ? (step > 0 ? 0 : list.length - 1) : (at + step + list.length) % list.length
+    e.preventDefault()
+    enterProject(list[next].id)
+    return true
+  }
+  return false
+}
+
+/* ============================ 总览：排序 / 筛选 ============================ */
+
+export const OVERVIEW_SORTS = [
+  { id: 'recent', label: '最近活动' },
+  { id: 'status', label: '状态优先' },
+  { id: 'name', label: '名称' },
+  { id: 'order', label: '自定义顺序' },
+]
+
+export const OVERVIEW_FILTERS = [
+  { id: 'all', label: '全部' },
+  { id: 'bound', label: '有对话' },
+  { id: 'unbound', label: '未绑定' },
+  { id: 'busy', label: '在跑/待处理' },
+]
+
+export function setOverview(patch) {
+  const raw = { ...store.overview, ...(patch || {}) }
+  const overview = {
+    q: typeof raw.q === 'string' ? raw.q : '',
+    sort: OVERVIEW_SORTS.some((s) => s.id === raw.sort) ? raw.sort : 'recent',
+    filter: OVERVIEW_FILTERS.some((f) => f.id === raw.filter) ? raw.filter : 'all',
+  }
+  emit({ overview })
+  writeLS(LS.overview, overview)
+  return overview
+}
+
+/** 项目的最“近”时间：取它绑定的会话里最新的 updatedAt，没有就用记录的 updated 字符串 */
+function projectRecency(project) {
+  let best = 0
+  for (const s of sessionsOf(project)) {
+    const v = Number(s.updatedAt || 0)
+    if (v > best) best = v
+  }
+  if (best) return best
+  const t = Date.parse(String(project.updated || ''))
+  return Number.isFinite(t) ? t : 0
+}
+
+const STATE_RANK = { working: 0, 'needs-you': 1, idle: 2, done: 3 }
+
+/** 总览列表：先筛选再排序（纯函数，测试直接调） */
+export function overviewProjects(list) {
+  const all = Array.isArray(list) ? list : store.projects.filter((p) => !p.hidden)
+  const ov = store.overview || { q: '', sort: 'recent', filter: 'all' }
+  const needle = String(ov.q || '').trim().toLowerCase()
+  const filtered = all.filter((p) => {
+    if (needle) {
+      const hay = [p.alias, p.name, p.path, p.folder, p.note].map((x) => String(x || '')).join(' ').toLowerCase()
+      if (!hay.includes(needle)) return false
+    }
+    const bound = sessionsOf(p)
+    if (ov.filter === 'bound') return bound.length > 0
+    if (ov.filter === 'unbound') return bound.length === 0
+    if (ov.filter === 'busy') {
+      const st = stateOf(p.id)
+      return st === 'working' || st === 'needs-you'
+    }
+    return true
+  })
+  const sorted = filtered.slice()
+  if (ov.sort === 'name') sorted.sort((a, b) => String(a.alias || a.name).localeCompare(String(b.alias || b.name), 'zh'))
+  else if (ov.sort === 'status') sorted.sort((a, b) => (STATE_RANK[stateOf(a.id)] ?? 9) - (STATE_RANK[stateOf(b.id)] ?? 9))
+  else if (ov.sort === 'order') sorted.sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
+  else sorted.sort((a, b) => projectRecency(b) - projectRecency(a))
+  return sorted
+}
+
+/* ============================ 入驻项目（别的插件注册） ============================ */
+
+function normPathKey(v) {
+  return String(v || '').replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+/**
+ * 供其他插件调用：window.__WT_REGISTER_PROJECT__({ name, path?, icon?, note?, id?, source? })
+ * 只往侧边栏的「入驻」分组里加一行；点它时才真正落成工作台项目（adopt），
+ * 所以注册是轻量的，插件每次启动重注册即可。
+ */
+export function registerExternalProject(spec) {
+  const raw = spec && typeof spec === 'object' ? spec : {}
+  const name = String(raw.name || raw.title || '').trim()
+  if (!name) return ''
+  const slug = name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/gi, '-').replace(/^-+|-+$/g, '')
+  const id = String(raw.id || 'ext-' + (slug || 'item')).slice(0, 60)
+  const item = {
+    id,
+    name,
+    icon: String(raw.icon || '🧩'),
+    path: String(raw.path || '').trim(),
+    note: String(raw.note || ''),
+    source: String(raw.source || ''),
+    at: Date.now(),
+  }
+  const list = (store.external || []).filter((x) => x.id !== id).concat([item]).slice(0, 30)
+  emit({ external: list })
+  return id
+}
+
+export function unregisterExternalProject(id) {
+  const key = String(id || '')
+  if (!key) return false
+  const list = (store.external || []).filter((x) => x.id !== key)
+  emit({ external: list })
+  return list.length !== (store.external || []).length
+}
+
+export function clearExternalProjects() {
+  emit({ external: [] })
+}
+
+/** 点入驻项：同目录已有项目就直接进，否则按它的名字/目录落成一个真项目 */
+export function openExternalProject(id) {
+  const item = (store.external || []).find((x) => x.id === id)
+  if (!item) return false
+  if (item.path) {
+    const key = normPathKey(item.path)
+    const exist = store.projects.find((p) => p.path && normPathKey(p.path) === key)
+    if (exist) { enterProject(exist.id); return true }
+  }
+  const pid = addProject({ name: item.name, path: item.path, emoji: item.icon, note: item.note })
+  if (!pid) return false
+  enterProject(pid)
+  return true
+}
+
+/* ============================ 项目模板 ============================ */
+
+/**
+ * 模板 = 预置的「标签页组合 + 布局」，让不同场景一进项目就顺手。
+ * 不写磁盘、不加依赖，只调 openTab / patchUi。
+ */
+export const PROJECT_TEMPLATES = [
+  { id: 'blank', label: '空项目', icon: '◻', hint: '什么都不预置', tabs: [], layout: 'single' },
+  { id: 'frontend', label: '前端', icon: '◈', hint: '终端 + 浏览器(5173)，左右分栏', tabs: ['term', 'web'], layout: 'vsplit', web: 'http://localhost:5173' },
+  { id: 'script', label: '脚本 / 工具', icon: '›_', hint: '终端 + 文件管理器', tabs: ['term', 'files'], layout: 'single' },
+  { id: 'writing', label: '写作', icon: '✎', hint: '笔记 + 浏览器，左右分栏', tabs: ['notes', 'web'], layout: 'vsplit' },
+  { id: 'research', label: '研究', icon: '◔', hint: '浏览器 + 笔记 + 终端', tabs: ['web', 'notes', 'term'], layout: 'vsplit' },
+]
+
+export function templateOf(id) {
+  return PROJECT_TEMPLATES.find((t) => t.id === id) || PROJECT_TEMPLATES[0]
+}
+
+/** 把模板套到项目上：开标签页 → 定布局 → （前端模板）顺手把浏览器指到 5173 */
+export function applyTemplate(pid, tplId) {
+  const tpl = templateOf(tplId)
+  if (!pid || !tpl.tabs.length) return tpl.id
+  for (const kind of tpl.tabs) openTab(pid, kind)
+  const ui = uiOf(pid)
+  const first = (ui.tabs[0] || {}).key || ''
+  const second = (ui.tabs[1] || {}).key || ''
+  patchUi(pid, {
+    activeTab: first,
+    secondTab: tpl.layout === 'single' ? '' : second,
+    layout: tpl.layout,
+  })
+  if (tpl.web) {
+    const project = projectOf(pid)
+    if (project) { webSync(project); webGotoSmart(tpl.web) }
+  }
+  return tpl.id
+}
+
+/* ============================ 导出 / 导入 ============================ */
+
+export const SNAPSHOT_VERSION = 1
+
+/** 只导「可迁移」的东西：项目、每个项目的布局、主题；会话 id 保留但不保证换机能连上 */
+export function exportSnapshot() {
+  return {
+    version: SNAPSHOT_VERSION,
+    at: Date.now(),
+    projects: store.projects.map((p) => ({ ...p })),
+    ui: Object.fromEntries(Object.entries(store.ui || {}).map(([k, v]) => [k, { ...(v || {}) }])),
+    theme: { ...store.theme },
+  }
+}
+
+export function exportSnapshotText() {
+  return JSON.stringify(exportSnapshot(), null, 2)
+}
+
+/**
+ * 合并导入：按 id（其次 path+name）判重——重复的更新、新的追加。
+ * @param raw 文本或已解析对象
+ */
+export function importSnapshot(raw) {
+  let data = raw
+  if (typeof raw === 'string') {
+    try { data = JSON.parse(raw) } catch { toast('不是合法的 JSON', 'warn'); return { ok: false, added: 0, updated: 0, total: store.projects.length } }
+  }
+  if (!data || !Array.isArray(data.projects)) {
+    toast('这份数据里没有项目列表', 'warn')
+    return { ok: false, added: 0, updated: 0, total: store.projects.length }
+  }
+  const list = store.projects.slice()
+  let added = 0
+  let updated = 0
+  for (const rawProject of data.projects.slice(0, 500)) {
+    if (!rawProject || typeof rawProject !== 'object') continue
+    const rec = normalizeProject(rawProject)
+    if (!rec.name) continue
+    const at = list.findIndex((x) => x.id === rec.id || (!!rec.path && x.path === rec.path && x.name === rec.name))
+    if (at >= 0) {
+      const prev = list[at]
+      const sessions = Array.from(new Set([...(prev.sessions || []), ...(rec.sessions || [])]))
+      list[at] = { ...prev, ...rec, id: prev.id, sessions }
+      updated += 1
+    } else {
+      list.push({ ...rec, id: 'p-' + Math.random().toString(36).slice(2, 9) })
+      added += 1
+    }
+  }
+  persistProjects(list.map((p, i) => ({ ...p, order: i })))
+  /* 布局/主题：只补缺，不覆盖用户当前选择 */
+  if (data.ui && typeof data.ui === 'object') {
+    const ui = { ...store.ui }
+    for (const [pid, slice] of Object.entries(data.ui)) {
+      if (ui[pid] === undefined && slice && typeof slice === 'object') ui[pid] = { ...slice }
+    }
+    emit({ ui })
+    writeLS(LS.ui, ui)
+  }
+  const result = { ok: true, added, updated, total: list.length }
+  toast('导入完成：新增 ' + added + ' · 更新 ' + updated, 'ok')
+  return result
+}
+
+/* ============================ 产物回挂（.wt/artifact.json） ============================ */
+
+/** 约定：项目目录下这个文件列出「产物」，打开项目时自动挂进对应窗格 */
+export const ARTIFACT_FILE = '.wt/artifact.json'
+
+function artifactFileOf(project) {
+  const dir = project ? workspaceDirOf(project) : ''
+  return dir ? joinPath(dir, ARTIFACT_FILE) : ''
+}
+
+function normalizeArtifact(raw, dir, i) {
+  if (!raw || typeof raw !== 'object') return null
+  const title = String(raw.title || raw.name || '').trim() || ('产物 ' + (i + 1))
+  const url = String(raw.url || '').trim()
+  const rel = String(raw.path || '').trim()
+  const path = rel ? joinPath(dir, rel) : ''
+  let kind = String(raw.kind || '').trim()
+  if (!kind) kind = url ? 'url' : 'file'
+  if (kind === 'url' && !/^https?:\/\//i.test(url)) return null
+  if (kind !== 'url' && !path) return null
+  return { title, kind, url, path, note: String(raw.note || '') }
+}
+
+/** 读并解析项目的产物清单；文件不存在算「没有产物」，不算错误 */
+export async function loadArtifacts(pid) {
+  const project = projectOf(pid)
+  if (!project) return { ok: false, items: [], error: '项目不存在' }
+  const dir = workspaceDirOf(project)
+  if (!dir) {
+    emit({ artifacts: { pid, dir: '', file: '', items: [], error: '', at: Date.now() } })
+    return { ok: false, items: [], error: '' }
+  }
+  const file = joinPath(dir, ARTIFACT_FILE)
+  emit({ artifacts: { pid, dir, file, items: store.artifacts.items, error: '', at: Date.now() } })
+  try {
+    const data = await apiPost('/fs/read', { path: file, mode: 'full' }, { timeout: 8000 })
+    const text = String((data && data.text) || '')
+    const parsed = JSON.parse(text || '{}')
+    const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.artifacts) ? parsed.artifacts : [])
+    const items = list.slice(0, 20).map((it, i) => normalizeArtifact(it, dir, i)).filter(Boolean)
+    emit({ artifacts: { pid, dir, file, items, error: '', at: Date.now() } })
+    return { ok: true, items }
+  } catch (err) {
+    const msg = String((err && err.message) || err || '')
+    /* 没有这个文件是常态：安静地当成「还没有产物」 */
+    const missing = /ENOENT|不存在|no such file|not found|404/i.test(msg)
+    emit({ artifacts: { pid, dir, file, items: [], error: missing ? '' : msg, at: Date.now() } })
+    return { ok: false, items: [], error: missing ? '' : msg }
+  }
+}
+
+/** 打开一个产物：网址进浏览器、按扩展名挑媒体窗或编辑器 */
+export function openArtifact(item) {
+  const pid = store.activeId || (store.projects[0] && store.projects[0].id) || ''
+  if (!item || !pid) return
+  const project = projectOf(pid)
+  if (item.kind === 'url') {
+    if (project) webSync(project)
+    openTab(pid, 'web')
+    webGotoSmart(item.url)
+    return
+  }
+  const name = String(item.path || '').split(/[\\/]/).pop() || ''
+  const kind = viewKindOf(name)
+  if (['image', 'pdf', 'video', 'audio'].includes(kind)) openMedia(pid, item.path)
+  else openFile(item.path, pid)
+}
+
+/** 把某个产物做成一条可发送的说明，塞进宿主输入框（不自动发送） */
+export function sendArtifactToChat(item) {
+  if (!item) return false
+  const target = item.kind === 'url' ? item.url : item.path
+  const text = '【产物】' + item.title + '\n' + target + (item.note ? '\n说明：' + item.note : '')
+  const ok = fillHostInput(text)
+  toast(ok ? '已填到对话输入框，回车发送' : '没找到宿主输入框，手动复制吧', ok ? 'ok' : 'warn')
+  return !!ok
+}
+
+/** 媒体窗「浏览项目」用：列某个目录（返回 { path, parent, entries }） */
+export async function listMediaDir(dir) {
+  const target = String(dir || '').trim()
+  if (!target) throw new Error('还没有可浏览的目录')
+  const data = await apiPost('/fs/list', { path: target }, { timeout: 8000 })
+  return data || { path: target, entries: [] }
+}
+
+/** 让媒体窗预览某个文件（也会把标签页切过去） */
+export function openMedia(pid, path) {
+  emit({ media: { pid: String(pid || ''), path: String(path || '') } })
+  if (pid) openTab(pid, 'media')
+}
+
+/* ============================ 布局预设 ============================ */
+
+/** 一个工作区能同时铺几个窗格 */
+export const LAYOUTS = [
+  { id: 'single', icon: '▭', label: '单窗格', hint: '一次只显示一个窗口（默认）' },
+  { id: 'vsplit', icon: '◫', label: '左右两栏', hint: '左栏 + 右栏，中间可拖动；两栏各看一个窗口' },
+  { id: 'hsplit', icon: '⬓', label: '上下两栏', hint: '上排 + 下排，中间可拖动；两栏各看一个窗口' },
+]
+
+export function setLayout(pid, layout) {
+  const id = LAYOUTS.some((l) => l.id === layout) ? layout : 'single'
+  const ui = uiOf(pid)
+  const patch = { layout: id }
+  /* 第一次切到分栏：自动给“第二窗格”挑一个和当前不同的标签页 */
+  if (id !== 'single' && !ui.secondTab) {
+    const cur = ui.activeTab || (ui.tabs[0] ? ui.tabs[0].key : '')
+    const alt = ui.tabs.find((t) => t.key !== cur) || ui.tabs[0]
+    patch.secondTab = alt ? alt.key : ''
+  }
+  patchUi(pid, patch)
+}
+
+export function setSecondTab(pid, key) {
+  patchUi(pid, { secondTab: typeof key === 'string' ? key : '' })
+}
+
+/** pct = 第一窗格占比（20–80）；传 0 复位 50/50 */
+export function setSplit(pid, pct) {
+  const n = Number(pct)
+  patchUi(pid, { split: Number.isFinite(n) && n > 0 ? Math.max(20, Math.min(80, Math.round(n))) : 0 })
 }
 
 /* ============================ 标签页 ============================ */
@@ -806,7 +1803,8 @@ export function closeTab(pid, key) {
   if (idx < 0) return
   const tabs = ui.tabs.filter((t) => t.key !== key)
   const activeTab = ui.activeTab === key ? (tabs[Math.max(0, idx - 1)]?.key || '') : ui.activeTab
-  patchUi(pid, { tabs, activeTab })
+  const secondTab = ui.secondTab === key ? (tabs.find((t) => t.key !== activeTab)?.key || '') : ui.secondTab
+  patchUi(pid, { tabs, activeTab, secondTab })
 }
 
 export function setActiveTab(pid, key) {
@@ -1351,6 +2349,17 @@ export function normalizeWebUrl(raw) {
   return ''
 }
 
+
+/** 浏览器「首页」：搜索面板盖住页面，但不清空当前地址（点「返回页面」就回去） */
+export function webHome() {
+  emit({ web: { ...store.web, home: true } })
+}
+
+/** 关掉首页面板，回到当前页面 */
+export function webCloseHome() {
+  emit({ web: { ...store.web, home: false } })
+}
+
 /** 记住每个项目上次停在哪（切回项目不用重填） */
 function rememberWeb(pid, url) {
   if (!pid) return
@@ -1378,6 +2387,7 @@ export function webSync(project) {
       startedAt: 0,
       at: Date.now(),
       viewport: store.web.viewport || 'auto',
+      home: false,
       history: url ? [url] : [],
       index: url ? 0 : -1,
       more: false,
@@ -1428,6 +2438,51 @@ export function webLoaded() {
  * 导航。
  * @param {{push?: boolean}} [opts] push=false 表示这次不算新历史（重载 / 回退用）
  */
+
+/* ============================ 浏览器搜索 ============================ */
+
+/** 首页搜索框可选的搜索引擎（搜索页多半拒绝被嵌入，界面里给了「系统浏览器」兜底） */
+export const SEARCH_ENGINES = [
+  { id: 'bing', label: 'Bing', url: 'https://www.bing.com/search?q=' },
+  { id: 'baidu', label: '百度', url: 'https://www.baidu.com/s?wd=' },
+  { id: 'ddg', label: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=' },
+]
+
+export function searchUrl(query, engine) {
+  const q = String(query || '').trim()
+  if (!q) return ''
+  const hit = SEARCH_ENGINES.find((e) => e.id === engine) || SEARCH_ENGINES[0]
+  return hit.url + encodeURIComponent(q)
+}
+
+/** 改搜索引擎（记住到 localStorage） */
+export function webSetEngine(id) {
+  const hit = SEARCH_ENGINES.find((e) => e.id === id)
+  if (!hit) return
+  emit({ web: { ...store.web, engine: hit.id } })
+  try { writeLS(LS.search, hit.id) } catch { /* 隐私模式 */ }
+}
+
+/** 用当前引擎搜一条：成功返回 true */
+export function webSearch(query, engine) {
+  const url = searchUrl(query, engine || store.web.engine)
+  if (!url) { toast('先输入要搜索的内容', 'warn'); return false }
+  return webGoto(url)
+}
+
+/**
+ * 地址栏 / 首页搜索框统一入口：
+ * 像地址就按地址开（端口 / localhost / 域名 / http(s)），
+ * 不像地址（带空格、中文、没有点）就交给搜索引擎。
+ */
+export function webGotoSmart(raw) {
+  const text = String(raw || '').trim()
+  if (!text) return false
+  const asUrl = normalizeWebUrl(text)
+  if (asUrl) return webGoto(asUrl)
+  return webSearch(text)
+}
+
 export function webGoto(raw, opts = {}) {
   const url = normalizeWebUrl(raw)
   if (!url) {
@@ -1446,6 +2501,7 @@ export function webGoto(raw, opts = {}) {
   emit({
     web: {
       ...w,
+      home: false,
       url,
       state: 'loading',
       error: '',

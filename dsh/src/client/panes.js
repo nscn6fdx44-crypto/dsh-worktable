@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { el, Icon, Light } from './ui.js'
 import {
-  viewKindOf, isMediaKind, hasPreview, renderMarkdown, highlightCode, langOf,
+  viewKindOf, isMediaKind, hasPreview, renderMarkdown, highlightCode, langOf, kindEmoji,
 } from './render.js'
 import {
   store, useStore, STATES, normState, fmtSize, fmtDuration, relTime, shortPath, projEmoji,
@@ -16,9 +16,11 @@ import {
   visibleEntries, setFsSort, setFsQuery, selectEntry, fsMkdir, fsRename, fsDelete, fsReveal,
   openFsMenu, closeFsMenu,
   joinPath, crumbsOf,
-  sessionsOf, primarySession, stateOf, jumpToSession,
-  openModal, siteUrlOf, cycleStatus, updateProject, projectOf, toast,
-  webSync, webGoto, webBack, webForward, webReload, webLoaded, webProbe,
+  sessionsOf, primarySession, stateOf, jumpToSession, runProject, stopProject, openRunPort,
+  ARTIFACT_FILE, loadArtifacts, openArtifact, sendArtifactToChat,
+  openModal, siteUrlOf, cycleStatus, updateProject, projectOf, toast, listMediaDir,
+  webSync, webGoto, webGotoSmart, webSearch, webSetEngine, SEARCH_ENGINES, webHome, webCloseHome,
+  webBack, webForward, webReload, webLoaded, webProbe,
   webSetViewport, webOpenExternal, webSetMore,
   loadCustom, openCustom, newCustomDraft, editCustom, setCustomView, saveCustom,
   deleteCustom, buildCustomPrompt, fillHostInput, setCustomPrompt, setCustomRequirement,
@@ -31,6 +33,7 @@ export function InfoPane({ project }) {
   const st = stateOf(project.id)
   const bound = sessionsOf(project)
   const git = store.git
+  const art = store.artifacts
 
   return el('div', { className: 'pane-body info-body' },
     el('div', { className: 'info-head' },
@@ -60,11 +63,69 @@ export function InfoPane({ project }) {
       )),
     ) : null,
 
+    el('div', { className: 'dc-row' },
+      el('span', { className: 'k' }, '运行'),
+      el('span', { className: 'v' },
+        project.run && project.run.cmd
+          ? el('span', { className: 'run-cmd mono', title: project.run.cmd }, project.run.cmd)
+          : el('span', { className: 'wt-mute' }, '未配置（编辑项目 → 运行命令）'),
+        project.run && project.run.cmd
+          ? el('button', {
+            type: 'button', className: 'mini-btn',
+            onClick: () => runProject(project.id),
+          }, '▶ 运行')
+          : null,
+        project.run && project.run.cmd
+          ? el('button', {
+            type: 'button', className: 'mini-btn',
+            onClick: () => stopProject(project.id),
+          }, '■ 停止')
+          : null,
+        project.run && project.run.port
+          ? el('button', {
+            type: 'button', className: 'mini-btn',
+            title: '打开 http://localhost:' + project.run.port,
+            onClick: () => openRunPort(project.id),
+          }, ':' + project.run.port + ' ↗')
+          : null,
+      ),
+    ),
+
     el('div', { className: 'info-actions' },
       el('button', { type: 'button', className: 'btn small', onClick: () => openModal('edit', project.id) }, '编辑信息'),
       el('button', { type: 'button', className: 'btn small', onClick: () => openModal('bind', project.id) }, '对话绑定'),
       el('button', { type: 'button', className: 'btn small', onClick: () => cycleStatus(project.id) }, '切换状态'),
     ),
+
+    el('div', { className: 'sec-head' },
+      el('span', null, '产物'),
+      el('button', {
+        type: 'button', className: 'mini-btn',
+        title: '重新读取 ' + ARTIFACT_FILE,
+        onClick: () => loadArtifacts(project.id),
+      }, '刷新'),
+    ),
+    art.error
+      ? el('p', { className: 'wt-mute' }, '读取出错：' + art.error)
+      : art.items.length
+        ? el('div', { className: 'art-list' },
+          art.items.map((it, i) => el('div', { key: i, className: 'art-row' },
+            el('span', { className: 'art-ico', 'aria-hidden': 'true' }, it.kind === 'url' ? '◍' : (it.kind === 'file' ? '🖼' : '◆')),
+            el('span', { className: 'art-title', title: it.kind === 'url' ? it.url : it.path }, it.title),
+            el('button', {
+              type: 'button', className: 'mini-btn', title: '在工作台里打开',
+              onClick: () => openArtifact(it),
+            }, '打开'),
+            el('button', {
+              type: 'button', className: 'mini-btn', title: '把路径/网址填到对话输入框',
+              onClick: () => sendArtifactToChat(it),
+            }, '发到对话'),
+          )),
+        )
+        : el('p', { className: 'wt-mute' },
+          '还没有产物。在项目目录放一个 ' + ARTIFACT_FILE + '，例如：',
+          el('code', { className: 'mono art-hint' }, '{"artifacts":[{"title":"站点","kind":"url","url":"http://localhost:5173"},{"title":"图","kind":"file","path":"docs/a.png"}]}'),
+        ),
 
     el('div', { className: 'sec-head' },
       el('span', null, 'Git'),
@@ -572,6 +633,7 @@ export function TermPane({ project }) {
   const term = store.terms[project.id] || { lines: [], busy: false, cwd: '', history: [] }
   const [input, setInput] = useState('')
   const [hidx, setHidx] = useState(-1)
+  const [showHist, setShowHist] = useState(false)
   const box = useRef(null)
 
   useEffect(() => {
@@ -614,6 +676,12 @@ export function TermPane({ project }) {
     el('div', { className: 'term-bar' },
       el('span', { className: 'term-cwd mono', title: term.cwd || project.path }, shortPath(term.cwd || project.path || '—', 40)),
       term.busy ? el('span', { className: 'term-busy' }, '运行中…') : null,
+      el('button', {
+        type: 'button',
+        className: 'mini-btn' + (showHist ? ' on' : ''),
+        title: '历史命令（点一条填进输入框）',
+        onClick: () => setShowHist(!showHist),
+      }, '⏱ 历史' + (term.history && term.history.length ? ' ' + term.history.length : '')),
       el('button', { type: 'button', className: 'mini-btn', onClick: () => termClear(project.id) }, '清屏'),
       term.busy ? el('button', { type: 'button', className: 'mini-btn danger', onClick: () => termKill(project.id) }, '中断') : null,
     ),
@@ -629,6 +697,17 @@ export function TermPane({ project }) {
           el('p', null, 'cd 会改变后续命令的工作目录；↑↓ 翻历史，Ctrl+L 清屏。'),
         ),
     ),
+    showHist
+      ? el('div', { className: 'term-hist' },
+        term.history && term.history.length
+          ? [...term.history].reverse().slice(0, 30).map((cmd, i) => el('button', {
+            key: i, type: 'button', className: 'th-row mono',
+            title: '点一下填进输入框',
+            onClick: () => { setInput(cmd); setShowHist(false) },
+          }, el('span', { className: 'th-ico' }, '❯'), el('span', { className: 'th-cmd' }, cmd)))
+          : el('div', { className: 'th-empty' }, '还没有历史命令；执行过的命令会自动记在这里'),
+      )
+      : null,
     el('div', { className: 'term-in' },
       el('span', { className: 'tprompt' }, '❯'),
       el('input', {
@@ -709,7 +788,8 @@ export function WebPane({ project }) {
   const atEnd = web.index >= web.history.length - 1
   const extUrl = draft || url
 
-  const go = (raw) => { if (webGoto(raw)) setDraft('') }
+  /* 像地址当地址开，不像地址（中文 / 带空格）就丢给搜索引擎 */
+  const go = (raw) => { if (webGotoSmart(raw)) setDraft('') }
   /* 下拉里的动作点完就收起，别挡着页面 */
   const pick = (fn) => () => { webSetMore(false); fn() }
 
@@ -728,6 +808,12 @@ export function WebPane({ project }) {
      * 主行永远只有 ← → ⟳ 地址 打开 状态点 ⋯。
      */
     el('div', { className: 'wb-bar' },
+      el('button', {
+        type: 'button',
+        className: 'mini-btn' + (web.home ? ' on' : ''),
+        title: '首页 / 搜索（不离开默认站点页也能搜）',
+        onClick: () => (web.home ? webCloseHome() : webHome()),
+      }, '🔍'),
       el('button', { type: 'button', className: 'mini-btn', title: '后退', disabled: atStart, onClick: () => webBack() }, '←'),
       el('button', { type: 'button', className: 'mini-btn', title: '前进', disabled: atEnd, onClick: () => webForward() }, '→'),
       el('button', {
@@ -811,7 +897,42 @@ export function WebPane({ project }) {
               el('button', { type: 'button', className: 'mini-btn on', onClick: () => webOpenExternal(url) }, '🚀 系统浏览器打开'),
             ),
           )
-          : url
+          : web.home
+            ? el('div', { className: 'wb-home-panel' },
+              el('span', { className: 'pe-ico' }, '🔍'),
+              el('p', { className: 'wb-home-title' }, '搜索，或直接输地址'),
+              el('div', { className: 'wb-search' },
+                el('input', {
+                  className: 'wb-search-input', value: draft, spellCheck: false, autoComplete: 'off',
+                  placeholder: '搜索点什么，或输 localhost:5173',
+                  onChange: (e) => setDraft(e.target.value),
+                  onKeyDown: (e) => {
+                    if (e.key === 'Enter') { go(draft); webCloseHome() }
+                    if (e.key === 'Escape') setDraft('')
+                  },
+                }),
+                el('button', {
+                  type: 'button', className: 'mini-btn wb-search-go',
+                  title: '搜索（不像地址时交给搜索引擎）',
+                  onClick: () => { go(draft); webCloseHome() },
+                }, '搜索'),
+              ),
+              el('div', { className: 'wb-engines' },
+                SEARCH_ENGINES.map((en) => el('button', {
+                  key: en.id, type: 'button',
+                  className: 'mini-btn' + ((store.web.engine || 'bing') === en.id ? ' on' : ''),
+                  title: '用 ' + en.label + ' 搜索',
+                  onClick: (e) => { e.preventDefault(); webSetEngine(en.id) },
+                }, en.label)),
+              ),
+              url
+                ? el('button', {
+                  type: 'button', className: 'mini-btn', title: '回到当前页面',
+                  onClick: () => webCloseHome(),
+                }, '← 返回页面')
+                : null,
+            )
+            : url
             ? el('iframe', {
               /* key 里带 at：点刷新时整个 iframe 重建，等于真刷新 */
               key: url + '|' + web.at,
@@ -820,9 +941,35 @@ export function WebPane({ project }) {
               sandbox: 'allow-scripts allow-same-origin allow-forms allow-popups',
               onLoad: () => webLoaded(),
             })
-            : el('div', { className: 'pane-empty' },
+            : el('div', { className: 'pane-empty wb-home' },
               el('span', { className: 'pe-ico' }, '◍'),
               el('p', null, '浏览器窗格'),
+              /* 首页搜索：回车即搜；下面一排是引擎切换 */
+              el('div', { className: 'wb-search' },
+                el('input', {
+                  className: 'wb-search-input', value: draft, spellCheck: false, autoComplete: 'off',
+                  placeholder: '搜索点什么，或直接输地址（localhost:5173）',
+                  onChange: (e) => setDraft(e.target.value),
+                  onKeyDown: (e) => {
+                    if (e.key === 'Enter') go(draft)
+                    if (e.key === 'Escape') setDraft('')
+                  },
+                }),
+                el('button', {
+                  type: 'button', className: 'mini-btn wb-search-go',
+                  title: '搜索（不像地址时交给搜索引擎）',
+                  onClick: () => go(draft),
+                }, '搜索'),
+              ),
+              el('div', { className: 'wb-engines' },
+                SEARCH_ENGINES.map((en) => el('button', {
+                  key: en.id, type: 'button',
+                  className: 'mini-btn' + ((store.web.engine || 'bing') === en.id ? ' on' : ''),
+                  title: '用 ' + en.label + ' 搜索',
+                  onClick: (e) => { e.preventDefault(); webSetEngine(en.id) },
+                }, en.label)),
+                el('span', { className: 'wb-engines-tip' }, '搜索页多半拒绝被嵌入，被拒时用「🚀 系统浏览器」'),
+              ),
               el('ul', { className: 'wb-help' },
                 el('li', null, '地址栏填端口（5173）、localhost:5173 或完整 http:// 地址都认，回车即开。'),
                 el('li', null, '点右上「⋯」→ 探测：先确认服务活着、以及它允不允许被 iframe 嵌。'),
@@ -1096,5 +1243,297 @@ export function CustomPane({ project }) {
         cu.error ? el('span', { className: 'cu-err' }, cu.error) : null,
       ),
     ),
+  )
+}
+
+/* ============================ 媒体（图片 / PDF / 音视频） ============================ */
+
+/** 按扩展名决定怎么渲染；不属于媒体就交给编辑器 */
+function mediaTagOf(kind) {
+  if (kind === 'image') return 'img'
+  if (kind === 'pdf') return 'frame'
+  if (kind === 'video') return 'video'
+  if (kind === 'audio') return 'audio'
+  return ''
+}
+
+export function MediaPane({ project }) {
+  useStore()
+  const ed = store.editor
+  const edIsMedia = !!ed.path && isMediaKind(viewKindOf(ed.name))
+  const pushed = store.media && store.media.pid === project.id ? store.media.path : ''
+  const startDir = pushed || (edIsMedia ? ed.path : '') || workspaceDirOf(project) || ''
+  const [path, setPath] = useState(pushed || (edIsMedia ? ed.path : ''))
+  const [draft, setDraft] = useState(pushed || (edIsMedia ? ed.path : ''))
+  const [failed, setFailed] = useState('')
+  const [tip, setTip] = useState('')
+  /* 选择文件：本地（object URL，不上传不写盘）或项目里浏览 */
+  const [browse, setBrowse] = useState(false)
+  const [dir, setDir] = useState('')
+  const [rows, setRows] = useState([])
+  const [dirState, setDirState] = useState('idle')
+  const [dirErr, setDirErr] = useState('')
+  const [objUrl, setObjUrl] = useState('')
+  const [localName, setLocalName] = useState('')
+  const fileRef = useRef(null)
+
+  useEffect(() => {
+    if (pushed && pushed !== path) { setPath(pushed); setDraft(pushed); setFailed('') }
+  }, [pushed])
+
+  const kind = objUrl ? kindOfMediaPath(localName) : (path ? kindOfMediaPath(path) : '')
+  const tag = mediaTagOf(kind)
+  const src = objUrl || (path ? rawUrl(path) : '')
+
+  const explain = async (u) => {
+    try {
+      const res = await fetch(u, { headers: { accept: '*/*' } })
+      if (res.ok) {
+        setFailed('资源拿到了（HTTP 200），但浏览器没能显示它；可以点下面「在新标签页打开」看看')
+        return
+      }
+      const ct = String(res.headers.get('content-type') || '')
+      let detail = ''
+      if (ct.includes('json')) {
+        const j = await res.json().catch(() => null)
+        detail = (j && (j.error || j.code)) || ''
+      }
+      setFailed('HTTP ' + res.status + (detail ? '：' + detail : ''))
+    } catch (err) {
+      setFailed('取不到这个文件：' + String((err && err.message) || err))
+    }
+  }
+
+  const listDir = async (target) => {
+    const t = String(target || '').trim()
+    if (!t) { setDirErr('没有可浏览的目录：给项目填个目录'); setDirState('error'); return }
+    setDirState('loading')
+    setDirErr('')
+    try {
+      const data = await listMediaDir(t)
+      setDir(data.path || t)
+      setRows(Array.isArray(data.entries) ? data.entries : [])
+      setDirState('ok')
+    } catch (err) {
+      setDirState('error')
+      setDirErr(String((err && err.message) || err))
+    }
+  }
+
+  const toggleBrowse = () => {
+    const next = !browse
+    setBrowse(next)
+    if (next && dirState !== 'ok') listDir(dir || startDir)
+  }
+
+  /* 本地文件：只用 object URL 预览，路径无从得知（浏览器不给） */
+  const takeLocal = (file) => {
+    if (!file) return
+    const ok = /^(image|video|audio)\//i.test(String(file.type || '')) || /\.(pdf|svg)$/i.test(file.name)
+    if (!ok) { setTip('只能选 图片 / PDF / 视频 / 音频'); return }
+    setTip('')
+    setFailed('')
+    setPath('')
+    setLocalName(file.name)
+    try {
+      setObjUrl(typeof URL !== 'undefined' && URL.createObjectURL ? URL.createObjectURL(file) : '')
+    } catch { setObjUrl('') }
+    setDraft(file.name)
+  }
+
+  const open = (v) => {
+    const next = String(v || '').trim().replace(/^["']+|["']+$/g, '').trim()
+    if (!next) { setTip('先填一个文件路径，或点「选择文件」'); return }
+    setTip('')
+    setFailed('')
+    setObjUrl('')
+    setLocalName('')
+    setPath(next)
+    setDraft(next)
+  }
+
+  const pickRow = (row) => {
+    const full = joinPath(dir, row.name)
+    if (row.dir) { listDir(full); return }
+    setDirErr('')
+    open(full)
+  }
+
+  const mediaRows = mediaRowsOf(rows)
+
+  return el('div', {
+    className: 'pane-body media-pane',
+    onDragOver: (e) => { if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) e.preventDefault() },
+    onDrop: (e) => {
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]
+      if (!f) return
+      e.preventDefault()
+      takeLocal(f)
+    },
+  },
+    el('div', { className: 'media-bar' },
+      el('input', {
+        className: 'media-input mono',
+        value: draft,
+        placeholder: '绝对路径，或点「选择文件」/「浏览项目」',
+        spellCheck: false,
+        onChange: (e) => { setDraft(e.target.value); setTip('') },
+        onKeyDown: (e) => { if (e.key === 'Enter') open(draft) },
+      }),
+      el('button', { type: 'button', className: 'mini-btn', title: '预览这个文件', onClick: () => open(draft) }, '预览'),
+      el('button', {
+        type: 'button', className: 'mini-btn', title: '从本机选一个图片 / PDF / 音视频（只在本页预览，不上传）',
+        onClick: () => { if (fileRef.current) fileRef.current.click() },
+      }, '选择文件'),
+      el('button', {
+        type: 'button', className: 'mini-btn' + (browse ? ' on' : ''),
+        title: '在项目目录里挑文件（能预览缩略图）',
+        onClick: toggleBrowse,
+      }, '浏览项目'),
+      edIsMedia
+        ? el('button', { type: 'button', className: 'mini-btn', title: '用编辑器当前打开的文件', onClick: () => open(ed.path) }, '取编辑器文件')
+        : null,
+      path
+        ? el('button', { type: 'button', className: 'mini-btn', title: '用系统程序打开', onClick: () => revealPath(path, { select: false }) }, '系统打开')
+        : null,
+      el('input', {
+        ref: fileRef, type: 'file', accept: 'image/*,video/*,audio/*,.pdf,.svg', style: { display: 'none' },
+        onChange: (e) => { const f = e.target.files && e.target.files[0]; if (f) takeLocal(f) },
+      }),
+    ),
+    tip ? el('div', { className: 'media-tip' }, tip) : null,
+    localName ? el('div', { className: 'media-tip' }, '本地文件：' + localName + '（只在当前页预览；要写进项目请用「浏览项目」选磁盘路径）') : null,
+
+    browse
+      ? el('div', { className: 'media-browse' },
+        el('div', { className: 'mb-head' },
+          el('span', { className: 'mono mb-dir', title: dir || startDir }, shortPath(dir || startDir || '（未设置目录）', 46)),
+          el('button', { type: 'button', className: 'mini-btn', title: '上一级', onClick: () => listDir(parentOf(dir || startDir)) }, '↑'),
+          el('button', { type: 'button', className: 'mini-btn', title: '重新列一遍', onClick: () => listDir(dir || startDir) }, '↻'),
+          el('button', { type: 'button', className: 'mini-btn', title: '关闭浏览', onClick: () => setBrowse(false) }, '✕'),
+        ),
+        dirState === 'error'
+          ? el('div', { className: 'th-empty' }, '列目录失败：' + dirErr)
+          : dirState === 'loading'
+            ? el('div', { className: 'th-empty' }, '读取中…')
+            : mediaRows.length
+              ? el('div', { className: 'mb-list' },
+                mediaRows.slice(0, 200).map((r) => el('button', {
+                  key: r.name, type: 'button',
+                  className: 'mb-row' + (r.dir ? ' dir' : ''),
+                  title: r.dir ? '进入 ' + r.name : r.name,
+                  onClick: () => pickRow(r),
+                },
+                  el('span', { className: 'mb-ico' }, r.dir ? '📁' : kindEmoji(kindOfMediaPath(r.name))),
+                  el('span', { className: 'mb-name' }, r.name),
+                  el('span', { className: 'mb-size mono' }, r.dir ? '' : fmtSize(r.size || 0)),
+                )),
+              )
+              : el('div', { className: 'th-empty' }, '这个目录里没有可预览的媒体文件（图片 / PDF / 音视频 / SVG）'),
+      )
+      : null,
+
+    src && tag
+      ? el('div', { className: 'media-stage' },
+        tag === 'img'
+          ? el('img', {
+            key: src, className: 'media-img', src, alt: kind,
+            onError: () => explain(src), onLoad: () => setFailed(''),
+          })
+          : tag === 'frame'
+            ? el('iframe', { key: src, className: 'media-frame', src, title: 'PDF 预览' })
+            : tag === 'video'
+              ? el('video', { key: src, className: 'media-player', src, controls: true, preload: 'metadata', onError: () => explain(src) })
+              : el('audio', { key: src, className: 'media-player', src, controls: true, preload: 'metadata', onError: () => explain(src) }),
+        failed
+          ? el('div', { className: 'media-err' },
+            el('span', null, failed),
+            el('a', { className: 'media-open', href: src, target: '_blank', rel: 'noreferrer' }, '在新标签页打开'),
+          )
+          : null,
+      )
+      : el('div', { className: 'media-empty' },
+        el('span', { className: 'pe-ico' }, '🖼'),
+        el('p', null, path ? '这个扩展名不支持内嵌预览' : '还没有选文件'),
+        el('p', { className: 'hint' },
+          path
+            ? '点「用编辑器打开」看文本/源码，或「系统打开」交给系统程序。'
+            : '三种选法：点「选择文件」从本机挑、点「浏览项目」在项目目录里挑、或直接粘绝对路径。也可以把文件拖进来。'),
+        el('div', { className: 'pe-actions' },
+          el('button', { type: 'button', className: 'btn small', onClick: () => { if (fileRef.current) fileRef.current.click() } }, '选择文件'),
+          el('button', { type: 'button', className: 'btn small', onClick: toggleBrowse }, '浏览项目'),
+        ),
+        path ? el('div', { className: 'media-url mono' }, src) : null,
+      ),
+  )
+}
+
+/** 目录列表里只留「目录 + 可内嵌预览的媒体文件」 */
+export function mediaRowsOf(rows) {
+  return (Array.isArray(rows) ? rows : []).filter((r) => r.dir || ['image', 'pdf', 'video', 'audio'].includes(kindOfMediaPath(r.name)))
+}
+
+/** 上一级目录（Windows / POSIX 都按最后一层截） */
+function parentOf(p) {
+  const s = String(p || '').replace(/[\\/]+$/, '')
+  const i = Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/'))
+  return i > 0 ? s.slice(0, i) : ''
+}
+
+/** 媒体窗自己判类型：SVG 也算图片（编辑器把它归类成 code） */
+export function kindOfMediaPath(p) {
+  const name = String(p || '').split(/[\\/]/).pop() || ''
+  if (/\.svg$/i.test(name)) return 'image'
+  return viewKindOf(name)
+}
+
+export function NotesPane({ project }) {
+  useStore()
+  const saved = project ? (project.note || '') : ''
+  const [draft, setDraft] = useState(saved)
+  const [at, setAt] = useState(0)
+  const [dirty, setDirty] = useState(false)
+
+  useEffect(() => {
+    setDraft(project ? (project.note || '') : '')
+    setDirty(false)
+    setAt(0)
+  }, [project && project.id])
+
+  if (!project) return null
+
+  const save = () => {
+    updateProject(project.id, { note: draft })
+    setDirty(false)
+    setAt(Date.now())
+    toast('笔记已保存', 'ok')
+  }
+
+  const words = String(draft || '').trim().length
+
+  return el('div', { className: 'pane-body notes-pane' },
+    el('div', { className: 'notes-bar' },
+      el('span', { className: 'notes-title' }, '✎ ' + (project.alias || project.name) + ' 的笔记'),
+      el('span', { className: 'notes-stat mono' }, words + ' 字' + (dirty ? ' · 有未保存改动' : '') + (at ? ' · 已保存 ' + relTime(at) : '')),
+      el('button', {
+        type: 'button', className: 'mini-btn', title: '清空笔记',
+        onClick: () => { setDraft(''); setDirty(true) },
+      }, '清空'),
+      el('button', {
+        type: 'button', className: 'btn small primary', title: '保存到项目（Ctrl+S）',
+        onClick: save,
+      }, '保存'),
+    ),
+    el('textarea', {
+      className: 'notes-area mono',
+      value: draft,
+      spellCheck: false,
+      placeholder: '随手记：这个项目要做什么、卡在哪、下一步…（保存到项目的 note 字段，跟着项目走）',
+      onChange: (e) => { setDraft(e.target.value); setDirty(true) },
+      onBlur: () => { if (dirty) save() },
+      onKeyDown: (e) => {
+        if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') { e.preventDefault(); save() }
+      },
+    }),
   )
 }

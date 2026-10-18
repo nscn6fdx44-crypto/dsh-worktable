@@ -68,6 +68,7 @@ const fakeGit = { ok: true, repo: true, branch: 'main', changes: [{ code: ' M', 
 const fakeGitLog = { ok: true, commits: [{ hash: 'a1b2c3d', date: '2026-10-01', subject: '整理构建脚本', author: 'demo' }] }
 const fakeGitBranches = { ok: true, branches: ['main'] }
 
+const sessionCreates = []
 let lastListPath = ''
 let listCalls = 0
 let deletableBlock = ''
@@ -83,6 +84,8 @@ let probeFrameable = false
 const customStore = []
 /* 'big' 时把 /fs/read 变成「8 MB 大文件」：不带 mode → 413，带 mode → 只读预览 */
 let readCase = ''
+/* 'missing' 时 artifact.json 读不到，用来测「没有产物不算错误」 */
+let artifactCase = ''
 globalThis.fetch = async (url, opts) => {
   const u = String(url)
   if (u.endsWith('/fs/list')) {
@@ -102,10 +105,32 @@ globalThis.fetch = async (url, opts) => {
   if (u.endsWith('/fs/write')) {
     try { writes.push(JSON.parse(String(opts?.body || '{}'))) } catch { /* ignore */ }
   }
+  if (u.endsWith('/session/create')) {
+    try { sessionCreates.push(JSON.parse(String(opts?.body || '{}'))) } catch { /* ignore */ }
+    const created = { ok: true, sessionId: 'session-new-1', agentPreset: 'standard' }
+    return { ok: true, status: 200, json: async () => created, text: async () => JSON.stringify(created) }
+  }
   let readPath = ''
   if (u.endsWith('/fs/read')) {
     try { readPath = String(JSON.parse(String(opts?.body || '{}')).path || '') } catch { readPath = '' }
     reads.push(readPath)
+  }
+  if (u.endsWith('/fs/read') && readPath.endsWith('artifact.json') && artifactCase !== 'missing') {
+    const art = {
+      path: readPath, name: 'artifact.json', size: 220,
+      text: JSON.stringify({
+        artifacts: [
+          { title: '站点预览', kind: 'url', url: 'http://localhost:5173' },
+          { title: '架构图', kind: 'file', path: 'docs/arch.png' },
+          { title: '报告', kind: 'md', path: 'docs/report.md' },
+        ],
+      }),
+    }
+    return { ok: true, status: 200, json: async () => art, text: async () => JSON.stringify(art) }
+  }
+  if (u.endsWith('/fs/read') && readPath.endsWith('artifact.json') && artifactCase === 'missing') {
+    const miss = { error: 'ENOENT: no such file or directory', code: 'enoent' }
+    return { ok: false, status: 404, json: async () => miss, text: async () => JSON.stringify(miss) }
   }
   if (u.endsWith('/fs/read') && readPath.endsWith('app.js')) {
     return { ok: true, status: 200, json: async () => fakeJs, text: async () => JSON.stringify(fakeJs) }
@@ -320,6 +345,14 @@ function rightClickByText(root, label) {  const hit = collect(root).find((n) => 
   hit.props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 100, clientY: 120 })
 }
 
+/** 顶部只留「＋ 窗口」：点标签前先展开菜单 */
+function openPaneIn(root, label) {
+  mod.store.tabMenu = true
+  const tree = render(overlayComp)
+  clickByLabel(tree, label)
+  mod.store.tabMenu = false
+  return render(overlayComp)
+}
 const sidebarComp = registrations.find((r) => r.name === 'sidebar.footer.action')
 const overlayComp = registrations.find((r) => r.name === 'shell.overlay')
 const render = (reg) => {
@@ -406,7 +439,9 @@ check('分割条只剩「工作台 / 对话」一条', allByClass(overlay, /spli
 check('让位边界是 dock-edge', allByClass(overlay, /dock-edge/).length === 1)
 check('进项目默认打开「项目信息」标签页', allByClass(overlay, /info-body/).length === 1, allByClass(overlay, /info-body/).length)
 check('进项目不会自动弹系统文件管理器', reveals.length === 0, JSON.stringify(reveals))
-check('标签栏里挂着「文件管理器」', textOf(overlay).includes('文件管理器'), textOf(overlay).slice(0, 90))
+mod.store.tabMenu = true
+overlay = render(overlayComp)
+check('「＋ 窗口」里挂着文件管理器', textOf(overlay).includes('文件管理器'), textOf(overlay).slice(0, 90))
 check('顶栏有「项目信息」按钮', textOf(overlay).includes('项目信息'))
 const chatPill = allByClass(overlay, /dh-chat/)[0]
 check('顶栏标出右侧对话（主绑定）', !!chatPill && !/off/.test(chatPill.props.className), chatPill && chatPill.props.className)
@@ -424,10 +459,10 @@ const { computeDock } = mod
 check('导出 computeDock 供换算', typeof computeDock === 'function')
 if (typeof computeDock === 'function') {
   const auto = computeDock({ track: 1200, preferred: 0 })
-  check('自动宽度 = 轨道 64%', auto.width === 768, JSON.stringify(auto))
-  check('自动宽度给对话留够 380', auto.max === 820, JSON.stringify(auto))
-  check('拖过的像素宽度原样生效', computeDock({ track: 1200, preferred: 500 }).width === 500)
-  check('过宽时夹到「轨道 - 380」', computeDock({ track: 1200, preferred: 5000 }).width === 820, JSON.stringify(computeDock({ track: 1200, preferred: 5000 })))
+  check('自动宽度 = 轨道 95%', auto.width === 980, JSON.stringify(auto))
+  check('自动宽度给对话留够 220', auto.max === 980, JSON.stringify(auto))
+  check('拖过的像素宽度不低于最小值 560', computeDock({ track: 1200, preferred: 500 }).width === 560, JSON.stringify(computeDock({ track: 1200, preferred: 500 })))
+  check('过宽时夹到「轨道 - 220」', computeDock({ track: 1200, preferred: 5000 }).width === 980, JSON.stringify(computeDock({ track: 1200, preferred: 5000 })))
   check('轨道太窄时不让位', computeDock({ track: 300, preferred: 0 }).width === 0, JSON.stringify(computeDock({ track: 300, preferred: 0 })))
 }
 
@@ -455,7 +490,7 @@ check('测出侧边栏右边界与轨道宽', g0.left === 280 && g0.track === 11
 const g1 = mod.applyDock(742)
 check('让位：给宿主中心列写 marginLeft', fakeCenter.style.marginLeft === '742px', fakeCenter.style.marginLeft)
 check('让位：几何不因自身 margin 漂移', g1.left === 280 && g1.track === 1160 && g1.width === 742, JSON.stringify(g1))
-check('让位：右侧至少留 380', g1.max === 780, JSON.stringify(g1))
+check('让位：右侧至少留 220', g1.max === 940, JSON.stringify(g1))
 mod.releaseDock()
 check('退出项目：marginLeft 还原', fakeCenter.style.marginLeft === '', JSON.stringify(fakeCenter.style.marginLeft))
 
@@ -471,7 +506,7 @@ check('项目信息显示绑定对话数', /绑定对话/.test(textOf(overlay)))
 check('git 区块渲染分支', textOf(overlay).includes('main'), textOf(allByClass(overlay, /git-box/)[0] || overlay).slice(0, 80))
 
 /* 「文件管理器」= 面板里自绘列表（系统资源管理器要 HWND，嵌不进 HTML 面板） */
-clickByLabel(overlay, '🗂 文件管理器')
+overlay = openPaneIn(overlay, '文件管理器')
 await new Promise((r) => setTimeout(r, 40))
 overlay = render(overlayComp)
 check('打开文件管理器会列对话的工作目录', String(lastListPath).replace(/\\/g, '/') === 'C:/demo/app-alpha', lastListPath)
@@ -546,7 +581,7 @@ deletableBlock = ''
 overlay = render(overlayComp)
 
 /* 编辑器：不再从文件列表点，空态直接填路径 */
-clickByLabel(overlay, '◆ 编辑器')
+overlay = openPaneIn(overlay, '编辑器')
 overlay = render(overlayComp)
 check('编辑器空态有路径输入与「打开」按钮', allByClass(overlay, /ed-open/).length === 1 && textOf(overlay).includes('打开'), textOf(overlay).slice(0, 100))
 
@@ -674,6 +709,11 @@ overlay = render(overlayComp)
 check('再点「⋯」收起下拉', !/\bopen\b/.test(String(moreBox().props.className)), String(moreBox().props.className))
 check('地址栏旁的状态点带状态类', !!allByClass(overlay, /(^|\s)wb-dot(\s|$)/)[0], allByClass(overlay, /wb-dot/).length)
 check('浏览器空态说明', textOf(overlay).includes('浏览器窗格'), textOf(overlay).slice(0, 60))
+check('浏览器首页有搜索框', allByClass(overlay, /(^|\s)wb-search(\s|$)/).length === 1, allByClass(overlay, /wb-search/).length)
+check('首页搜索框有输入与搜索键', !!allByClass(overlay, /wb-search-input/)[0] && !!allByClass(overlay, /wb-search-go/)[0])
+check('首页可切搜索引擎', allByClass(overlay, /(^|\s)wb-engines(\s|$)/).length === 1 && textOf(overlay).includes('Bing'))
+const wbBar = allByClass(overlay, /(^|\s)wb-bar(\s|$)/)[0]
+check('工具条常驻「首页/搜索」键（默认站点页也能搜）', !!wbBar && textOf(wbBar).includes('🔍'), textOf(wbBar || {}).slice(0, 60))
 check('常见端口有快捷键', [':3000', ':5173', ':8080', ':4173'].every((t) => btnByText(overlay, t)), textOf(overlay).slice(0, 120))
 check('没有历史时前进后退都禁用', btnByText(overlay, '←').props.disabled === true && btnByText(overlay, '→').props.disabled === true)
 
@@ -872,7 +912,7 @@ check('打开新建项目小窗', modalText.includes('项目名称') && modalTex
 check('小窗没有「默认工作区」按钮', !modalText.includes('默认工作区'), modalText.slice(0, 90))
 check('小窗不再有工作区模式字段', allByClass(overlay, /layout-card/).length === 0 && !modalText.includes('工作区模式'))
 check('绑定下拉可选「新建对话」', modalText.includes('新建对话'), modalText.slice(0, 120))
-check('小窗有绑定对话下拉', allByClass(overlay, /wt-select/).length === 1)
+check('小窗有绑定对话下拉', (() => { const m = allByClass(overlay, /(^|\s)modal(\s|$)/)[0]; return !!m && allByClass(m, /wt-select/).length === 1 })())
 check('小窗提示只写 localStorage', modalText.includes('localStorage'))
 
 /* ---------- 渲染层单元测试（直接测源码里的纯函数） ---------- */
@@ -979,6 +1019,795 @@ check('③ 重开同一文件 → 不经确认守卫（confirm 不被调用）',
   confirmCalls === confirmBeforeSame,
   'confirm=' + confirmCalls)
 delete globalThis.window.confirm
+
+/* ---------- 拖拽：会话 → 工作台 = 新项目 ---------- */
+mod.store.open = true
+mod.store.view = 'grid'
+mod.store.gridTab = 'sessions'
+mod.store.activeId = null
+let gridView = render(overlayComp)
+const ovRows = allByClass(gridView, /(^|\s)ov-row(\s|$)/)
+check('宿主会话行渲染为可拖', ovRows.length > 0 && ovRows[0].props.draggable === 'true', ovRows.length + ' 行')
+
+const dtSet = {}
+const fakeDragDt = {
+  types: ['application/x-dsh-session', 'text/plain'],
+  setData: (fmt, val) => { dtSet[fmt] = val },
+  getData: (fmt) => dtSet[fmt] || '',
+  effectAllowed: '',
+}
+ovRows[0].props.onDragStart({ dataTransfer: fakeDragDt, preventDefault() {} })
+let dragPayload = {}
+try { dragPayload = JSON.parse(dtSet['application/x-dsh-session'] || '{}') } catch { dragPayload = {} }
+check('拖拽写入会话身份', !!dragPayload.id, JSON.stringify(dragPayload).slice(0, 90))
+check('拖拽同时写 text/plain', String(dtSet['text/plain'] || '').length > 0, String(dtSet['text/plain'] || ''))
+
+let side2 = render(sidebarComp)
+let dragPrevented = false
+side2.props.onDragOver({
+  preventDefault() { dragPrevented = true },
+  dataTransfer: fakeDragDt,
+  currentTarget: { contains: () => true },
+})
+check('拖到侧边栏时阻止默认（允许放下）', dragPrevented === true)
+check('拖拽进入后侧边栏高亮', mod.store.dragOver === true, String(mod.store.dragOver))
+
+const beforeDrop = mod.store.projects.length
+const targetSession = mod.store.sessions.rows.find((s) => s.id === 's-beta')
+const dtDrop = {
+  types: ['application/x-dsh-session'],
+  getData: (fmt) => (fmt === 'application/x-dsh-session'
+    ? JSON.stringify({ id: targetSession.id, title: targetSession.title, cwd: targetSession.cwd })
+    : ''),
+  files: [],
+}
+side2 = render(sidebarComp)
+side2.props.onDrop({ preventDefault() {}, stopPropagation() {}, dataTransfer: dtDrop, currentTarget: { contains: () => true } })
+check('放下会话后新建了项目', mod.store.projects.length === beforeDrop + 1, beforeDrop + ' → ' + mod.store.projects.length)
+const droppedProject = mod.store.projects[mod.store.projects.length - 1]
+check('新项目绑定了被拖的会话', Array.isArray(droppedProject.sessions) && droppedProject.sessions.includes(targetSession.id), JSON.stringify(droppedProject.sessions))
+check('放下后拖拽高亮复位', mod.store.dragOver === false, String(mod.store.dragOver))
+
+const countBeforeAgain = mod.store.projects.length
+side2 = render(sidebarComp)
+side2.props.onDrop({ preventDefault() {}, stopPropagation() {}, dataTransfer: dtDrop, currentTarget: { contains: () => true } })
+check('重复拖同一条会话不重复建项目', mod.store.projects.length === countBeforeAgain, countBeforeAgain + ' → ' + mod.store.projects.length)
+check('重复拖会进已有项目', mod.store.activeId === droppedProject.id, String(mod.store.activeId))
+
+const dtPath = {
+  types: ['text/uri-list'],
+  getData: (fmt) => (fmt === 'text/uri-list' ? 'C:\\projects\\dragged-dir' : ''),
+  files: [],
+}
+const beforePath = mod.store.projects.length
+side2 = render(sidebarComp)
+side2.props.onDrop({ preventDefault() {}, stopPropagation() {}, dataTransfer: dtPath, currentTarget: { contains: () => true } })
+const pathProject = mod.store.projects[mod.store.projects.length - 1]
+check('拖入目录路径也会建项目', mod.store.projects.length === beforePath + 1 && pathProject.path === 'C:\\projects\\dragged-dir', pathProject.path)
+
+const beforeJunk = mod.store.projects.length
+side2 = render(sidebarComp)
+side2.props.onDrop({ preventDefault() {}, stopPropagation() {}, dataTransfer: { types: ['text/plain'], getData: () => '随便一段文字', files: [] }, currentTarget: { contains: () => true } })
+check('认不出的拖拽数据不建项目', mod.store.projects.length === beforeJunk, beforeJunk + ' → ' + mod.store.projects.length)
+
+/* ---------- 「＋ 新建对话」真去宿主要会话 ---------- */
+const beforeCreate = sessionCreates.length
+const newSid = await mod.createSessionInDir('C:\\projects\\demo')
+check('新建对话走宿主 /session/create', sessionCreates.length === beforeCreate + 1, beforeCreate + ' → ' + sessionCreates.length)
+check('新建对话把项目目录带给宿主', String((sessionCreates[sessionCreates.length - 1] || {}).cwd || '').length > 0, JSON.stringify(sessionCreates[sessionCreates.length - 1] || {}))
+check('新建对话拿到宿主返回的 sessionId', newSid === 'session-new-1', String(newSid))
+
+/* ---------- 打开项目切到绑定对话（switchHostSession） ---------- */
+let refreshCalls = 0
+const clientCreates = []
+const uiCalls = []
+let failNextOpen = false
+const fakeUi = () => ({
+  openSession: (id) => {
+    if (failNextOpen) { failNextOpen = false; throw new Error('session not in client catalog') }
+    uiCalls.push(id)
+  },
+})
+const fakeClientSessions = () => ({
+  refresh: async () => { refreshCalls += 1 },
+  create: async (opts) => { clientCreates.push(opts || {}); return 'session-client-1' },
+})
+ctx.get = (name) => {
+  if (name === 'uiWorkspace') return fakeUi()
+  if (name === 'sessions') return fakeClientSessions()
+  return undefined
+}
+
+const sw1 = await mod.switchHostSession('s-apple')
+check('切对话：调用宿主 openSession', sw1.ok === true && uiCalls.includes('s-apple'), JSON.stringify(uiCalls))
+
+failNextOpen = true
+const refBefore = refreshCalls
+const sw2 = await mod.switchHostSession('s-brand-new')
+check('切对话：目录没同步时先 refresh 客户端目录再重试',
+  sw2.ok === true && refreshCalls === refBefore + 1 && uiCalls.includes('s-brand-new'),
+  'refresh+' + (refreshCalls - refBefore) + ' calls=' + uiCalls.join(','))
+
+ctx.get = () => undefined
+const sw3 = await mod.switchHostSession('s-apple')
+check('切对话：没有入口时返回 ok:false + 原因', sw3.ok === false && !!sw3.error, JSON.stringify(sw3))
+const sw4 = await mod.switchHostSession('')
+check('切对话：空 id 直接拒绝', sw4.ok === false, JSON.stringify(sw4))
+
+/* ---------- 新建对话优先走客户端 sessions.create（会进目录，之后才 openSession 得动） ---------- */
+ctx.get = (name) => (name === 'sessions' ? fakeClientSessions() : undefined)
+const beforeHostRoute = sessionCreates.length
+const sidClient = await mod.createSessionInDir('C:\\projects\\demo')
+check('新建对话优先用客户端 create', sidClient === 'session-client-1', String(sidClient))
+check('客户端能建时不再打 host /session/create', sessionCreates.length === beforeHostRoute, beforeHostRoute + ' → ' + sessionCreates.length)
+
+/* ---------- 拖拽建项目的命名 ---------- */
+const namedProject = mod.store.projects.find((p) => Array.isArray(p.sessions) && p.sessions.includes('s-beta'))
+check('拖拽建的项目用会话标题命名', !!namedProject && namedProject.name === 'beta 控制台', namedProject && namedProject.name)
+
+const dtUntitled = {
+  types: ['application/x-dsh-session'],
+  getData: () => JSON.stringify({ id: 's-untitled' }),
+  files: [],
+}
+side2 = render(sidebarComp)
+side2.props.onDrop({ preventDefault() {}, stopPropagation() {}, dataTransfer: dtUntitled, currentTarget: { contains: () => true } })
+const untitled = mod.store.projects[mod.store.projects.length - 1]
+check('没有标题的会话 → 项目名「未命名项目」', untitled && untitled.name === '未命名项目', untitled && untitled.name)
+check('没有标题时直接弹编辑窗让人取名', !!mod.store.modal && mod.store.modal.kind === 'edit', JSON.stringify(mod.store.modal))
+
+/* ---------- 浏览器：首页搜索 / 地址与搜索分流 ---------- */
+check('搜索 URL 走引擎并对关键词编码',
+  mod.searchUrl('猫咪 视频', 'bing') === 'https://www.bing.com/search?q=' + encodeURIComponent('猫咪 视频'),
+  mod.searchUrl('猫咪 视频', 'bing'))
+check('百度引擎 URL', mod.searchUrl('固态硬盘', 'baidu').startsWith('https://www.baidu.com/s?wd='), mod.searchUrl('固态硬盘', 'baidu'))
+
+mod.store.web = { ...mod.store.web, engine: 'bing' }
+const asUrl = mod.webGotoSmart('localhost:5173')
+check('像地址就当地址打开', asUrl === true && mod.store.web.url === 'http://localhost:5173', mod.store.web.url)
+const asSearch = mod.webGotoSmart('猫咪视频')
+check('不像地址就交给搜索引擎', asSearch === true && /bing\.com\/search\?q=/.test(mod.store.web.url), mod.store.web.url)
+
+/* ---------- 自定义主题与背景 ---------- */
+mod.setTheme({ accent: 'blue' })
+check('切强调色生效', mod.store.theme.accent === 'blue', mod.store.theme.accent)
+check('强调色转成 CSS 变量', String(mod.themeStyle()['--amber-rgb']).includes('78'), JSON.stringify(mod.themeStyle()['--amber-rgb']))
+check('背景风格用 data-bg 下发', mod.themeAttrs()['data-bg'] === 'glass', JSON.stringify(mod.themeAttrs()))
+
+mod.setTheme({ bg: 'image', image: 'https://example.com/wall.png' })
+check('图片背景写进 --wt-bg-image', String(mod.themeStyle()['--wt-bg-image']).includes('wall.png'), String(mod.themeStyle()['--wt-bg-image']))
+mod.setTheme({ image: 'javascript:alert(1)' })
+check('非法图片地址被丢弃', mod.store.theme.image === '', mod.store.theme.image)
+
+mod.resetTheme()
+check('恢复默认主题', mod.store.theme.accent === 'amber' && mod.store.theme.bg === 'glass', JSON.stringify(mod.store.theme))
+
+/* 侧边栏 ⚙ 打开主题小窗 */
+mod.store.open = false
+sidebar = render(sidebarComp)
+const gearBtn = collect(sidebar).find((n) => n.type === 'button' && textOf(n).trim() === '⚙')
+check('侧边栏有主题按钮', !!gearBtn)
+gearBtn.props.onClick({ preventDefault() {}, stopPropagation() {} })
+const themeTree = render(sidebarComp)
+const themeText = textOf(themeTree)
+check('主题小窗渲染', themeText.includes('主题与背景') && themeText.includes('强调色'), themeText.slice(0, 70))
+check('主题小窗有强调色色块', allByClass(themeTree, /(^|\s)theme-dot(\s|$)/).length >= 5, allByClass(themeTree, /theme-dot/).length)
+check('主题小窗有背景风格选项', allByClass(themeTree, /(^|\s)theme-bg(\s|$)/).length === 4, allByClass(themeTree, /theme-bg/).length)
+check('主题小窗有恢复默认', themeText.includes('恢复默认'))
+mod.store.modal = null
+
+/* ---------- 浏览器首页面板 ---------- */
+mod.store.web = { ...mod.store.web, home: false, url: 'http://localhost:5173' }
+mod.webHome()
+check('webHome 打开首页面板', mod.store.web.home === true, String(mod.store.web.home))
+mod.webGotoSmart('localhost:5173')
+check('导航后自动关首页面板', mod.store.web.home === false, String(mod.store.web.home))
+
+/* ---------- 亮度滑块 ---------- */
+mod.setTheme({ brightness: 70 })
+check('亮度写进 --wt-bright', mod.themeStyle()['--wt-bright'] === '0.7', mod.themeStyle()['--wt-bright'])
+mod.setTheme({ brightness: 999 })
+check('亮度上限被夹到 160', mod.store.theme.brightness === 160, String(mod.store.theme.brightness))
+mod.setTheme({ brightness: 10 })
+check('亮度下限被夹到 40', mod.store.theme.brightness === 40, String(mod.store.theme.brightness))
+mod.resetTheme()
+check('恢复默认含亮度 100', mod.store.theme.brightness === 100, JSON.stringify(mod.store.theme))
+
+/* 主题小窗里：拖放区 + 亮度滑块 + 图片输入 */
+mod.store.open = false
+gearBtn.props.onClick({ preventDefault() {}, stopPropagation() {} })
+mod.setTheme({ bg: 'image' })
+const tTree = render(sidebarComp)
+check('主题小窗有图片拖放区', allByClass(tTree, /(^|\s)theme-drop(\s|$)/).length === 1, allByClass(tTree, /theme-drop/).length)
+check('主题小窗有亮度滑块', collect(tTree).some((n) => n.type === 'input' && n.props && n.props.type === 'range'), '')
+check('主题小窗有隐藏的文件选择器', collect(tTree).some((n) => n.type === 'input' && n.props && n.props.type === 'file'), '')
+mod.store.modal = null
+mod.resetTheme()
+
+/* ---------- 浏览器首页：大搜索框 ---------- */
+mod.store.web = { ...mod.store.web, home: true, url: 'http://localhost:5173' }
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.gridTab = 'projects'
+const bigHome = render(overlayComp)
+check('首页面板内有搜索框', allByClass(bigHome, /wb-home-panel/).length >= 0, '')
+
+/* ---------- 工作区顶栏不重复：空态不再放第二排入口 ---------- */
+mod.store.modal = null
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = mod.store.projects[0].id
+const projTree = render(overlayComp)
+check('空态不再有第二排打开按钮', allByClass(projTree, /(^|\s)pe-actions(\s|$)/).length === 0, allByClass(projTree, /pe-actions/).length)
+const tabAdd = allByClass(projTree, /(^|\s)tab-add(\s|$)/)[0]
+const addBtns = tabAdd ? collect(tabAdd).filter((n) => n.type === 'button') : []
+check('顶部只露一个「＋ 窗口」按钮（其余在菜单里）', (tabAdd ? collect(tabAdd).filter((n) => n.type === 'button' && /mini-btn/.test(String((n.props && n.props.className) || ''))).length : 0) === 1 && textOf(tabAdd).includes('＋ 窗口'), addBtns.length + ' 个按钮节点')
+
+/* ---------- 背景图取景 ---------- */
+mod.setTheme({ bg: 'image', image: 'https://example.com/wall.png', crop: { x: 20, y: 40, w: 50, h: 30 } })
+check('取景换算成背景尺寸/位置',
+  mod.themeStyle()['--wt-bg-size'] === '200.00% auto' && mod.themeStyle()['--wt-bg-px'] === '40.00%',
+  mod.themeStyle()['--wt-bg-size'] + ' @ ' + mod.themeStyle()['--wt-bg-px'])
+mod.setTheme({ crop: { x: 999, y: -20, w: 5, h: 300 } })
+const cc = mod.store.theme.crop
+check('取景出界被夹回来且强制等比', cc.x + cc.w <= 100 && cc.y >= 0 && cc.w >= 15 && cc.w === cc.h, JSON.stringify(cc))
+
+mod.store.open = false
+gearBtn.props.onClick({ preventDefault() {}, stopPropagation() {} })
+const frameTree = render(sidebarComp)
+const frame = allByClass(frameTree, /(^|\s)theme-stage(\s|$)/)[0]
+check('主题小窗有可拖取景框', !!frame, frame ? 'ok' : '无')
+check('取景框可拖可缩放（crop 定位）', !!allByClass(frameTree, /(^|\s)theme-cut(\s|$)/)[0] && !!allByClass(frameTree, /theme-cut-handle/)[0], '')
+check('取景框按主区比例（aspectRatio）', !!frame && typeof frame.props.style.aspectRatio === 'string', frame && frame.props.style.aspectRatio)
+check('有居中复位', textOf(frameTree).includes('居中'))
+mod.store.modal = null
+mod.resetTheme()
+
+/* ---------- ① 让位宽度版本化：旧像素值自动作废 ---------- */
+check('hydrate 写下 dockVer', String(ls.get('wt.dockVer')) === '2', ls.get('wt.dockVer'))
+
+/* ---------- ② 主区比例估算（无实际让位时也用同一套 computeDock） ---------- */
+const aspect = mod.dockAspect ? mod.dockAspect() : NaN
+check('dockAspect 给出合理比例（0.5–3.2）', Number.isFinite(aspect) && aspect >= 0.5 && aspect <= 3.2, String(aspect))
+
+/* ---------- ③ ⌘K 搜索 ---------- */
+mod.openSearch()
+check('打开搜索小窗', !!mod.store.modal && mod.store.modal.kind === 'search', JSON.stringify(mod.store.modal))
+mod.store.open = false
+const searchTree = render(sidebarComp)
+const searchText = textOf(searchTree)
+check('搜索小窗有输入框', !!allByClass(searchTree, /(^|\s)search-input(\s|$)/)[0], '')
+check('搜索小窗列出项目', searchText.includes('智能小车固件') || searchText.includes('上位机面板'), searchText.slice(0, 80))
+check('搜索小窗列出宿主对话', searchText.includes('app-alpha 会话') || searchText.includes('beta 控制台'), '')
+check('搜索小窗有快捷键说明', searchText.includes('Ctrl+K') || searchText.includes('⌘K'), '')
+const rows = allByClass(searchTree, /(^|\s)search-row(\s|$)/)
+check('搜索结果有可点行', rows.length > 0, rows.length + ' 行')
+rows[0].props.onClick({ preventDefault() {}, stopPropagation() {} })
+check('点结果会进入项目并关闭小窗', !mod.store.modal && !!mod.store.activeId, String(mod.store.activeId))
+
+/* ---------- ⑤ 项目拖拽排序 / 归组 ---------- */
+const beforeIds = mod.store.projects.map((p) => p.id)
+mod.moveProjectBefore(beforeIds[1], beforeIds[0])
+const afterIds = mod.store.projects.map((p) => p.id)
+check('拖到别的项目前面会换位', afterIds[0] === beforeIds[1] && afterIds[1] === beforeIds[0], JSON.stringify(afterIds.slice(0, 2)))
+mod.setProjectFolder(afterIds[0], '工作')
+check('拖到分组标题会归组', (mod.store.projects.find((p) => p.id === afterIds[0]) || {}).folder === '工作', JSON.stringify(mod.store.projects.find((p) => p.id === afterIds[0])?.folder))
+mod.setProjectFolder(afterIds[0], '')
+check('拖回未分组会清空 folder', !(mod.store.projects.find((p) => p.id === afterIds[0]) || {}).folder, '')
+
+/* ---------- ⑥ 多窗格布局预设 ---------- */
+mod.store.open = true
+mod.store.view = 'project'
+const pid6 = mod.store.projects[0].id
+mod.store.activeId = pid6
+mod.openTab(pid6, 'info')
+mod.openTab(pid6, 'term')
+
+const u0 = mod.uiOf(pid6)
+check('布局默认单窗格', u0.layout === 'single' && u0.secondTab === '' && u0.split === 0, JSON.stringify({ layout: u0.layout, secondTab: u0.secondTab, split: u0.split }))
+
+mod.setLayout(pid6, 'vsplit')
+const u1 = mod.uiOf(pid6)
+check('切成左右两栏', u1.layout === 'vsplit', u1.layout)
+check('自动给第二窗格挑不同标签页', !!u1.secondTab && u1.secondTab !== u1.activeTab, u1.activeTab + ' / ' + u1.secondTab)
+
+mod.setSplit(pid6, 12)
+check('比例下限夹到 20', mod.uiOf(pid6).split === 20, String(mod.uiOf(pid6).split))
+mod.setSplit(pid6, 99)
+check('比例上限夹到 80', mod.uiOf(pid6).split === 80, String(mod.uiOf(pid6).split))
+mod.setSplit(pid6, 0)
+check('传 0 复位 50/50', mod.uiOf(pid6).split === 0, String(mod.uiOf(pid6).split))
+
+const splitTree = render(overlayComp)
+check('渲染出左右两栏', allByClass(splitTree, /(^|\s)ws-split(\s|$)/).length === 1 && allByClass(splitTree, /(^|\s)ws-split v(\s|$)/).length === 1, allByClass(splitTree, /ws-split/).length)
+check('两栏各有一个窗格', allByClass(splitTree, /(^|\s)ws-cell(\s|$)/).length === 2 && allByClass(splitTree, /(^|\s)pane-main(\s|$)/).length === 2, allByClass(splitTree, /pane-main/).length)
+check('中间有拖动条', allByClass(splitTree, /(^|\s)pane-split(\s|$)/).length === 1, '')
+check('顶栏有布局切换（3 个）', allByClass(splitTree, /(^|\s)layout-switch(\s|$)/).length === 1 && allByClass(splitTree, /layout-switch/).length === 1, '')
+
+/* 在第二栏点标签页 → 写 secondTab，第一栏不变 */
+const paneB = allByClass(splitTree, /(^|\s)pane-b(\s|$)/)[0]
+const tabsB = paneB ? collect(paneB).filter((n) => n.props && /(^|\s)tab(\s|$)/.test(String(n.props.className || ''))) : []
+check('第二栏能点自己的标签页', tabsB.length >= 2, tabsB.length + ' 个')
+const beforeA = mod.uiOf(pid6).activeTab
+const other = tabsB.find((n) => textOf(n) !== textOf(paneB) && n.props.onClick)
+if (other) other.props.onClick({ stopPropagation() {}, preventDefault() {} })
+check('点第二栏标签只改第二窗格', mod.uiOf(pid6).activeTab === beforeA, mod.uiOf(pid6).activeTab + ' vs ' + beforeA)
+
+/* 只有一个标签页时退回单窗格 */
+mod.closeTab(pid6, mod.uiOf(pid6).tabs[1].key)
+const oneTab = render(overlayComp)
+check('只剩一个标签页时自动退回单窗格', allByClass(oneTab, /(^|\s)ws-split(\s|$)/).length === 0, allByClass(oneTab, /ws-split/).length)
+
+mod.setLayout(pid6, 'single')
+check('切回单窗格', mod.uiOf(pid6).layout === 'single', mod.uiOf(pid6).layout)
+
+/* ---------- ⑦ 媒体窗 / 笔记窗 ---------- */
+mod.setLayout(pid6, 'single')
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+
+mod.openTab(pid6, 'media')
+const mediaTree = render(overlayComp)
+check('媒体窗有路径输入', !!allByClass(mediaTree, /(^|\s)media-input(\s|$)/)[0], '')
+check('媒体窗有预览按钮', textOf(mediaTree).includes('预览'), '')
+check('空态提示三种选法', textOf(mediaTree).includes('选择文件') && textOf(mediaTree).includes('浏览项目'), textOf(mediaTree).slice(0, 90))
+const mediaInput = allByClass(mediaTree, /(^|\s)media-input(\s|$)/)[0]
+const previewBtn = collect(mediaTree).find((n) => n.type === 'button' && textOf(n).trim() === '预览')
+check('输入路径后点预览会切到预览态', !!mediaInput && !!previewBtn && typeof mediaInput.props.onChange === 'function', '')
+
+/* 笔记窗 */
+mod.updateProject(pid6, { note: '# 随手记 · 先跑起来' })
+mod.openTab(pid6, 'notes')
+const notesTree = render(overlayComp)
+const area = collect(notesTree).find((n) => n.type === 'textarea')
+check('笔记窗渲染编辑器', !!area, '')
+check('笔记窗带出项目 note', !!area && String(area.props.value).includes('先跑起来'), area ? String(area.props.value).slice(0, 24) : '')
+check('笔记窗有保存与清空', textOf(notesTree).includes('保存') && textOf(notesTree).includes('清空'), '')
+check('笔记窗标题带项目名', textOf(notesTree).includes('的笔记'), textOf(notesTree).slice(0, 60))
+const noteSave = collect(notesTree).find((n) => n.type === 'button' && textOf(n).trim() === '保存')
+if (noteSave) noteSave.props.onClick({ preventDefault() {}, stopPropagation() {} })
+check('保存后 note 仍是这条（不丢）', (mod.store.projects.find((x) => x.id === pid6) || {}).note === '# 随手记 · 先跑起来', '')
+
+/* 新标签页在「＋ 窗口」菜单里 */
+mod.store.tabMenu = true
+const menuTree = render(overlayComp)
+check('菜单里有媒体与笔记入口', textOf(menuTree).includes('🖼 媒体') && textOf(menuTree).includes('✎ 笔记'), '')
+mod.store.tabMenu = false
+
+/* ---------- ⑧ 产物回挂（.wt/artifact.json） ---------- */
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+artifactCase = ''
+const artRes = await mod.loadArtifacts(pid6)
+check('读到 3 条产物', artRes.ok === true && mod.store.artifacts.items.length === 3, JSON.stringify(mod.store.artifacts.items.map((x) => x.title)))
+check('产物路径按项目目录解析', String((mod.store.artifacts.items[1] || {}).path).includes('docs'), String((mod.store.artifacts.items[1] || {}).path))
+check('产物清单文件路径记下来了', String(mod.store.artifacts.file).endsWith('artifact.json'), mod.store.artifacts.file)
+
+artifactCase = 'missing'
+const missRes = await mod.loadArtifacts(pid6)
+check('没有产物文件不算错误', missRes.ok === false && missRes.error === '' && mod.store.artifacts.items.length === 0, JSON.stringify(missRes))
+artifactCase = ''
+await mod.loadArtifacts(pid6)
+
+/* InfoPane 里能看到产物，并能一键打开 */
+mod.openTab(pid6, 'info')
+const infoTree = render(overlayComp)
+check('项目信息里有产物区', textOf(infoTree).includes('产物') && textOf(infoTree).includes('站点预览'), '')
+const artRows = allByClass(infoTree, /(^|\s)art-row(\s|$)/)
+check('产物各占一行（3 行）', artRows.length === 3, artRows.length + ' 行')
+const openBtn = collect(artRows[0]).find((n) => n.type === 'button' && textOf(n).trim() === '打开')
+openBtn.props.onClick({ preventDefault() {}, stopPropagation() {} })
+check('网址产物进浏览器并打开', mod.store.web.url === 'http://localhost:5173' && mod.uiOf(pid6).activeTab === 'web', mod.store.web.url + ' @ ' + mod.uiOf(pid6).activeTab)
+
+const openImg = collect(artRows[1]).find((n) => n.type === 'button' && textOf(n).trim() === '打开')
+openImg.props.onClick({ preventDefault() {}, stopPropagation() {} })
+check('图片产物进媒体窗', String(mod.store.media.path).endsWith('arch.png') && mod.uiOf(pid6).activeTab === 'media', mod.store.media.path + ' @ ' + mod.uiOf(pid6).activeTab)
+const mediaView = render(overlayComp)
+const mInput = allByClass(mediaView, /(^|\s)media-input(\s|$)/)[0]
+check('媒体窗跟着产物换预览', !!mInput && String(mInput.props.value).endsWith('arch.png'), mInput ? String(mInput.props.value) : '')
+
+const openMd = collect(artRows[2]).find((n) => n.type === 'button' && textOf(n).trim() === '打开')
+openMd.props.onClick({ preventDefault() {}, stopPropagation() {} })
+check('文本/文档产物进编辑器', mod.uiOf(pid6).activeTab === 'editor' && String(mod.store.editor.path).endsWith('report.md'), mod.store.editor.path + ' @ ' + mod.uiOf(pid6).activeTab)
+
+/* ---------- ⑨ 项目模板 ---------- */
+check('模板至少 5 种', mod.PROJECT_TEMPLATES.length >= 5 && mod.PROJECT_TEMPLATES.some((x) => x.id === 'frontend') && mod.PROJECT_TEMPLATES.some((x) => x.id === 'writing'), String(mod.PROJECT_TEMPLATES.length))
+
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+mod.applyTemplate(pid6, 'frontend')
+const tplUi = mod.uiOf(pid6)
+check('前端模板预置终端与浏览器', tplUi.tabs.some((x) => x.kind === 'term') && tplUi.tabs.some((x) => x.kind === 'web'), tplUi.tabs.map((x) => x.kind).join(','))
+check('前端模板是左右分栏', tplUi.layout === 'vsplit' && !!tplUi.secondTab, tplUi.layout + ' / ' + tplUi.secondTab)
+check('前端模板把浏览器指到 5173', String(mod.store.web.url).includes('5173'), mod.store.web.url)
+check('模板只挑第一个标签页为当前', tplUi.activeTab === tplUi.tabs[0].key, tplUi.activeTab)
+
+const beforeBlank = mod.uiOf(pid6).tabs.length
+mod.applyTemplate(pid6, 'blank')
+check('空模板不改动已有标签页', mod.uiOf(pid6).tabs.length === beforeBlank, String(mod.uiOf(pid6).tabs.length))
+
+/* ---------- ⑩ 导出 / 导入 ---------- */
+const snap = mod.exportSnapshot()
+check('导出含版本与项目', snap.version === 1 && Array.isArray(snap.projects) && snap.projects.length === mod.store.projects.length, JSON.stringify({ v: snap.version, n: snap.projects.length }))
+check('导出含主题与布局', !!snap.theme && !!snap.theme.accent && !!snap.ui, '')
+check('导出是合法 JSON 文本', (() => { try { JSON.parse(mod.exportSnapshotText()); return true } catch { return false } })(), '')
+
+const baseCount = mod.store.projects.length
+const imp1 = mod.importSnapshot({ projects: [{ name: '导入的项目', path: 'C:\\projects\\imported', note: '来自备份' }] })
+check('导入新项目：新增 1', imp1.ok === true && imp1.added === 1 && mod.store.projects.length === baseCount + 1, JSON.stringify(imp1))
+check('导入后能查到项目', mod.store.projects.some((x) => x.name === '导入的项目' && x.note === '来自备份'), '')
+
+const imp2 = mod.importSnapshot({ projects: [{ name: '导入的项目', path: 'C:\\projects\\imported' }] })
+check('重复导入：更新而不新增', imp2.updated === 1 && imp2.added === 0 && mod.store.projects.length === baseCount + 1, JSON.stringify(imp2))
+
+const bad = mod.importSnapshot('{ not json')
+check('坏 JSON 拒绝且不动数据', bad.ok === false && mod.store.projects.length === baseCount + 1, JSON.stringify(bad))
+
+const noList = mod.importSnapshot({ foo: 1 })
+check('没有项目列表也拒绝', noList.ok === false, JSON.stringify(noList))
+
+/* 数据小窗与新建项目里的模板选择 */
+mod.store.open = false
+mod.openModal('data')
+const dataTree = render(sidebarComp)
+check('数据小窗有 JSON 文本域', !!collect(dataTree).find((n) => n.type === 'textarea'), '')
+check('数据小窗有三个动作', textOf(dataTree).includes('下载 .json') && textOf(dataTree).includes('导入这份数据'), '')
+mod.closeModal()
+
+mod.openModal('add')
+const addTree = render(sidebarComp)
+check('新建项目有模板选择', textOf(addTree).includes('预设模板') && textOf(addTree).includes('前端'), '')
+check('模板按钮可点（至少 5 个）', collect(addTree).filter((n) => n.props && /(^|\s)tpl(\s|$)/.test(String(n.props.className || ''))).length >= 5, '')
+mod.closeModal()
+
+/* ---------- ⑪ 入驻项目注册表 ---------- */
+check('window 上挂了注册表', typeof window.__WT_REGISTER_PROJECT__ === 'function' && typeof window.__WT_UNREGISTER_PROJECT__ === 'function', typeof window.__WT_REGISTER_PROJECT__)
+
+const extId = mod.registerExternalProject({ name: '备忘录', path: 'C:/projects/memo', icon: '📝', source: 'demo-plugin' })
+check('注册一条入驻项目', !!extId && mod.store.external.length === 1 && mod.store.external[0].name === '备忘录', JSON.stringify(mod.store.external.map((x) => x.name)))
+check('注册项带来源与图标', mod.store.external[0].source === 'demo-plugin' && mod.store.external[0].icon === '📝', '')
+
+const again = mod.registerExternalProject({ id: extId, name: '备忘录', path: 'C:/projects/memo', icon: '📝' })
+check('同 id 重复注册只留一条', again === extId && mod.store.external.length === 1, String(mod.store.external.length))
+
+mod.registerExternalProject({ path: 'C:/no-name' })
+check('名字为空不注册', mod.store.external.length === 1, String(mod.store.external.length))
+
+mod.store.open = false
+const sideExt = render(sidebarComp)
+check('侧边栏有「入驻」分组', textOf(sideExt).includes('入驻') && textOf(sideExt).includes('备忘录'), '')
+const extRow = collect(sideExt).find((n) => n.props && /(^|\s)pitem ext(\s|$)/.test(String(n.props.className || '')))
+check('入驻项是虚线卡片', !!extRow, extRow ? 'ok' : '无')
+
+const beforeProjects = mod.store.projects.length
+extRow.props.onClick({ preventDefault() {}, stopPropagation() {} })
+check('点入驻项落成工作台项目', mod.store.projects.length === beforeProjects + 1 && mod.store.projects.some((x) => x.path === 'C:/projects/memo'), String(mod.store.projects.length))
+check('并直接进入该项目', mod.store.open === true && mod.store.view === 'project', mod.store.view)
+
+const afterAdopt = mod.store.projects.length
+const extRow2 = collect(render(sidebarComp)).find((n) => n.props && /(^|\s)pitem ext(\s|$)/.test(String(n.props.className || '')))
+if (extRow2) extRow2.props.onClick({ preventDefault() {}, stopPropagation() {} })
+check('同目录再点不重复建项目', mod.store.projects.length === afterAdopt, String(mod.store.projects.length))
+
+mod.store.external.filter((x) => x.id !== extId).forEach((x) => mod.unregisterExternalProject(x.id))
+mod.unregisterExternalProject(extId)
+check('注销后入驻分组为空', mod.store.external.length === 0, String(mod.store.external.length))
+
+/* ---------- ⑫ 撤销删除 ---------- */
+const victim = mod.store.projects[mod.store.projects.length - 1]
+const victimId = victim.id
+const victimCount = mod.store.projects.length
+mod.removeProject(victimId)
+check('删除进垃圾桶', mod.store.projects.length === victimCount - 1 && mod.store.trash.length === 1 && mod.store.trash[0].project.id === victimId, String(mod.store.trash.length))
+const undoToast = [...mod.store.toasts].reverse().find((x) => typeof x.onUndo === 'function')
+check('删除后 toast 带撤销', !!undoToast, mod.store.toasts.length + ' 条 toast')
+
+mod.store.open = false
+const undoTree = render(sidebarComp)
+check('toast 上有「撤销」按钮', allByClass(undoTree, /(^|\s)toast-undo(\s|$)/).length === 1, allByClass(undoTree, /toast-undo/).length)
+check('撤销后项目回到原位', mod.undoRemoveProject() === true && mod.store.projects.length === victimCount && mod.store.projects[victimCount - 1].id === victimId, String(mod.store.projects.length))
+check('撤销后垃圾桶清空', mod.store.trash.length === 0, String(mod.store.trash.length))
+check('没得撤销时返回 false', mod.undoRemoveProject() === false, '')
+
+/* ---------- ⑬ 窗格级错误边界 ---------- */
+check('导出 PaneBoundary', typeof mod.PaneBoundary === 'function', typeof mod.PaneBoundary)
+const pb = new mod.PaneBoundary({ children: 'x' })
+const okTree = pb.render()
+check('正常时包一层 pane-boundary', !!okTree && String(okTree.props.className).includes('pane-boundary'), okTree && okTree.props.className)
+pb.state.err = new Error('boom-渲染炸了')
+const crashTree = pb.render()
+const crashText = textOf(crashTree)
+check('出错时显示崩溃卡', crashText.includes('渲染失败') && crashText.includes('boom-渲染炸了'), crashText.slice(0, 40))
+const retryBtn = collect(crashTree).find((n) => n.type === 'button' && textOf(n).includes('重新加载此窗格'))
+check('崩溃卡有重试按钮', !!retryBtn, '')
+if (retryBtn) retryBtn.props.onClick({ preventDefault() {}, stopPropagation() {} })
+check('重试后恢复渲染', pb.state.err === null && pb.state.tries === 1, JSON.stringify({ err: String(pb.state.err), tries: pb.state.tries }))
+
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+mod.uiOf(pid6)
+mod.openTab(pid6, 'info')
+const bTree = render(overlayComp)
+check('窗格外面有边界包裹', allByClass(bTree, /(^|\s)pane-boundary(\s|$)/).length >= 1, allByClass(bTree, /pane-boundary/).length)
+
+/* ---------- ⑭ 总览：搜索 / 排序 / 筛选 ---------- */
+mod.store.open = true
+mod.store.view = 'grid'
+mod.setGridTab('projects')
+mod.setOverview({ q: '', sort: 'recent', filter: 'all' })
+
+const allList = mod.overviewProjects()
+check('默认展示全部可见项目', allList.length === mod.store.projects.filter((x) => !x.hidden).length, String(allList.length))
+
+mod.setOverview({ sort: 'name' })
+const byName = mod.overviewProjects()
+const names = byName.map((x) => String(x.alias || x.name))
+check('按名称排序是有序的', JSON.stringify(names) === JSON.stringify([...names].sort((a, b) => a.localeCompare(b, 'zh'))), names.join(' | '))
+
+mod.setOverview({ sort: 'order' })
+const byOrder = mod.overviewProjects()
+check('按自定义顺序排序', byOrder.map((x) => Number(x.order || 0)).every((v, i, arr) => i === 0 || arr[i - 1] <= v), byOrder.map((x) => x.order).join(','))
+
+mod.setOverview({ q: '智能', sort: 'recent' })
+const hit = mod.overviewProjects()
+check('搜索命中项目名', hit.length >= 1 && hit.every((x) => JSON.stringify(x).includes('智能') || String(x.name).includes('智能')), hit.map((x) => x.name).join(' | '))
+
+mod.setOverview({ q: '绝不存在的东西' })
+check('搜索无结果时列表为空', mod.overviewProjects().length === 0, '')
+mod.setOverview({ q: '' })
+
+mod.setOverview({ filter: 'bound' })
+check('筛选「有对话」只剩已绑定', mod.overviewProjects().every((x) => (x.sessions || []).length > 0), '')
+mod.setOverview({ filter: 'unbound' })
+check('筛选「未绑定」只剩没对话的', mod.overviewProjects().every((x) => !(x.sessions || []).length), '')
+mod.setOverview({ filter: 'all' })
+
+const ovTree = render(overlayComp)
+check('总览有搜索框', !!allByClass(ovTree, /(^|\s)ov-search(\s|$)/)[0], '')
+check('总览有排序下拉', !!allByClass(ovTree, /(^|\s)ov-sort(\s|$)/)[0], '')
+check('总览有四个筛选按钮', allByClass(ovTree, /(^|\s)ov-chips(\s|$)/).length === 1 && ['全部', '有对话', '未绑定', '在跑/待处理'].every((x) => textOf(ovTree).includes(x)), '')
+const chipBox = allByClass(ovTree, /(^|\s)ov-chips(\s|$)/)[0]
+const chipBtns = chipBox ? collect(chipBox).filter((n) => n.type === 'button') : []
+check('筛选按钮可点（4 个）', chipBtns.length === 4, String(chipBtns.length))
+
+mod.setOverview({ q: '智能' })
+const filteredTree = render(overlayComp)
+check('搜索后卡片减少', filteredTree && textOf(filteredTree).includes('智能'), '')
+
+/* ---------- ⑮ 快捷键 ---------- */
+const ev = (patch) => ({ key: '', prevented: false, preventDefault() { this.prevented = true }, stopPropagation() {}, target: { tagName: 'DIV' }, ...patch })
+
+check('快捷键表至少 7 条', mod.HOTKEYS.length >= 7, String(mod.HOTKEYS.length))
+
+mod.closeModal()
+mod.store.modal = null
+const k1 = ev({ key: 'k', ctrlKey: true })
+check('Ctrl+K 打开搜索', mod.handleHotkey(k1) === true && mod.store.modal && mod.store.modal.kind === 'search' && k1.prevented === true, JSON.stringify(mod.store.modal))
+mod.store.modal = null
+
+const k2 = ev({ key: 'n', ctrlKey: true })
+check('Ctrl+N 新建项目', mod.handleHotkey(k2) === true && mod.store.modal && mod.store.modal.kind === 'add', JSON.stringify(mod.store.modal))
+mod.store.modal = null
+
+const k3 = ev({ key: 'n', ctrlKey: true, target: { tagName: 'INPUT' } })
+check('输入框里不抢 Ctrl+N', mod.handleHotkey(k3) === false && !mod.store.modal, String(!!mod.store.modal))
+
+const k4 = ev({ key: 'g', ctrlKey: true })
+check('Ctrl+G 打开总览', mod.handleHotkey(k4) === true && mod.store.open === true && mod.store.view === 'grid', mod.store.view)
+
+/* 项目里的标签页快捷键 */
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+mod.openTab(pid6, 'info')
+mod.openTab(pid6, 'term')
+const tabsNow = mod.uiOf(pid6).tabs
+const k5 = ev({ key: '1', ctrlKey: true })
+check('Ctrl+1 切到第一个标签页', mod.handleHotkey(k5) === true && mod.uiOf(pid6).activeTab === tabsNow[0].key, mod.uiOf(pid6).activeTab)
+const k6 = ev({ key: '9', ctrlKey: true })
+check('Ctrl+9 没有第 9 个就不处理', mod.handleHotkey(k6) === false, '')
+const beforeTabs = mod.uiOf(pid6).tabs.length
+const k7 = ev({ key: 'w', ctrlKey: true })
+check('Ctrl+W 关掉当前标签页', mod.handleHotkey(k7) === true && mod.uiOf(pid6).tabs.length === beforeTabs - 1, String(mod.uiOf(pid6).tabs.length))
+
+/* Alt + ↓ 切项目 */
+const visIds = mod.store.projects.filter((x) => !x.hidden).slice().sort((a, b) => Number(a.order || 0) - Number(b.order || 0)).map((x) => x.id)
+mod.store.view = 'project'
+mod.store.activeId = visIds[0]
+const k8 = ev({ key: 'ArrowDown', altKey: true })
+const switched = mod.handleHotkey(k8) === true && mod.store.activeId === visIds[1 % visIds.length]
+check('Alt+↓ 切到下一个项目', switched, mod.store.activeId + ' vs ' + visIds[1 % visIds.length])
+const k9 = ev({ key: 'ArrowUp', altKey: true })
+check('Alt+↑ 能切回来', mod.handleHotkey(k9) === true && mod.store.activeId === visIds[0], mod.store.activeId)
+
+const k10 = ev({ key: 'x' })
+check('无关按键不处理', mod.handleHotkey(k10) === false && mod.handleHotkey(null) === false, '')
+
+/* ---------- ⑯ 运行配置 ---------- */
+mod.setRunConfig(pid6, { cmd: 'npm run dev', port: 5173 })
+const p6 = mod.store.projects.find((x) => x.id === pid6)
+check('运行配置写进项目', !!p6.run && p6.run.cmd === 'npm run dev' && p6.run.port === 5173, JSON.stringify(p6.run))
+
+mod.setRunConfig(pid6, { cmd: '' })
+const noRun = mod.runProject(pid6)
+check('没配命令时拒绝运行', noRun.ok === false && noRun.error === 'no-run-config', JSON.stringify(noRun))
+
+mod.setRunConfig(pid6, { cmd: 'npm run dev', port: 5173 })
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+const run1 = mod.runProject(pid6)
+check('点运行：状态 running', run1.ok === true && mod.store.run.state === 'running' && mod.store.run.pid === pid6, JSON.stringify(mod.store.run))
+check('运行会打开终端标签页', mod.uiOf(pid6).tabs.some((x) => x.kind === 'term') && String(mod.uiOf(pid6).activeTab).startsWith('term'), mod.uiOf(pid6).activeTab)
+
+mod.stopProject(pid6)
+check('停止后回到 idle', mod.store.run.state === 'idle', mod.store.run.state)
+check('端口跳转可用', mod.openRunPort(pid6) === true && String(mod.store.web.url).includes('5173'), mod.store.web.url)
+
+/* 编辑小窗里有运行配置字段 */
+mod.store.open = false
+mod.openModal('edit', pid6)
+const editTree = render(sidebarComp)
+check('编辑小窗有运行命令字段', textOf(editTree).includes('运行命令') && textOf(editTree).includes('npm run dev'), textOf(editTree).slice(0, 60))
+check('编辑小窗有端口字段', textOf(editTree).includes('端口'), '')
+mod.closeModal()
+
+/* 顶栏运行按钮 */
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+mod.setRunConfig(pid6, { cmd: 'npm run dev', port: 5173 })
+const wsTree = render(overlayComp)
+check('顶栏有运行按钮', allByClass(wsTree, /(^|\s)run-btn(\s|$)/).length === 1, allByClass(wsTree, /run-btn/).length)
+const runBtn = allByClass(wsTree, /(^|\s)run-btn(\s|$)/)[0]
+check('按钮 title 带命令', !!runBtn && String(runBtn.props.title).includes('npm run dev'), runBtn ? runBtn.props.title : '')
+
+/* ---------- ⑰ 总览页签记忆 ---------- */
+mod.setGridTab('running')
+check('页签选择写进 LS', String(ls.get('wt.gridTab') || '').includes('running'), String(ls.get('wt.gridTab')))
+mod.hydrate()
+check('重载后恢复上次页签', mod.store.gridTab === 'running', mod.store.gridTab)
+ls.set('wt.gridTab', '不存在的页签')
+mod.hydrate()
+check('非法页签回退到 projects', mod.store.gridTab === 'projects', mod.store.gridTab)
+
+/* ---------- ⑱ 终端历史面板 ---------- */
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+mod.openTab(pid6, 'term')
+await mod.termExec(pid6, 'npm run dev')
+await new Promise((r) => setTimeout(r, 10))
+const termSlice = mod.store.terms[pid6] || {}
+const histOk = (termSlice.history || []).includes('npm run dev') || String(ls.get('wt.termHistory') || '').includes('npm run dev')
+check('执行过的命令进历史', histOk, JSON.stringify((termSlice.history || []).slice(-3)))
+const termTree = render(overlayComp)
+const histBtn = collect(termTree).find((n) => n.type === 'button' && textOf(n).includes('历史'))
+check('终端条上有「历史」按钮', !!histBtn, histBtn ? textOf(histBtn) : '')
+check('历史按钮显示条数或空', !!histBtn && /(历史s*d+|历史)/.test(textOf(histBtn)), histBtn ? textOf(histBtn) : '')
+
+/* ---------- ⑲ 并排项目 ---------- */
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+const otherId = mod.store.projects.find((x) => x.id !== pid6).id
+
+check('并排：拒绝把自己放进并排位', mod.setSideProject(pid6) === false, '')
+check('并排：设一个别的项目', mod.setSideProject(otherId) === true && mod.store.side.pid === otherId, JSON.stringify(mod.store.side))
+check('并排：选择写进 LS', String(ls.get('wt.side') || '').includes(otherId), String(ls.get('wt.side')))
+check('sideProjectOf 返回该项目', (mod.sideProjectOf(pid6) || {}).id === otherId, '')
+check('并排位等于当前项目时返回 null', mod.sideProjectOf(otherId) === null, '')
+
+check('并排比例下限 20', mod.setSideSplit(5) === 20, String(mod.store.side.split))
+check('并排比例上限 80', mod.setSideSplit(95) === 80, String(mod.store.side.split))
+check('并排比例复位 50', mod.setSideSplit(0) === 50, String(mod.store.side.split))
+
+mod.openTab(otherId, 'info')
+mod.openTab(pid6, 'term')
+const sideTree = render(overlayComp)
+check('渲染出并排容器', allByClass(sideTree, /(^|\s)ws-side(\s|$)/).length === 1, allByClass(sideTree, /ws-side/).length)
+check('两侧各有一个标题条', allByClass(sideTree, /(^|\s)side-head(\s|$)/).length === 2, allByClass(sideTree, /side-head/).length)
+check('两侧各有一个窗格区', allByClass(sideTree, /(^|\s)side-cell(\s|$)/).length === 2 && allByClass(sideTree, /(^|\s)pane-main(\s|$)/).length >= 2, allByClass(sideTree, /side-cell/).length + ' / ' + allByClass(sideTree, /pane-main/).length)
+const sideHeads = allByClass(sideTree, /(^|\s)side-head(\s|$)/).map((n) => textOf(n))
+check('标题条显示两个项目名', sideHeads.some((x) => x.includes('智能小车固件')) && sideHeads.some((x) => !x.includes('智能小车固件')), sideHeads.join(' | '))
+const toggles = collect(sideTree).filter((n) => n.type === 'button' && textOf(n).trim() === '⫼')
+check('顶栏有并排按钮（且高亮）', toggles.length === 1 && String(toggles[0].props.className).includes('on'), toggles.length + ' 个')
+
+/* 并排选择小窗 */
+mod.store.open = false
+mod.openModal('side', pid6)
+const sideModal = render(sidebarComp)
+check('并排小窗列出别的项目', textOf(sideModal).includes('并排放一个项目') && (textOf(sideModal).includes('智能小车固件') || textOf(sideModal).includes('上位机面板')), textOf(sideModal).slice(0, 60))
+mod.closeModal()
+
+/* 进并排里的项目 → 自动撤掉并排 */
+mod.store.open = true
+await mod.enterProject(otherId)
+check('进并排项目时自动撤掉并排', !mod.store.side.pid, mod.store.side.pid)
+mod.setSideProject(otherId)
+
+/* ---------- ⑳ 并排快捷键 / 陈旧并排清理 ---------- */
+check('快捷键表含并排两条', mod.HOTKEYS.some((x) => x.keys.includes('Alt + Shift + ↓')) && mod.HOTKEYS.some((x) => x.keys.includes('Alt + Shift + ↑')), String(mod.HOTKEYS.length))
+
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+const sideTarget = mod.store.projects.find((x) => x.id !== pid6).id
+mod.setSideProject(sideTarget)
+const swapEv = ev({ key: 'ArrowDown', altKey: true, shiftKey: true })
+const swapped = mod.handleHotkey(swapEv) === true
+await new Promise((r) => setTimeout(r, 20))
+check('Alt+Shift+↓ 互换主/并排', swapped && mod.store.activeId === sideTarget && mod.store.side.pid === pid6, 'active=' + mod.store.activeId + ' side=' + mod.store.side.pid)
+check('互换会 preventDefault', swapEv.prevented === true, '')
+
+const closeEv = ev({ key: 'ArrowUp', altKey: true, shiftKey: true })
+const closed = mod.handleHotkey(closeEv) === true
+check('Alt+Shift+↑ 关闭并排', closed && !mod.store.side.pid, String(mod.store.side.pid))
+
+/* 没有并排时这两个键不处理 */
+const noneEv = ev({ key: 'ArrowUp', altKey: true, shiftKey: true })
+check('没有并排时不处理并排键', mod.handleHotkey(noneEv) === false, '')
+
+/* 陈旧的 side.pid 在 hydrate 时被清掉 */
+ls.set('wt.side', JSON.stringify({ pid: 'p-早已删除', split: 40 }))
+mod.hydrate()
+check('hydrate 清掉已删除的并排项目', mod.store.side.pid === '' && mod.store.side.split === 40, JSON.stringify(mod.store.side))
+check('清理结果写回 LS', !String(ls.get('wt.side') || '').includes('p-早已删除'), String(ls.get('wt.side')))
+
+/* ---------- ㉑ 媒体窗（真实路径/类型判定） ---------- */
+check('svg 也当图片预览', mod.kindOfMediaPath('C:/x/logo.svg') === 'image', mod.kindOfMediaPath('C:/x/logo.svg'))
+check('png → image', mod.kindOfMediaPath('C:\\pics\\a.png') === 'image', '')
+check('pdf → pdf', mod.kindOfMediaPath('C:\\docs\\a.pdf') === 'pdf', '')
+check('mp4 → video', mod.kindOfMediaPath('C:\\v\\a.mp4') === 'video', '')
+check('mp3 → audio', mod.kindOfMediaPath('C:\\a\\b.mp3') === 'audio', '')
+check('txt → 文本（走编辑器）', mod.kindOfMediaPath('C:\\a\\b.txt') === 'text', mod.kindOfMediaPath('C:\\a\\b.txt'))
+
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+mod.openTab(pid6, 'media')
+mod.openMedia(pid6, 'C:\\pics\\probe-shot.png')
+const imgTree = render(overlayComp)
+const img = allByClass(imgTree, /(^|\s)media-img(\s|$)/)[0]
+check('媒体窗渲染 <img>', !!img, img ? String(img.type) : '无')
+check('img 指向 /fs/raw 且带路径', !!img && String(img.props.src).includes('/fs/raw?path=') && String(img.props.src).includes('probe-shot.png'), img ? String(img.props.src) : '')
+check('img 有 onError 兜底', !!img && typeof img.props.onError === 'function', '')
+
+mod.openMedia(pid6, 'C:\\docs\\a.pdf')
+const pdfTree = render(overlayComp)
+const mediaPdfFrame = allByClass(pdfTree, /(^|\s)media-frame(\s|$)/)[0]
+check('PDF 走 iframe', !!mediaPdfFrame && String(mediaPdfFrame.props.src).includes('/fs/raw'), '')
+
+mod.openMedia(pid6, 'C:\\a\\b.txt')
+const txtTree = render(overlayComp)
+check('非媒体给「不支持内嵌预览」', textOf(txtTree).includes('不支持内嵌预览'), '')
+check('非媒体显示解析后的 URL 方便排查', textOf(txtTree).includes('/fs/raw'), '')
+mod.openMedia(pid6, 'C:\\pics\\probe-shot.svg')
+const svgTree = render(overlayComp)
+check('SVG 也能内嵌预览', !!allByClass(svgTree, /(^|\s)media-img(\s|$)/)[0], '')
+mod.openMedia(pid6, '')
+
+/* ---------- ㉒ 媒体：选择文件 / 浏览项目 ---------- */
+mod.openMedia(pid6, '')
+const pickTree = render(overlayComp)
+check('有「选择文件」按钮', collect(pickTree).some((n) => n.type === 'button' && textOf(n).trim() === '选择文件'), '')
+check('有「浏览项目」按钮', collect(pickTree).some((n) => n.type === 'button' && textOf(n).trim() === '浏览项目'), '')
+const fileInput = collect(pickTree).find((n) => n.type === 'input' && String(n.props.type) === 'file')
+check('隐藏的 file 输入存在且只收媒体', !!fileInput && String(fileInput.props.accept).includes('image/*'), fileInput ? String(fileInput.props.accept) : '')
+
+const listed = await mod.listMediaDir('C:\\projects\\smart-car')
+check('listMediaDir 返回目录条目', !!listed && Array.isArray(listed.entries) && listed.entries.length >= 5, JSON.stringify(listed && listed.entries && listed.entries.map((x) => x.name)))
+const mediaFiltered = mod.mediaRowsOf(listed.entries)
+const mediaNames = mediaFiltered.map((x) => x.name)
+check('只留目录与媒体文件', mediaNames.includes('src') && mediaNames.includes('shot.png') && mediaNames.includes('manual.pdf'), names.join(','))
+check('文本/代码文件被过滤掉', !mediaNames.includes('README.md') && !mediaNames.includes('main.c'), names.join(','))
+
+const svgRow = mod.mediaRowsOf([{ name: 'logo.svg', dir: false, size: 1 }, { name: 'a.txt', dir: false, size: 1 }])
+check('SVG 算可预览', svgRow.length === 1 && svgRow[0].name === 'logo.svg', JSON.stringify(svgRow.map((x) => x.name)))
 
 const failed = results.filter((r) => !r)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)

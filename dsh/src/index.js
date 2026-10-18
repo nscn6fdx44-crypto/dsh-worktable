@@ -184,6 +184,17 @@ export function apply(ctx) {
     },
   })
 
+  /* 新建一个空会话（新建项目「＋ 新建对话」用）：走宿主 GUI 同一条 sessionController.create */
+  register({
+    kind: 'exact',
+    path: BASE + '/session/create',
+    handler: async (req, res) => {
+      if (!allowMethod(req, res, 'POST')) return
+      const body = await readJson(req, res, MAX_BODY_JSON)
+      if (body === undefined) return
+      sendJson(res, 200, await createSession(ctx, String(body?.cwd || '').trim() || undefined))
+    },
+  })
   /* ---------- 文件系统 ---------- */
 
   register({ kind: 'exact', path: BASE + '/fs/list', handler: guard(async (req, res) => {
@@ -780,6 +791,27 @@ function degradedSessions(err) {
   }
 }
 
+/**
+ * 新建一个宿主会话（只创建，不发送任何消息）。
+ * 走 sessionController.create —— 与 GUI 里「新会话」按钮同一条链路，
+ * 因此新建出来的会话在宿主侧边栏里也立刻可见、可继续对话。
+ * @param ctx - 插件上下文。
+ * @param cwd - 可选的工作目录；缺省时宿主用它自己的默认目录。
+ */
+async function createSession(ctx, cwd) {
+  const controller = service(ctx, 'sessionController')
+  if (!controller || typeof controller.create !== 'function') {
+    return { ok: false, error: '宿主未提供 sessionController（无法新建会话）' }
+  }
+  try {
+    const created = await controller.create(cwd ? { cwd } : {})
+    const sessionId = String(created?.sessionId || '')
+    if (!sessionId) return { ok: false, error: 'sessionController.create 没有返回 sessionId' }
+    return { ok: true, sessionId, agentPreset: created?.agentPreset }
+  } catch (err) {
+    return { ok: false, error: String(err?.message ?? err) }
+  }
+}
 async function collectDefaults(ctx) {
   let workspace = ''
   const querySvc = service(ctx, 'sessionQuery')

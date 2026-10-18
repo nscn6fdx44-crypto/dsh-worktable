@@ -56,6 +56,15 @@ const fakeSessionQuery = {
   },
 }
 
+/* 新建会话：宿主 GUI 走的也是 sessionController.create；这里只断言插件把 cwd 透传 */
+const createdSessions = []
+const fakeSessionController = {
+  async create(request) {
+    createdSessions.push(request || {})
+    return { sessionId: 'session-new-1', agentPreset: 'standard' }
+  },
+}
+
 function makeCtx() {
   return {
     webServer: {
@@ -68,6 +77,7 @@ function makeCtx() {
     get(name) {
       if (name === 'sessions') return fakeSessions
       if (name === 'sessionQuery') return fakeSessionQuery
+      if (name === 'sessionController') return fakeSessionController
       return undefined
     },
   }
@@ -587,6 +597,29 @@ try {
 check('② sendJson 已发头时安全丢弃（不抛错）', guardThrew === false)
 
 rmSync(tmp, { recursive: true, force: true })
+
+/* ============================ 新建会话 ============================ */
+
+const created = await call(BASE + '/session/create', { cwd: 'C:\\projects\\demo' })
+const cj = JSON.parse(created.body)
+check('session/create 返回宿主新建的 sessionId', created.status === 200 && cj.ok === true && cj.sessionId === 'session-new-1', created.body.slice(0, 110))
+check('session/create 透传 cwd', (createdSessions[0] || {}).cwd === 'C:\\projects\\demo', JSON.stringify(createdSessions[0] || {}))
+
+await call(BASE + '/session/create', {})
+check('不传 cwd 时请求体为空（用宿主默认目录）', JSON.stringify(createdSessions[1] || {}) === '{}', JSON.stringify(createdSessions[1] || {}))
+
+const bareCreateHandler = bareRoutes.get(BASE + '/session/create')
+const bareCreate = await new Promise((resolve) => {
+  const res = { writableEnded: false, writeHead() { return res }, write() { return true }, end(c) { resolve(JSON.parse(c)) }, destroy() {} }
+  bareCreateHandler({
+    method: 'POST',
+    on(e, fn) {
+      if (e === 'data') setTimeout(() => fn('{"cwd":"C:\\\\x"}'), 0)
+      if (e === 'end') setTimeout(fn, 1)
+    },
+  }, res)
+})
+check('无 sessionController 时 ok:false + 原因', bareCreate.ok === false && /sessionController/.test(String(bareCreate.error)), JSON.stringify(bareCreate).slice(0, 120))
 
 const failed = results.filter((r) => !r.ok)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)

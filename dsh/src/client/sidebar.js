@@ -3,15 +3,27 @@
  * 宿主会话不再单列一节 —— 项目列表已经承载了同样的信息，点项目即进工作区。
  * 主区没开时，右击菜单 / 小窗 / toast 暂挂在这里；主区一开就交给它，避免重复挂载。
  */
+import { useEffect } from 'react'
 import { el, Icon, Light, ContextMenu, Toasts } from './ui.js'
 import {
   store, useStore, relTime, projEmoji,
   loadSessions, loadDefaults, openGrid, enterProject, openMenu, openModal,
   stateOf, sessionsOf, statusCounts, toggleHidden,
+  canDropOnWorktable, setDragOver, clearDragOver, dropOnWorktable, themeStyle, themeAttrs,
+  moveProjectBefore, setProjectFolder, openExternalProject, toast,
 } from './core.js'
 import { ModalHost } from './modals.js'
 
 /* 四个工作状态：按**项目**统计（项目和它的状态灯同一条口径） */
+/** 这次拖的是不是工作台项目（区分「会话拖进来建项目」） */
+const DRAG_PROJECT = 'application/x-wt-project'
+function dragPid(e) {
+  try { return Array.from(e.dataTransfer.types || []).includes(DRAG_PROJECT) } catch { return false }
+}
+function readDragPid(e) {
+  try { return String(e.dataTransfer.getData(DRAG_PROJECT) || '') } catch { return '' }
+}
+
 const STAT_CELLS = [
   { id: 'working', label: '进行中', tone: 'working' },
   { id: 'needs-you', label: '待处理', tone: 'needs' },
@@ -29,13 +41,33 @@ export function WorktableSidebar() {
   const firstLoad = store.sessions.state === 'pending'
 
   const groups = new Map()
+  const external = store.external || []
   for (const p of visible) {
     const key = p.folder || ''
     if (!groups.has(key)) groups.set(key, [])
     groups.get(key).push(p)
   }
 
-  return el('div', { className: 'wt-scope wt-side', 'data-ns': 'worktable', 'data-wide': '1' },
+  /* 整块侧边栏都是拖放区：把「宿主会话」页签里的行（或带路径的文件）拖进来就建项目 */
+  return el('div', {
+    className: 'wt-scope wt-side' + (store.dragOver ? ' drag-over' : ''),
+    'data-ns': 'worktable',
+    'data-wide': '1',
+    style: themeStyle(),
+    ...themeAttrs(),
+    onDragEnter: (e) => { if (canDropOnWorktable(e)) { e.preventDefault(); setDragOver(true) } },
+    onDragOver: (e) => {
+      if (!canDropOnWorktable(e)) return
+      e.preventDefault()
+      try { e.dataTransfer.dropEffect = 'copy' } catch { /* 老浏览器 */ }
+      setDragOver(true)
+    },
+    onDragLeave: (e) => {
+      const to = e.relatedTarget
+      if (!to || !e.currentTarget.contains(to)) clearDragOver()
+    },
+    onDrop: (e) => { e.preventDefault(); e.stopPropagation(); dropOnWorktable(e) },
+  },
     el('div', { className: 'brand' },
       el('div', { className: 'brand-mark', 'aria-hidden': 'true' }, '🧰'),
       el('div', null,
@@ -43,6 +75,9 @@ export function WorktableSidebar() {
         el('div', { className: 'brand-sub' }, 'Worktable'),
       ),
       el('div', { className: 'brand-tools' },
+        el('button', { type: 'button', title: '导出 / 导入项目数据', 'aria-label': '项目数据', onClick: () => openModal('data') }, '⤓'),
+        el('button', { type: 'button', title: '搜索（Ctrl+K）', 'aria-label': '搜索', onClick: () => openModal('search') }, '🔍'),
+        el('button', { type: 'button', title: '主题与背景', 'aria-label': '主题与背景', onClick: () => openModal('theme') }, '⚙'),
         el('button', { type: 'button', title: '刷新宿主会话状态', 'aria-label': '刷新宿主会话状态', onClick: () => loadSessions() }, el(Icon, { name: 'refresh' })),
         el('button', { type: 'button', title: '新建项目', 'aria-label': '新建项目', onClick: () => openModal('add') }, el(Icon, { name: 'plus' })),
       ),
@@ -69,7 +104,17 @@ export function WorktableSidebar() {
       el('div', { className: 'plist' },
         visible.length
           ? [...groups.entries()].map(([folder, items]) => el('div', { key: folder || '__root', className: 'pgroup' },
-            folder ? el('div', { className: 'pgroup-title' }, folder) : null,
+            el('div', {
+              className: 'pgroup-title' + (folder ? '' : ' plain'),
+              title: folder ? '拖项目到这里归入「' + folder + '」' : '拖到这里移出分组',
+              onDragOver: (e) => { if (dragPid(e)) { e.preventDefault() } },
+              onDrop: (e) => {
+                const pid = readDragPid(e)
+                if (!pid) return
+                e.preventDefault()
+                setProjectFolder(pid, folder)
+              },
+            }, folder || '未分组'),
             items.map((p) => {
               const bound = sessionsOf(p)
               return el('div', {
@@ -90,13 +135,32 @@ export function WorktableSidebar() {
             }),
           ))
           : el('p', { className: 'wt-mute' }, store.sessions.state === 'pending' ? '正在读取会话…' : '还没有项目，点「添加」开始'),
+        external.length
+          ? el('div', { className: 'pgroup' },
+            el('div', { className: 'pgroup-title' }, '入驻'),
+            external.map((x) => el('div', {
+              key: x.id,
+              className: 'pitem ext',
+              title: (x.path || '未提供目录') + (x.source ? '\n来自：' + x.source : '') + '\n点击接入工作台',
+              role: 'button',
+              tabIndex: 0,
+              onClick: () => openExternalProject(x.id),
+            },
+              el('span', { className: 'pi-ico', 'aria-hidden': 'true' }, x.icon),
+              el('span', { className: 'pi-name' }, x.name),
+              el('span', { className: 'pi-bind', title: '点一下接入（会在工作台落成项目）' }, '＋'),
+            )),
+          )
+          : null,
         all.length > visible.length
           ? el('button', { type: 'button', className: 'show-hidden', onClick: () => all.filter((p) => p.hidden).forEach((p) => toggleHidden(p.id)) }, '显示 ' + String(all.length - visible.length) + ' 个已隐藏项目')
           : null,
       ),
     ),
 
-    el('p', { className: 'side-tip' }, '右击项目：编辑 · 对话绑定 · 删除'),
+    store.dragOver
+      ? el('div', { className: 'drop-hint' }, '松手 → 用这条会话新建项目')
+      : el('p', { className: 'side-tip' }, '右击项目：编辑 · 对话绑定 · 删除'),
 
     /* 主区没开时由侧边栏承载菜单/小窗/toast；主区一开就交给它，避免重复挂载 */
     store.open ? null : el('div', { className: 'wt-hosts' }, el(ContextMenu), el(ModalHost), el(Toasts)),
