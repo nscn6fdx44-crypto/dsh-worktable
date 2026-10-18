@@ -8,6 +8,7 @@ import { el, Icon, Light } from './ui.js'
 import {
   store, useStore, STATES, normState, fmtSize, fmtDuration, relTime, shortPath, projEmoji,
   loadTree, openFile, editText, saveFile, termExec, termKill, termClear, loadGit,
+  workspaceDirOf, samePath,
   sessionsOf, primarySession, stateOf, jumpToSession,
   openModal, siteUrlOf, setWebUrl, setCustomHtml, cycleStatus, updateProject, projectOf, toast,
 } from './core.js'
@@ -95,24 +96,51 @@ export function InfoPane({ project }) {
 
 /* ============================ 文件浏览（标签页） ============================ */
 
+/**
+ * 文件管理器：默认开在 **这个项目的对话工作目录**（主绑定会话的 cwd），
+ * 顶栏可一键切回「项目目录」，也能输入绝对路径跳转。
+ */
 export function FilesPane({ project }) {
   useStore()
   const tree = store.tree
   const [pathInput, setPathInput] = useState('')
 
-  const go = (path) => { if (path) loadTree(path) }
+  const workDir = workspaceDirOf(project)
+  const projDir = String(project.path || '')
+  const cur = tree.path || workDir
+  const atWork = !!workDir && samePath(cur, workDir)
+  const atProj = !!projDir && samePath(cur, projDir)
+  const primary = primarySession(project)
+
   const up = () => { if (tree.path) loadTree(tree.path.replace(/[\\/][^\\/]+$/, '') || tree.root) }
   const enter = () => { const p = pathInput.trim(); if (p) { loadTree(p); setPathInput('') } }
 
   return el('div', { className: 'pane-body files-body' },
     el('div', { className: 'files-bar' },
       el('button', { type: 'button', className: 'mini-btn', title: '上级目录', onClick: up }, '↑'),
-      el('button', { type: 'button', className: 'mini-btn', title: '刷新', onClick: () => loadTree(tree.path) }, '⟳'),
-      el('span', { className: 'files-path mono', title: tree.path }, shortPath(tree.path || project.path || '', 34)),
+      el('button', { type: 'button', className: 'mini-btn', title: '刷新', onClick: () => loadTree(cur) }, '⟳'),
+      el('span', { className: 'files-path mono', title: cur }, cur || '（没有可打开的目录）'),
+    ),
+    el('div', { className: 'files-bar files-loc' },
+      el('button', {
+        type: 'button', className: 'mini-btn' + (atWork ? ' on' : ''),
+        title: primary ? '对话工作目录：' + workDir + '（' + (primary.title || primary.id) + '）' : '还没绑定对话，退回项目目录',
+        onClick: () => workDir && loadTree(workDir),
+      }, '💬 对话目录'),
+      projDir && !samePath(projDir, workDir)
+        ? el('button', {
+          type: 'button', className: 'mini-btn' + (atProj ? ' on' : ''),
+          title: '项目目录：' + projDir,
+          onClick: () => loadTree(projDir),
+        }, '📁 项目目录')
+        : null,
+      el('span', { className: 'files-hint mono' }, primary && primary.cwd
+        ? '跟随对话 ' + primary.cwd
+        : '未绑定对话的工作目录，显示项目目录'),
     ),
     el('div', { className: 'files-jump' },
       el('input', {
-        className: 'mono', value: pathInput, placeholder: '跳转到绝对路径…', autoComplete: 'off',
+        className: 'mono', value: pathInput, placeholder: '输入绝对路径跳转，回车打开…', autoComplete: 'off',
         onChange: (e) => setPathInput(e.target.value),
         onKeyDown: (e) => { if (e.key === 'Enter') enter() },
       }),
@@ -120,7 +148,7 @@ export function FilesPane({ project }) {
     tree.state === 'error'
       ? el('div', { className: 'pane-error' },
         el('p', null, '读取失败：' + tree.error),
-        el('button', { type: 'button', className: 'btn small', onClick: () => loadTree(tree.path) }, '重试'),
+        el('button', { type: 'button', className: 'btn small', onClick: () => loadTree(cur) }, '重试'),
       )
       : null,
     el('div', { className: 'files-list' },
@@ -131,12 +159,13 @@ export function FilesPane({ project }) {
             key: ent.name,
             type: 'button',
             className: 'frow' + (store.editor.path && store.editor.path.endsWith(ent.name) ? ' active' : ''),
-            title: ent.name + (ent.dir ? '' : '  ' + fmtSize(ent.size)),
+            title: ent.name + (ent.dir ? '（目录）' : '  ' + fmtSize(ent.size)),
             onClick: () => {
-              const next = joinPath(tree.path || project.path, ent.name)
+              const next = joinPath(cur, ent.name)
               if (ent.dir) loadTree(next)
               else openFile(next, project.id)
             },
+            onDoubleClick: () => { if (ent.dir) loadTree(joinPath(cur, ent.name)) },
           },
             el('span', { className: 'f-ico', 'aria-hidden': 'true' }, ent.dir ? '📁' : fileEmoji(ent.name)),
             el('span', { className: 'f-name' }, ent.name),
@@ -190,7 +219,7 @@ export function EditorPane({ project }) {
       el('div', { className: 'pane-empty' },
         el('span', { className: 'pe-ico' }, '◆'),
         el('p', null, '还没有打开文件'),
-        el('p', { className: 'hint' }, '在「文件」标签页里点一个文本文件，就能在这里查看与编辑；Ctrl+S 保存到磁盘。'),
+        el('p', { className: 'hint' }, '在「文件管理器」里点一个文本文件，就能在这里查看与编辑；Ctrl+S 保存到磁盘。'),
       ),
     )
   }

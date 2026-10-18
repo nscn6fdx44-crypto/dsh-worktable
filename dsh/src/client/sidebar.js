@@ -11,12 +11,19 @@ import {
 } from './core.js'
 import { ModalHost } from './modals.js'
 
+/* 四个工作状态：宿主四态（running / waiting / done / idle）的展示顺序 */
+const STAT_CELLS = [
+  { id: 'working', label: '进行中', tone: 'working', key: 'running' },
+  { id: 'needs-you', label: '待处理', tone: 'needs', key: 'waiting' },
+  { id: 'done', label: '已完成', tone: 'done', key: 'done' },
+  { id: 'idle', label: '待命', tone: 'idle', key: 'idle' },
+]
+
 export function WorktableSidebar() {
   useStore()
   const all = store.projects
   const visible = all.filter((p) => !p.hidden)
   const counts = store.sessions.counts || { running: 0, waiting: 0, done: 0, idle: 0, total: 0 }
-  const unbound = visible.filter((p) => !sessionsOf(p).length).length
 
   const groups = new Map()
   for (const p of visible) {
@@ -38,12 +45,13 @@ export function WorktableSidebar() {
       ),
     ),
 
+    /* 状态框只记四个工作状态，2×2 紧凑排布（项目数挪到下面的列表标题上） */
     el('div', { className: 'stat-box' },
-      el('div', { className: 'fb-row' }, el('span', null, '进行中'), el('b', null, String(counts.running || 0))),
-      el('div', { className: 'fb-row' }, el('span', null, '待处理'), el('b', null, String(counts.waiting || 0))),
-      el('div', { className: 'fb-row' }, el('span', null, '项目'), el('b', null, String(visible.length) + (all.length !== visible.length ? ' / ' + String(all.length) : ''))),
-      el('div', { className: 'fb-row' }, el('span', null, '未绑定'), el('b', null,
-        store.sessions.state === 'pending' ? '…' : String(unbound),
+      STAT_CELLS.map((c) => el('div', { key: c.id, className: 'fb-cell', 'data-state': c.id },
+        el('span', { className: 'fb-k' }, c.label),
+        el('b', { className: 'fb-v ' + c.tone },
+          store.sessions.state === 'pending' ? '…' : String(counts[c.key] || 0),
+        ),
       )),
     ),
 

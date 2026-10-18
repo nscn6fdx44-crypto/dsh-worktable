@@ -441,11 +441,14 @@ async function collectSessions(ctx) {
     const header = row?.header ?? {}
     const id = String(header.id ?? '')
     if (!id) continue
-    const live = row?.live === true
-    const session = live && sessionsSvc && typeof sessionsSvc.get === 'function'
+    /* 行来自 sessionQuery 时 live 标记常常缺失（持久化列表只给 header），
+       不能拿它判活会话 —— 只要会话服务里还拿得到这个 id，就去读事件日志，
+       否则「进行中 / 待处理」永远算不出来（侧边栏状态一直不动就是这么来的）。 */
+    const session = sessionsSvc && typeof sessionsSvc.get === 'function'
       ? safe(() => sessionsSvc.get(id))
       : null
     const observed = readSessionState(session)
+    const live = row?.live === true || isLiveSession(session)
     const state = pickState(live, observed)
     counts[state] = (counts[state] ?? 0) + 1
     counts.total += 1
@@ -599,6 +602,13 @@ function transcriptTitle(header, events) {
   }
   if (title) return title
   return safeTitle(header || {}, { title: '' })
+}
+
+/** 会话服务里的对象是不是「还活着」：拿得到事件日志或 seq 就算（与 row.live 无关） */
+function isLiveSession(session) {
+  if (!session) return false
+  if (Array.isArray(session.log)) return session.log.length > 0
+  return Number(safe(() => session.seq)) > 0
 }
 
 function pickState(live, observed) {

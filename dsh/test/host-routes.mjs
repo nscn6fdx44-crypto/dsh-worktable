@@ -38,7 +38,8 @@ const liveSessions = new Map([
 
 const fakeSessions = { list: () => [...liveSessions.values()], get: (id) => liveSessions.get(id) }
 const fakeSessionQuery = {
-  listSessions: async () => [...liveSessions.values()].map((s) => ({ header: s.header, live: true, persisted: true })),
+  /* 真实环境里持久化列表只给 header，没有 live 标记 —— 状态判定不能依赖它 */
+  listSessions: async () => [...liveSessions.values()].map((s) => ({ header: s.header, persisted: true })),
   load: async (id) => {
     if (id !== 's-persisted') throw new Error('SESSION_QUERY_SESSION_NOT_FOUND')
     return {
@@ -142,6 +143,7 @@ check('sessions 总数 4', sj.counts.total === 4)
 check('标题取首条用户消息', sj.sessions.some((s) => s.title === '跑一下构建'))
 check('无消息时退回目录名', sj.sessions.some((s) => s.title === 'proj-gamma'))
 check('保留 host 原始态（running/waiting）', sj.sessions.some((s) => s.state === 'running') && sj.sessions.some((s) => s.state === 'waiting'))
+check('列表行没 live 标记也能分辨活跃会话', sj.sessions.find((s) => s.id === 's-running').live === true && sj.sessions.find((s) => s.id === 's-idle').live === false, JSON.stringify(sj.sessions.map((s) => [s.id, s.live])))
 
 const defaults = await call(BASE + '/defaults', undefined, 'GET')
 const dj = JSON.parse(defaults.body)

@@ -3,10 +3,11 @@
  * 加载 ModuleLoader 产物并真实渲染 + 点按钮，验证：
  *   - 两个座位注册、样式只注入一次
  *   - 侧边栏：状态栏 / 项目列表（不再单列宿主会话）
- *   - 右击菜单：模式切换 + 单一「绑定对话」入口
+ *   - 右击菜单：单一「绑定对话」入口（窗口模式已删除）
  *   - 总览 / 项目工作区：宿主会话区都让位到右侧，工作台只占左边，右侧是宿主原生对话
- *     两者共用同一套外壳（顶栏 + 面板 + 右边缘拖动条），总览也能切全屏 / 窗口
- *   - 窗口模式有浮动小窗，全屏模式铺满；两种模式共用标签页 / 编辑器 / 终端 / 浏览器
+ *     两者共用同一套外壳（顶栏 + 面板 + 右边缘拖动条），铺满对话左侧那块
+ *   - 工作台只有一种形态：铺满让位区，没有浮动窗口
+ *   - 侧边栏状态框只记四态；文件管理器默认开在对话工作目录
  *   - 让位宽度换算（computeDock）
  *   - 新建项目小窗、对话绑定小窗
  */
@@ -63,8 +64,12 @@ const fakeGit = { ok: true, repo: true, branch: 'main', changes: [{ code: ' M', 
 const fakeGitLog = { ok: true, commits: [{ hash: 'a1b2c3d', date: '2026-10-01', subject: '整理构建脚本', author: 'demo' }] }
 const fakeGitBranches = { ok: true, branches: ['main'] }
 
+let lastListPath = ''
 globalThis.fetch = async (url, opts) => {
   const u = String(url)
+  if (u.endsWith('/fs/list')) {
+    try { lastListPath = String(JSON.parse(String(opts?.body || '{}')).path || '') } catch { lastListPath = '' }
+  }
   const body = u.endsWith('/sessions') ? fakeSessions
     : u.endsWith('/defaults') ? fakeDefaults
         : u.endsWith('/fs/list') ? fakeTree
@@ -215,7 +220,13 @@ check('侧边栏列出项目', sideText.includes('智能小车固件') && sideTe
 check('状态栏显示进行中计数', /进行中/.test(sideText) && /2/.test(sideText), sideText.slice(0, 60))
 check('侧边栏不再单列宿主会话', allByClass(sidebar, /(^|\s)slist(\s|$)/).length === 0 && allByClass(sidebar, /(^|\s)srow(\s|$)/).length === 0)
 check('宿主对话不再出现在侧边栏', !sideText.includes('app-alpha 会话'), sideText.slice(0, 120))
-check('状态栏改为「未绑定」计数', sideText.includes('未绑定') && sideText.includes('宿主对话') === false, sideText.slice(0, 80))
+check('状态框只有四个工作状态', allByClass(sidebar, /fb-cell/).length === 4, allByClass(sidebar, /fb-cell/).length)
+check('四态文案齐全', ['进行中', '待处理', '已完成', '待命'].every((t) => sideText.includes(t)), sideText.slice(0, 80))
+const statBox = allByClass(sidebar, /(^|\s)stat-box(\s|$)/)[0]
+const statText = textOf(statBox)
+check('状态框里不再有「项目 / 未绑定」', !statText.includes('未绑定') && !statText.includes('项目'), statText)
+check('状态框只有四格（面积缩小）', allByClass(statBox, /fb-cell/).length === 4 && allByClass(statBox, /fb-row/).length === 0)
+check('项目列表区域可滚动（plist）', allByClass(sidebar, /(^|\s)plist(\s|$)/).length === 1)
 check('绑定项目带 🔗 标记', allByClass(sidebar, /pi-bind/).length === 1, allByClass(sidebar, /pi-bind/).length)
 check('项目状态灯数量 = 项目数', allByClass(sidebar, /(^|\s)light(\s|$)/).length >= 2, allByClass(sidebar, /(^|\s)light(\s|$)/).length)
 
@@ -224,14 +235,12 @@ rightClickByText(sidebar, '智能小车固件')
 let withMenu = render(sidebarComp)
 let ctxMenu = allByClass(withMenu, /ctx-menu/)[0]
 check('右击项目弹出上下文菜单', !!ctxMenu)
-check('菜单含两种工作区模式', ['全屏', '窗口'].every((l) => textOf(ctxMenu).includes(l)), textOf(ctxMenu).replace(/\s+/g, ' ').slice(0, 90))
+check('菜单里不再有工作区模式', !['全屏', '窗口', '工作区模式'].some((l) => textOf(ctxMenu).includes(l)), textOf(ctxMenu).replace(/\s+/g, ' ').slice(0, 90))
 check('菜单不再有四种布局预设', !['三分式', '两分', '单栏', '对话主导'].some((l) => textOf(ctxMenu).includes(l)))
 check('菜单含编辑/绑定/删除', ['编辑项目信息', '绑定对话', '删除项目'].every((l) => textOf(ctxMenu).includes(l)))
 check('绑定只有一个入口（不再有解除项）', !textOf(ctxMenu).includes('解除') && (textOf(ctxMenu).match(/绑定对话/g) || []).length === 1, textOf(ctxMenu).replace(/\s+/g, ' ').slice(0, 120))
 
-clickByLabel(ctxMenu, '窗口')
-const afterMode = JSON.parse(ls.get('wt.ui.v2') || '{}')
-check('切换模式写入 wt.ui.v2', afterMode['custom-1'] && afterMode['custom-1'].mode === 'float', JSON.stringify(afterMode['custom-1']))
+check('菜单第一项就是编辑（没有模式分组）', textOf(ctxMenu).trim().startsWith('智能小车固件 编辑项目信息'), textOf(ctxMenu).replace(/\s+/g, ' ').slice(0, 80))
 
 /* ---------- 主区：未打开时不渲染 ---------- */
 check('主区默认不渲染（占位空）', render(overlayComp) === null)
@@ -250,25 +259,24 @@ check('主区根节点不吃事件（只有 dock 一块可交互）', !!allByCla
 const mainText = textOf(overlay)
 check('顶栏显示项目名', mainText.includes('智能小车固件'))
 check('顶栏有「≡ 项目 / 关闭」', ['≡ 项目', '✕'].every((t) => mainText.includes(t)), mainText.slice(0, 90))
-check('模式切换条存在', allByClass(overlay, /(^|\s)seg(\s|$)|(^|\s)seg tiny(\s|$)/).length >= 1)
+check('顶栏没有模式切换条（窗口模式已删）', allByClass(overlay, /(^|\s)seg(\s|$)/).length === 0)
 check('不再自绘对话栏（右侧交给宿主）', allByClass(overlay, /pane-chat/).length === 0)
 check('工作台内没有左栏（已删除）', allByClass(overlay, /pane-left/).length === 0, allByClass(overlay, /pane-left/).length)
 check('分割条只剩「工作台 / 对话」一条', allByClass(overlay, /split-handle/).length === 1, allByClass(overlay, /split-handle/).length)
 check('让位边界是 dock-edge', allByClass(overlay, /dock-edge/).length === 1)
-check('进项目自动打开「文件」标签页', allByClass(overlay, /files-body/).length === 1, allByClass(overlay, /files-body/).length)
+check('进项目自动打开文件管理器', allByClass(overlay, /files-body/).length === 1, allByClass(overlay, /files-body/).length)
+check('文件管理器标签页叫「文件管理器」', textOf(overlay).includes('文件管理器'), textOf(overlay).slice(0, 90))
+check('文件管理器默认打开「对话工作目录」', lastListPath.replace(/\\/g, '/') === 'C:/demo/app-alpha', lastListPath)
+check('文件管理器有「对话目录 / 项目目录」入口', textOf(overlay).includes('💬 对话目录') && textOf(overlay).includes('📁 项目目录'), textOf(overlay).slice(0, 120))
+check('文件管理器标出跟随的对话目录', textOf(overlay).includes('跟随对话'), textOf(overlay).slice(0, 140))
 check('顶栏有「项目信息」按钮', textOf(overlay).includes('项目信息'))
 const chatPill = allByClass(overlay, /dh-chat/)[0]
 check('顶栏标出右侧对话（主绑定）', !!chatPill && !/off/.test(chatPill.props.className), chatPill && chatPill.props.className)
 check('对话气泡显示主对话标题', !!chatPill && textOf(chatPill).includes('app-alpha'), chatPill && textOf(chatPill))
 
-/* 窗口模式 */
-check('窗口模式：中间栏是画布', allByClass(overlay, /pane-canvas/).length === 1, allByClass(overlay, /pane-canvas/).length)
-const floatWin = allByClass(overlay, /float-win/)[0]
-check('窗口模式：视窗存在', !!floatWin)
-check('视窗按比例定位在对话栏旁', !!floatWin && /%$/.test(String(floatWin.props.style.left)) && /%$/.test(String(floatWin.props.style.width)), floatWin && JSON.stringify(floatWin.props.style))
-check('视窗有标题栏与缩放角', allByClass(overlay, /float-bar/).length === 1 && allByClass(overlay, /float-grip/).length === 1)
-check('视窗有复位 / 全屏按钮', allByClass(overlay, /fb-tools/).length === 1 && ['复位', '全屏'].every((t) => textOf(floatWin).includes(t)))
-check('视窗内工作区与全屏同源（pane-nest）', allByClass(overlay, /pane-nest/).length === 1)
+/* 只有一种形态：铺满让位区，没有浮动窗口 */
+check('没有浮动窗口画布', allByClass(overlay, /pane-canvas/).length === 0 && allByClass(overlay, /float-win/).length === 0)
+check('工作区就是一块 pane-main 铺满', allByClass(overlay, /pane-main/).length === 1 && allByClass(overlay, /pane-nest/).length === 0)
 
 /* 进入项目时把宿主切到主绑定对话 */
 check('进入项目即切宿主对话（主绑定）', mainText.includes('app-alpha 会话') || mainText.includes('app-alpha'), mainText.slice(0, 120))
@@ -313,13 +321,9 @@ check('让位：右侧至少留 380', g1.max === 780, JSON.stringify(g1))
 mod.releaseDock()
 check('退出项目：marginLeft 还原', fakeCenter.style.marginLeft === '', JSON.stringify(fakeCenter.style.marginLeft))
 
-/* 切到全屏模式 */
-clickByLabel(overlay, '全屏')
-overlay = render(overlayComp)
-check('全屏模式：没有浮动视窗', allByClass(overlay, /float-win/).length === 0 && allByClass(overlay, /pane-canvas/).length === 0)
-check('全屏模式：中间栏铺满', allByClass(overlay, /pane-main/).length === 1 && allByClass(overlay, /pane-nest/).length === 0)
-check('全屏模式：仍然没有左栏', allByClass(overlay, /pane-left/).length === 0)
-check('全屏模式：让位边界仍在', allByClass(overlay, /dock-edge/).length === 1)
+/* 让位边界始终在（工作台 / 对话的分界） */
+check('让位边界始终在', allByClass(overlay, /dock-edge/).length === 1)
+check('工作台里没有任何左栏', allByClass(overlay, /pane-left/).length === 0)
 
 /* 项目信息：从顶栏开成标签页 */
 clickByLabel(overlay, '项目信息')
@@ -328,8 +332,8 @@ check('顶栏「项目信息」按标签页打开', allByClass(overlay, /info-bo
 check('项目信息显示绑定对话数', /绑定对话/.test(textOf(overlay)))
 check('git 区块渲染分支', textOf(overlay).includes('main'), textOf(allByClass(overlay, /git-box/)[0] || overlay).slice(0, 80))
 
-/* 切到「文件」并打开文件 */
-clickByLabel(overlay, '文件')
+/* 切到「文件管理器」并打开文件 */
+clickByLabel(overlay, '🗂 文件管理器')
 overlay = render(overlayComp)
 const filesText = textOf(overlay)
 check('文件标签页列出目录条目', filesText.includes('src') && filesText.includes('README.md') && filesText.includes('main.c'), filesText.slice(0, 90))
@@ -358,13 +362,8 @@ overlay = render(overlayComp)
 const frame = allByClass(overlay, /web-frame/)[0]
 check('浏览器窗格渲染 iframe', !!frame || textOf(overlay).includes('浏览器窗格'), textOf(overlay).slice(0, 60))
 
-/* 切回窗口模式，标签页应保留（两种模式功能一致） */
-clickByLabel(overlay, '窗口')
-overlay = render(overlayComp)
-check('窗口模式保留全部标签页', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 5, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
-check('窗口模式仍渲染当前窗格内容', !!allByClass(overlay, /web-frame/)[0] || textOf(overlay).includes('浏览器窗格'))
-clickByLabel(overlay, '全屏')
-overlay = render(overlayComp)
+check('多个标签页并存', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 5, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
+check('当前窗格内容仍在渲染', !!allByClass(overlay, /web-frame/)[0] || textOf(overlay).includes('浏览器窗格'))
 
 /* 关闭当前标签 */
 overlay = render(overlayComp)
@@ -388,9 +387,8 @@ check('卡片状态用中文标签', /进行中|待处理|已完成|待命/.test
 check('总览也贴着对话（有让位边界 dock-edge）', allByClass(overlay, /dock-edge/).length === 1, allByClass(overlay, /dock-edge/).length)
 check('总览没有左栏', allByClass(overlay, /pane-left/).length === 0)
 check('总览只有一块面板', allByClass(overlay, /pane-main/).length === 1, allByClass(overlay, /pane-main/).length)
-check('总览顶栏能切「全屏 / 窗口」', ['全屏', '窗口'].every((t) => gridText.includes(t)), gridText.slice(0, 120))
-check('总览默认是窗口模式（浮在对话旁）', allByClass(overlay, /float-win/).length === 1, allByClass(overlay, /float-win/).length)
-check('窗口模式下总览面板嵌套在浮窗里', allByClass(overlay, /pane-nest/).length === 1, allByClass(overlay, /pane-nest/).length)
+check('总览顶栏没有模式切换', !['全屏', '窗口'].some((t) => gridText.includes(t)), gridText.slice(0, 120))
+check('总览也没有浮动窗口', allByClass(overlay, /float-win/).length === 0 && allByClass(overlay, /pane-nest/).length === 0)
 
 /* 拖右边缘：改的是总览自己的 dock 宽度，不碰任何项目 */
 const handlers = {}
@@ -408,17 +406,7 @@ const uiLs = JSON.parse(ls.get('wt.ui.v2') || '{}')
 check('拖总览右边缘 → 宽度存到 __overview', Number(uiLs.__overview && uiLs.__overview.dock) > 0, JSON.stringify(uiLs.__overview))
 check('总览宽度与项目宽度互不干扰', !uiLs['custom-1'] || !uiLs['custom-1'].dock, uiLs['custom-1'] && uiLs['custom-1'].dock)
 
-/* 总览切全屏：浮窗收起，面板铺满让位区，右边缘仍在 */
-clickByLabel(overlay, '全屏')
-overlay = render(overlayComp)
-check('总览全屏：没有浮窗', allByClass(overlay, /float-win/).length === 0 && allByClass(overlay, /pane-nest/).length === 0)
-check('总览全屏：右边缘拖动条仍在', allByClass(overlay, /dock-edge/).length === 1)
-check('总览模式写进 __overview', (JSON.parse(ls.get('wt.ui.v2') || '{}').__overview || {}).mode === 'dock')
-clickByLabel(overlay, '窗口')
-overlay = render(overlayComp)
-check('总览切回窗口模式', allByClass(overlay, /float-win/).length === 1)
-clickByLabel(overlay, '全屏')
-overlay = render(overlayComp)
+check('总览也让位（右边缘拖动条仍在）', allByClass(overlay, /dock-edge/).length === 1)
 
 /* 宿主会话页签 */
 clickByLabel(overlay, '◉ 宿主会话')
@@ -468,8 +456,9 @@ clickByLabel(overlay, '新建项目')
 overlay = render(overlayComp)
 const modalText = textOf(overlay)
 check('打开新建项目小窗', modalText.includes('项目名称') && modalText.includes('项目目录'))
-check('小窗有默认工作区按钮', modalText.includes('默认工作区'))
-check('小窗有两种模式草图', allByClass(overlay, /layout-card/).length === 2, allByClass(overlay, /layout-card/).length)
+check('小窗没有「默认工作区」按钮', !modalText.includes('默认工作区'), modalText.slice(0, 90))
+check('小窗不再有工作区模式字段', allByClass(overlay, /layout-card/).length === 0 && !modalText.includes('工作区模式'))
+check('绑定下拉可选「新建对话」', modalText.includes('新建对话'), modalText.slice(0, 120))
 check('小窗有绑定对话下拉', allByClass(overlay, /wt-select/).length === 1)
 check('小窗提示只写 localStorage', modalText.includes('localStorage'))
 

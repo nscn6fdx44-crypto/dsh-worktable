@@ -13,11 +13,11 @@ import { el, Light, Splitter, ContextMenu, Toasts } from './ui.js'
 import { ModalHost } from './modals.js'
 import { useHostDock } from './hostdock.js'
 import {
-  store, useStore, STATES, normState, MODES, modeDef, PANE_TABS, INFO_TAB, GRID_TABS, GRID_PID,
+  store, useStore, STATES, normState, PANE_TABS, INFO_TAB, GRID_TABS, GRID_PID,
   fmtDuration, relTime, shortPath, projEmoji, openGrid, enterProject, closeOverlay,
-  openModal, openMenu, setMode, setDockPx, openTab, closeTab, setActiveTab,
+  openModal, openMenu, setDockPx, openTab, closeTab, setActiveTab,
   loadSessions, stateOf, sessionsOf, primarySession, projectBySession, createFromSession,
-  jumpToSession, setGridTab, uiOf, flushUi, setWinRect, resetWinRect,
+  jumpToSession, setGridTab, uiOf, flushUi,
 } from './core.js'
 import { InfoPane, FilesPane, EditorPane, TermPane, WebPane, CustomPane } from './panes.js'
 
@@ -105,7 +105,7 @@ function Overview({ ui, geo }) {
     setDockPx(GRID_PID, next, persist)
   }
 
-  const board = (nest) => el(OverviewPane, { tab, projects, rows, running, waiting, badgeOf, nest })
+  const board = el(OverviewPane, { tab, projects, rows, running, waiting, badgeOf })
 
   return el('div', { className: 'dock-wrap' },
     el('header', { className: 'dock-head' },
@@ -122,26 +122,14 @@ function Overview({ ui, geo }) {
           : el('span', { className: 'dh-chat off' }, '空闲'),
       ),
       el('div', { className: 'dh-tools' },
-        el('div', { className: 'seg tiny', title: '总览模式：全屏 / 窗口' },
-          MODES.map((m) => el('button', {
-            key: m.id, type: 'button', className: m.id === ui.mode ? 'on' : '', title: m.hint,
-            onClick: () => setMode(GRID_PID, m.id),
-          }, m.icon + ' ' + m.label)),
-        ),
         el('button', { type: 'button', className: 'mini-btn', title: '重新读取宿主会话', onClick: () => { loadSessions() } }, '↻'),
         el('button', { type: 'button', className: 'mini-btn', title: '新建项目', onClick: () => openModal('add') }, '＋ 新建'),
         el('button', { type: 'button', className: 'mini-btn', title: '关闭工作台 (Esc)', onClick: closeOverlay }, '✕'),
       ),
     ),
 
-    el('div', { className: 'ws', 'data-mode': ui.mode },
-      ui.mode === 'float'
-        ? el(FloatWindow, {
-          key: 'main', pid: GRID_PID, ui, title: '工作台总览',
-          subtitle: projects.length + ' 个项目 · ' + rows.length + ' 个会话',
-          children: board(true),
-        })
-        : board(false),
+    el('div', { className: 'ws' },
+      board,
       /* 右边缘 = 工作台 / 对话的分界，拖动即改让位宽度 */
       el(Splitter, {
         key: 'edge', pid: GRID_PID, side: 'left', className: 'dock-edge',
@@ -152,8 +140,8 @@ function Overview({ ui, geo }) {
 }
 
 /** 总览面板本体：一条页签栏 + 页签内容，和 MainPane 同款 */
-function OverviewPane({ tab, projects, rows, running, waiting, badgeOf, nest }) {
-  return el('div', { className: 'pane pane-main' + (nest ? ' pane-nest' : '') },
+function OverviewPane({ tab, projects, rows, running, waiting, badgeOf }) {
+  return el('div', { className: 'pane pane-main' },
     el('div', { className: 'pane-head tabhead' },
       el('div', { className: 'tabs' },
         GRID_TABS.map((t) => el('div', {
@@ -281,7 +269,6 @@ function ProjectCard({ project }) {
     ),
     el('div', { className: 'c-preview' }, project.note || shortPath(project.path || '未设置目录', 46)),
     el('div', { className: 'c-actions' },
-      el('span', { className: 'c-layout' }, modeDef(uiOf(project.id).mode).label),
       el('button', {
         type: 'button', className: 'mini-btn' + (bound.length ? ' on' : ''),
         title: '绑定 / 解绑对话',
@@ -327,12 +314,6 @@ function Workspace({ project, ui, geo }) {
         ) : el('span', { className: 'dh-chat off' }, '未绑定对话'),
       ),
       el('div', { className: 'dh-tools' },
-        el('div', { className: 'seg tiny', title: '工作区模式（右击项目也能切）' },
-          MODES.map((m) => el('button', {
-            key: m.id, type: 'button', className: m.id === ui.mode ? 'on' : '', title: m.hint,
-            onClick: () => setMode(project.id, m.id),
-          }, m.icon + ' ' + m.label)),
-        ),
         el('button', {
           type: 'button',
           className: 'mini-btn' + (ui.activeTab === INFO_TAB.id ? ' on' : ''),
@@ -344,107 +325,14 @@ function Workspace({ project, ui, geo }) {
       ),
     ),
 
-    el('div', { className: 'ws', 'data-mode': ui.mode },
-      ui.mode === 'float'
-        ? el(FloatWindow, {
-          key: 'main', pid: project.id, ui, title: project.alias || project.name,
-          subtitle: (ui.tabs || []).length + ' 个窗口',
-          children: el(MainPane, { project, ui, nest: true }),
-        })
-        : el(MainPane, { key: 'main', project, ui }),
+    el('div', { className: 'ws' },
+      el(MainPane, { key: 'main', project, ui }),
       /* 右边缘 = 工作台 / 对话的分界，拖动即改让位宽度 */
       el(Splitter, {
         key: 'edge', pid: project.id, side: 'left', className: 'dock-edge',
         width: geo.width || 0, min: 380, max: Math.max(420, geo.max || 1400), onResize: onDock,
       }),
     ),
-  )
-}
-
-/**
- * 窗口模式：小窗浮在让位区里、紧贴对话栏。
- * 几何存 ui.win（比例），拖标题栏移动、右下角缩放，双击标题栏复位；
- * 总览与项目工作区共用这个壳，所以两者的窗口行为完全一致。
- */
-function FloatWindow({ pid, ui, title, subtitle, children }) {
-  const rect = ui.win
-  const box = useRef(null)
-  const drag = useRef(null)
-
-  const begin = (kind) => (e) => {
-    if (!e || !Number.isFinite(e.clientX)) return
-    const hit = e.target && typeof e.target.closest === 'function' ? e.target.closest('button') : null
-    if (hit) return
-    const holder = box.current && box.current.parentElement
-    if (!holder || typeof holder.getBoundingClientRect !== 'function') return
-    const view = holder.getBoundingClientRect()
-    if (!view.width || !view.height) return
-    if (typeof e.preventDefault === 'function') e.preventDefault()
-    drag.current = { kind, sx: e.clientX, sy: e.clientY, vw: view.width, vh: view.height, rect, frame: 0, last: null }
-    const apply = (pt) => {
-      const d = drag.current
-      if (!d) return
-      const dx = (pt.x - d.sx) / d.vw
-      const dy = (pt.y - d.sy) / d.vh
-      if (d.kind === 'move') setWinRect(pid, { ...d.rect, x: d.rect.x + dx, y: d.rect.y + dy })
-      else setWinRect(pid, { ...d.rect, w: d.rect.w + dx * 2, h: d.rect.h + dy * 2 })
-    }
-    const move = (ev) => {
-      const d = drag.current
-      if (!d) return
-      d.last = { x: ev.clientX, y: ev.clientY }
-      /* 拖动时按帧合并，避免每个 pointermove 都重建整棵树 */
-      if (d.frame) return
-      const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null
-      if (!raf) { apply(d.last); return }
-      d.frame = raf(() => {
-        const inst = drag.current
-        if (!inst) return
-        inst.frame = 0
-        if (inst.last) apply(inst.last)
-      })
-    }
-    const up = () => {
-      const d = drag.current
-      if (d && d.frame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(d.frame)
-      drag.current = null
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-      if (document.body && document.body.classList) document.body.classList.remove('wt-dragging')
-      flushUi()
-    }
-    if (document.body && document.body.classList) document.body.classList.add('wt-dragging')
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-  }
-
-  const style = {
-    left: ((rect.x - rect.w / 2) * 100).toFixed(3) + '%',
-    top: ((rect.y - rect.h / 2) * 100).toFixed(3) + '%',
-    width: (rect.w * 100).toFixed(3) + '%',
-    height: (rect.h * 100).toFixed(3) + '%',
-  }
-
-  return el('div', { className: 'pane pane-canvas', 'data-mode': 'float' },
-    el('div', { className: 'float-win', style, ref: box },
-      el('div', {
-        className: 'float-bar',
-        title: '拖动移动窗口 · 双击复位',
-        onPointerDown: begin('move'),
-        onDoubleClick: () => resetWinRect(pid),
-      },
-        el('span', { className: 'fb-dots', 'aria-hidden': 'true' }, el('i'), el('i'), el('i')),
-        el('span', { className: 'fb-title', title }, title),
-        el('span', { className: 'fb-sub mono' }, subtitle || ''),
-        el('span', { className: 'fb-tools' },
-          el('button', { type: 'button', title: '回到默认位置与大小', onClick: () => resetWinRect(pid) }, '复位'),
-          el('button', { type: 'button', title: '切换为全屏模式', onClick: () => setMode(pid, 'dock') }, '全屏'),
-        ),
-      ),
-      el('div', { className: 'float-body' }, children),
-      el('span', { className: 'float-grip', title: '拖动缩放', onPointerDown: begin('resize') }),
-    ),
-    el('p', { className: 'canvas-hint' }, '拖动标题栏移动 · 右下角缩放 · 右边缘拖动改工作台宽度'),
   )
 }
 
@@ -487,7 +375,7 @@ function MainPane({ project, ui, nest }) {
         el('div', { className: 'pane-empty' },
           el('span', { className: 'pe-ico' }, '◫'),
           el('p', null, '工作区还没有打开任何窗口'),
-          el('p', { className: 'hint' }, '用右上角的按钮打开「文件」/ 编辑器 / 终端 / 浏览器 / 自定义窗口；在「文件」里点文件会自动开编辑器。'),
+          el('p', { className: 'hint' }, '用右上角的按钮打开「文件管理器」/ 编辑器 / 终端 / 浏览器 / 自定义窗口；在文件管理器里点文件会自动开编辑器。'),
           el('div', { className: 'pe-actions' },
             PANE_TABS.map((t) => el('button', {
               key: t.id, type: 'button', className: 'btn small',

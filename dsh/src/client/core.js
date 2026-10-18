@@ -42,42 +42,11 @@ export function normState(raw) {
 }
 
 /**
- * 工作区模式。右侧永远是 **DSH 自己的会话区**（我们把宿主会话区右推，左侧让给工作台），
- * 两种模式只差工作台怎么摆：
- *   dock  全屏 —— 工作台铺满左侧让位区域
- *   float 窗口 —— 工作台是浮在左侧、紧贴对话的一方小窗，可拖动、可缩放
- * 两种模式共用同一套标签页与窗格组件，功能完全一致。
- */
-export const MODES = [
-  { id: 'dock', label: '全屏', icon: '⛶', hint: '工作台铺满对话左侧' },
-  { id: 'float', label: '窗口', icon: '▣', hint: '小窗浮在对话旁边' },
-]
-export const MODE_IDS = MODES.map((m) => m.id)
-export const DEFAULT_MODE = 'float'
-
-export function modeDef(id) {
-  return MODES.find((m) => m.id === id) || MODES[1]
-}
-
-/** 浮动小窗默认几何：居中偏满，四周留一点背景方便拖动 */
-export const DEFAULT_WIN = { x: 0.5, y: 0.5, w: 0.88, h: 0.86 }
-
-export function clampWin(raw) {
-  const src = raw && typeof raw === 'object' ? raw : {}
-  const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d)
-  const w = Math.max(0.42, Math.min(1, num(src.w, DEFAULT_WIN.w)))
-  const h = Math.max(0.38, Math.min(1, num(src.h, DEFAULT_WIN.h)))
-  const x = Math.max(w / 2, Math.min(1 - w / 2, num(src.x, DEFAULT_WIN.x)))
-  const y = Math.max(h / 2, Math.min(1 - h / 2, num(src.y, DEFAULT_WIN.y)))
-  return { x, y, w, h }
-}
-
-/**
  * 工作区标签页。工作台里 **没有左栏**：项目信息 / 文件浏览都是标签页，
  * 和编辑器、终端、浏览器、自定义窗口平级，标签页本身就把整块让位区占满。
  */
 export const PANE_TABS = [
-  { id: 'files', label: '文件', icon: '🗂' },
+  { id: 'files', label: '文件管理器', icon: '🗂' },
   { id: 'editor', label: '编辑器', icon: '◆' },
   { id: 'term', label: '终端', icon: '›_' },
   { id: 'web', label: '浏览器', icon: '◍' },
@@ -199,7 +168,7 @@ export const store = {
   open: false,
   activeId: null,
   projects: [],
-  ui: {},                       // { [pid]: { mode, dock, win, tabs, activeTab } }
+  ui: {},                       // { [pid]: { dock, tabs, activeTab } }
   status: {},                   // 手工覆盖态（跟绑定会话冲突时以手工为准）
   defaults: { workspace: '', home: '', shell: '', loaded: false },
   sessions: { state: 'pending', counts: null, rows: [], at: 0, error: '', source: '' },
@@ -271,7 +240,7 @@ export function hydrate() {
       rec.sessions = [legacyBind[rec.id]]
     }
     if (!ui[rec.id] && legacyLayouts && legacyLayouts[rec.id]) {
-      ui[rec.id] = { mode: 'dock' }      // 旧布局预设 → 全屏模式
+      ui[rec.id] = {}                    // 旧布局预设已无意义：现在只有一种形态
     }
     return rec
   })
@@ -288,21 +257,17 @@ export function hydrate() {
 
 /* ============================ ui 片段读写 ============================ */
 
-function defaultUi() {
-  return { mode: DEFAULT_MODE, dock: 0, win: null, tabs: [], activeTab: '' }
-}
-
+/**
+ * 每个项目（以及总览的 GRID_PID）的工作台状态。
+ * 只剩「让位宽度 + 标签页」：窗口模式已删除，工作台永远铺满对话左侧那块。
+ * 旧 localStorage 里的 mode / win / split / leftTab 等键直接忽略，不迁移。
+ */
 export function uiOf(pid) {
   const raw = store.ui[pid] || {}
-  const def = defaultUi()
-  /* 旧版存的是 layout 预设置；没有 mode 时按「全屏」迁移，保持原有观感 */
-  const mode = MODE_IDS.includes(raw.mode) ? raw.mode : (raw.layout ? 'dock' : def.mode)
   const dock = Number(raw.dock)
   return {
-    mode,
     /* 0 = 自动（按宿主轨道比例算），>0 = 用户拖过的像素宽 */
     dock: Number.isFinite(dock) && dock > 0 ? Math.round(dock) : 0,
-    win: raw.win && typeof raw.win === 'object' ? clampWin(raw.win) : { ...DEFAULT_WIN },
     tabs: Array.isArray(raw.tabs) ? raw.tabs : [],
     activeTab: typeof raw.activeTab === 'string' ? raw.activeTab : '',
   }
@@ -420,6 +385,48 @@ export function setWorkspace(ui) {
   if (ui) workspaceUi = ui
 }
 
+/**
+ * 在指定目录新建一个宿主对话（新建项目时「＋ 新建对话」用）。
+ * 宿主各版本签名不统一，这里按「对象 → 字符串 → 无参」逐个试，谁先返回 id 就用谁。
+ * 全都不可用就返回 ''，由调用方退化成「先建项目，稍后手动绑定」。
+ */
+export async function createSessionInDir(dir) {
+  const cwd = String(dir || '').trim()
+  const svcs = [workspaceUi, hostCtx && hostCtx.uiWorkspace, hostCtx && hostCtx.sessions].filter(Boolean)
+  const methods = ['createSession', 'newSession', 'create', 'openSession']
+  for (const svc of svcs) {
+    for (const method of methods) {
+      const fn = svc && svc[method]
+      if (typeof fn !== 'function') continue
+      const args = cwd ? [{ cwd }, cwd, undefined] : [undefined]
+      for (const arg of args) {
+        try {
+          const out = await fn.call(svc, arg)
+          const id = sessionIdOf(out)
+          if (id) {
+            await loadSessions()
+            toast('已新建对话并绑定', 'ok')
+            return id
+          }
+        } catch { /* 换下一个签名 */ }
+      }
+    }
+  }
+  toast('宿主没提供新建对话的入口，项目已建好，可稍后手动绑定', 'warn')
+  return ''
+}
+
+/** 从各家的返回值里挖出会话 id */
+function sessionIdOf(out) {
+  if (!out) return ''
+  if (typeof out === 'string') return out
+  if (typeof out === 'object') {
+    const id = out.id || out.sessionId || (out.header && out.header.id) || (out.session && out.session.id)
+    if (typeof id === 'string' && id) return id
+  }
+  return ''
+}
+
 export function jumpToSession(sessionId) {
   const id = String(sessionId || '')
   if (!id) return false
@@ -496,11 +503,12 @@ export function enterProject(pid) {
   if (primary && !switched) toast('没找到宿主打开对话的入口，右侧可能停在别的对话', 'warn')
   loadSessions()
   if (!store.defaults.loaded) loadDefaults()
-  /* 没有左栏了：第一次进项目先把「文件」标签页摆出来，工作区不至于空着 */
+  /* 没有左栏了：第一次进项目先把「文件管理器」标签页摆出来，工作区不至于空着 */
   if (!uiOf(pid).tabs.length) openTab(pid, 'files')
-  /* 先登记项目根，再读目录：host 的路径白名单靠这次登记放行（D 盘项目尤其需要） */
+  /* 先登记项目根 + 对话工作目录，再读目录：host 的路径白名单靠这次登记放行 */
   registerProjectRoot(project).finally(() => {
-    loadTree(project.path)
+    /* 文件管理器默认开在「这个对话的工作目录」，不是项目目录 */
+    loadTree(workspaceDirOf(project))
     loadGit(pid)
   })
 }
@@ -512,12 +520,37 @@ export function closeOverlay() {
 let rootToken = 0
 async function registerProjectRoot(project) {
   const token = ++rootToken
-  if (!project?.path) return
+  if (project?.path) {
+    try {
+      const data = await apiPost('/project/register', { id: project.id, root: project.path }, { timeout: 8000 })
+      if (token !== rootToken) return
+      if (data && data.ok === false) toast('项目目录不可用：' + project.path, 'warn')
+    } catch { /* 静态托管不可用不影响其它功能 */ }
+  }
+  /* 对话的工作目录可能不在项目目录里（也可以是 D 盘任意位置），
+     单独登记一条只为放行文件管理器读写；id 加后缀，不覆盖上面的静态托管根 */
+  const dir = workspaceDirOf(project)
+  if (!dir || samePath(dir, project.path)) return
   try {
-    const data = await apiPost('/project/register', { id: project.id, root: project.path }, { timeout: 8000 })
-    if (token !== rootToken) return
-    if (data && data.ok === false) toast('项目目录不可用：' + project.path, 'warn')
-  } catch { /* 静态托管不可用不影响其它功能 */ }
+    await apiPost('/project/register', { id: project.id + '~cwd', root: dir }, { timeout: 8000 })
+  } catch { /* 目录不存在就等文件管理器自己报错 */ }
+}
+
+/** 比较两个绝对路径是否指向同一处（Windows 大小写 / 斜杠都不敏感） */
+export function samePath(a, b) {
+  const norm = (v) => String(v || '').replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase()
+  const x = norm(a)
+  return !!x && x === norm(b)
+}
+
+/**
+ * 项目的「工作目录」= 主绑定对话的 cwd，取不到才退回项目目录。
+ * 文件管理器默认开在这里：对话在哪个目录干活，就打开哪个目录。
+ */
+export function workspaceDirOf(project) {
+  const primary = project ? primarySession(project) : null
+  const cwd = String((primary && primary.cwd) || '').trim()
+  return cwd || String((project && project.path) || '')
 }
 
 /* ============================ 项目增删改 ============================ */
@@ -527,7 +560,7 @@ function persistProjects(projects) {
   emit({ projects })
 }
 
-export function addProject({ name, path, emoji, mode, sessionId, note }) {
+export function addProject({ name, path, emoji, sessionId, note }) {
   const cleanName = String(name || '').trim()
   if (!cleanName) { toast('请填写项目名称', 'warn'); return '' }
   const pid = 'p-' + Date.now().toString(36)
@@ -536,14 +569,13 @@ export function addProject({ name, path, emoji, mode, sessionId, note }) {
     name: cleanName,
     alias: cleanName,
     icon: String(emoji || ''),
-    path: String(path || '').trim() || store.defaults.workspace || '',
+    path: String(path || '').trim(),
     note: String(note || ''),
     order: store.projects.length,
     sessions: sessionId ? [String(sessionId)] : [],
   })
   const projects = store.projects.concat([rec])
   persistProjects(projects)
-  patchUi(pid, { mode: MODE_IDS.includes(mode) ? mode : DEFAULT_MODE })
   toast('已创建项目 ' + cleanName, 'ok')
   return pid
 }
@@ -638,22 +670,6 @@ export function cycleStatus(pid) {
   const status = { ...store.status, [pid]: next }
   emit({ status })
   writeLS(LS.status, status)
-}
-
-export function setMode(pid, mode) {
-  if (!MODE_IDS.includes(mode)) return
-  patchUi(pid, { mode })
-  emit({ menu: null })
-  toast('工作区模式：' + modeDef(mode).label, 'ok')
-}
-
-/** 浮动窗口几何：x/y 是窗口中心，w/h 是占中间栏的比例 */
-export function setWinRect(pid, rect, persist = false) {
-  patchUi(pid, { win: clampWin(rect) }, persist)
-}
-
-export function resetWinRect(pid) {
-  patchUi(pid, { win: { ...DEFAULT_WIN } }, true)
 }
 
 /** 工作台让位宽度（px）；0 = 自动（按宿主轨道比例算） */

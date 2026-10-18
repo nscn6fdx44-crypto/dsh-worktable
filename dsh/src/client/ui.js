@@ -6,7 +6,7 @@
 import { createElement, useEffect, useRef } from 'react'
 import {
   STATES, stateOf, stateSource, cycleStatus, store, useStore,
-  closeMenu, MODES, setMode, openModal, removeProject, uiOf, closeModal,
+  closeMenu, openModal, removeProject, closeModal,
 } from './core.js'
 
 /** createElement 包装：过滤 null/false、扁平化数组 */
@@ -140,7 +140,6 @@ export function ContextMenu() {
   const win = typeof window !== 'undefined' ? window : { innerWidth: 1200, innerHeight: 800 }
   const x = Math.max(8, Math.min(menu.x, win.innerWidth - 250))
   const y = Math.max(8, Math.min(menu.y, win.innerHeight - 360))
-  const ui = uiOf(menu.pid)
   const bound = Array.isArray(project.sessions) ? project.sessions.length : 0
 
   const node = el('div', {
@@ -151,18 +150,6 @@ export function ContextMenu() {
     onContextMenu: (e) => e.preventDefault(),
   },
     el('div', { className: 'ctx-head', title: project.path }, project.alias || project.name),
-    el('div', { className: 'ctx-label' }, '工作区模式'),
-    MODES.map((m) => el('button', {
-      key: m.id,
-      type: 'button',
-      className: 'ctx-item' + (m.id === ui.mode ? ' on' : ''),
-      onClick: () => setMode(menu.pid, m.id),
-    },
-      el('span', { className: 'ctx-name' }, m.icon + ' ' + m.label),
-      el('small', null, m.hint),
-      m.id === ui.mode ? el('b', { className: 'ctx-check' }, '✓') : null,
-    )),
-    el('div', { className: 'ctx-sep' }),
     el('button', { type: 'button', className: 'ctx-item', onClick: () => openModal('edit', menu.pid) }, '编辑项目信息'),
     el('button', {
       type: 'button', className: 'ctx-item',
@@ -198,16 +185,5 @@ export function Modal({ title, subtitle, wide, children, foot }) {
       children,
       foot ? el('div', { className: 'modal-foot' }, foot) : null,
     ),
-  )
-}
-
-/* ============================ 模式草图 ============================ */
-
-/** 两种模式共用「左栏 / 中间 / 对话」三格，只有中间那一格的形态不同 */
-export function ModeSketch({ mode }) {
-  return el('span', { className: 'sketch', 'data-mode': mode, 'aria-hidden': 'true' },
-    el('i', { 'data-part': 'left' }),
-    el('i', { 'data-part': 'main' }, mode === 'float' ? el('b', { className: 'sk-win' }) : null),
-    el('i', { 'data-part': 'chat' }),
   )
 }

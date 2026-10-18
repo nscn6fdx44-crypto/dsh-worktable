@@ -3,12 +3,16 @@
  * 全部只写 localStorage（项目元数据），不动磁盘。
  */
 import { useState } from 'react'
-import { el, Modal, ModeSketch, Light } from './ui.js'
+import { el, Modal, Light } from './ui.js'
 import {
-  store, useStore, STATES, normState, MODES, DEFAULT_MODE,
+  store, useStore, STATES, normState,
   EMOJI_CHOICES, shortPath, addProject, updateProject, closeModal,
   bindSession, unbindSession, setPrimarySession, sessionsOf, loadSessions, projectOf,
+  createSessionInDir,
 } from './core.js'
+
+/** 新建项目弹窗里「绑定对话」下拉的特殊值：用项目目录现开一个对话 */
+const NEW_SESSION = '__new__'
 
 export function ModalHost() {
   useStore()
@@ -24,17 +28,26 @@ export function ModalHost() {
 
 function AddProjectModal() {
   useStore()
-  const defaults = store.defaults
   const [name, setName] = useState('')
-  const [path, setPath] = useState(defaults.workspace || '')
+  const [path, setPath] = useState('')
   const [emoji, setEmoji] = useState('')
-  const [mode, setMode] = useState(DEFAULT_MODE)
   const [sessionId, setSessionId] = useState('')
+  const [busy, setBusy] = useState(false)
   const rows = store.sessions.rows
+  const wantNew = sessionId === NEW_SESSION
 
-  const submit = () => {
-    const pid = addProject({ name, path, emoji, mode, sessionId })
-    if (pid) closeModal()
+  const submit = async () => {
+    if (busy) return
+    const pid = addProject({ name, path, emoji, sessionId: wantNew ? '' : sessionId })
+    if (!pid) return
+    if (wantNew) {
+      setBusy(true)
+      /* 项目先建好，再去宿主要一个新对话；拿不到 id 就只留项目，不影响创建 */
+      const sid = await createSessionInDir(path)
+      if (sid) bindSession(pid, sid)
+      setBusy(false)
+    }
+    closeModal()
   }
   const onKey = (e) => { if (e.key === 'Enter') submit() }
 
@@ -43,7 +56,9 @@ function AddProjectModal() {
     subtitle: '项目元数据只写本机浏览器 localStorage（wt.projects），不动磁盘文件。',
     foot: [
       el('button', { key: 'c', type: 'button', className: 'btn', onClick: closeModal }, '取消'),
-      el('button', { key: 's', type: 'button', className: 'btn primary', onClick: submit }, '创建项目'),
+      el('button', {
+        key: 's', type: 'button', className: 'btn primary', disabled: busy ? 'disabled' : undefined, onClick: submit,
+      }, busy ? '创建对话…' : '创建项目'),
     ],
   },
     el('div', { className: 'field' },
@@ -58,41 +73,20 @@ function AddProjectModal() {
           onClick: (e) => { e.preventDefault(); setEmoji('') },
         }, '自动'),
         EMOJI_CHOICES.map((c) => el('button', {
-          key: c, type: 'button', className: 'emoji' + (emoji === c ? ' on' : ''), 'aria-label': c,
+          key: c, type: 'button', className: 'emoji' + (emoji === c ? ' on' : ''),
+          'aria-label': c,
           onClick: (e) => { e.preventDefault(); setEmoji(c) },
         }, c)),
       ),
     ),
     el('div', { className: 'field' },
-      el('label', null, '项目目录',
-        defaults.loaded && defaults.workspace
-          ? el('button', {
-            type: 'button', className: 'field-reset', title: '填入 DSH 默认工作区',
-            onClick: (e) => { e.preventDefault(); setPath(defaults.workspace) },
-          }, '默认工作区')
-          : null,
-      ),
+      el('label', null, '项目目录'),
       el('input', {
         className: 'mono', value: path, autoComplete: 'off',
-        placeholder: defaults.loaded ? (defaults.workspace || 'C:\\projects\\demo') : '正在读取默认工作区…',
+        placeholder: 'C:////projects////demo',
         onChange: (e) => setPath(e.target.value), onKeyDown: onKey,
       }),
-      el('div', { className: 'field-hint' }, defaults.workspace
-        ? 'DSH 默认工作区：' + shortPath(defaults.workspace, 48)
-        : '可手填绝对路径（需在用户目录 / DSH 工作区内）'),
-    ),
-    el('div', { className: 'field' },
-      el('label', null, '工作区模式'),
-      el('div', { className: 'layout-row' },
-        MODES.map((item) => el('button', {
-          key: item.id, type: 'button', className: 'layout-card' + (item.id === mode ? ' on' : ''), title: item.hint,
-          onClick: (e) => { e.preventDefault(); setMode(item.id) },
-        },
-          el(ModeSketch, { mode: item.id }),
-          el('span', { className: 'lc-label' }, item.label),
-          el('small', { className: 'lc-k' }, item.hint),
-        )),
-      ),
+      el('div', { className: 'field-hint' }, '手填绝对路径（需在用户目录 / DSH 授权目录内）；也可以直接绑一个已有对话，目录会跟着它走'),
     ),
     el('div', { className: 'field' },
       el('label', null, '绑定 DSH 对话'),
@@ -100,12 +94,15 @@ function AddProjectModal() {
         className: 'wt-select', value: sessionId, onChange: (e) => setSessionId(e.target.value),
       },
         el('option', { value: '' }, '不绑定（稍后可绑）'),
+        el('option', { value: NEW_SESSION }, '＋ 新建对话（用项目目录）'),
         rows.slice(0, 50).map((s) => el('option', { key: s.id, value: s.id },
           (s.title || s.id) + ' · ' + STATES[normState(s.state)].label)),
       ),
-      el('div', { className: 'field-hint' }, rows.length
-        ? '共 ' + rows.length + ' 个宿主对话可选'
-        : (store.sessions.state === 'pending' ? '正在读取宿主对话…' : '宿主暂无对话')),
+      el('div', { className: 'field-hint' }, wantNew
+        ? '创建时会在项目目录里新建一个 DSH 对话并绑定（宿主不提供入口时先建项目，稍后手动绑）'
+        : rows.length
+          ? '共 ' + rows.length + ' 个宿主对话可选'
+          : (store.sessions.state === 'pending' ? '正在读取宿主对话…' : '宿主暂无对话，可以选「新建对话」')),
     ),
   )
 }
