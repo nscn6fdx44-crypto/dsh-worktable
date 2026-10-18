@@ -101,6 +101,13 @@ export const GRID_TABS = [
   { id: 'running', label: '运行中', icon: '◐' },
 ]
 
+/**
+ * 总览的「虚拟项目 id」：总览和工作区一样占让位区，
+ * 它的宽度 / 模式 / 窗口几何也得有个 key 存进 wt.ui.v2。
+ * 用 __ 开头保证不会和真实项目 id 撞上。
+ */
+export const GRID_PID = '__overview'
+
 export const GRID_TAB_IDS = GRID_TABS.map((t) => t.id)
 
 export const EMOJI_CHOICES = ['🧰', '📁', '🔌', '🐍', '🌐', '🖥️', '🎨', '📜', '🗄️', '🧩', '📚', '🛠️', '⚙️', '🚀']

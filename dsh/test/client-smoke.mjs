@@ -4,7 +4,8 @@
  *   - 两个座位注册、样式只注入一次
  *   - 侧边栏：状态栏 / 项目列表（不再单列宿主会话）
  *   - 右击菜单：模式切换 + 单一「绑定对话」入口
- *   - 项目工作区：宿主会话区让位到右侧，工作台只占左边，不再自绘对话栏
+ *   - 总览 / 项目工作区：宿主会话区都让位到右侧，工作台只占左边，右侧是宿主原生对话
+ *     两者共用同一套外壳（顶栏 + 面板 + 右边缘拖动条），总览也能切全屏 / 窗口
  *   - 窗口模式有浮动小窗，全屏模式铺满；两种模式共用标签页 / 编辑器 / 终端 / 浏览器
  *   - 让位宽度换算（computeDock）
  *   - 新建项目小窗、对话绑定小窗
@@ -382,6 +383,42 @@ check('控制室统计块已拆掉（不再有 cc-cell）', allByClass(overlay, 
 check('默认停在「项目」页', allByClass(overlay, /project-card/).length === 2 && allByClass(overlay, /add-card/).length === 1)
 check('网格渲染两张项目卡', allByClass(overlay, /project-card/).length === 2, allByClass(overlay, /project-card/).length)
 check('卡片状态用中文标签', /进行中|待处理|已完成|待命/.test(gridText))
+
+/* 总览也做成「项目一样的窗口」：占对话左侧、右侧留宿主对话、宽度可左右拖 */
+check('总览也贴着对话（有让位边界 dock-edge）', allByClass(overlay, /dock-edge/).length === 1, allByClass(overlay, /dock-edge/).length)
+check('总览没有左栏', allByClass(overlay, /pane-left/).length === 0)
+check('总览只有一块面板', allByClass(overlay, /pane-main/).length === 1, allByClass(overlay, /pane-main/).length)
+check('总览顶栏能切「全屏 / 窗口」', ['全屏', '窗口'].every((t) => gridText.includes(t)), gridText.slice(0, 120))
+check('总览默认是窗口模式（浮在对话旁）', allByClass(overlay, /float-win/).length === 1, allByClass(overlay, /float-win/).length)
+check('窗口模式下总览面板嵌套在浮窗里', allByClass(overlay, /pane-nest/).length === 1, allByClass(overlay, /pane-nest/).length)
+
+/* 拖右边缘：改的是总览自己的 dock 宽度，不碰任何项目 */
+const handlers = {}
+const origAdd = globalThis.window.addEventListener
+const origRemove = globalThis.window.removeEventListener
+globalThis.window.addEventListener = (t, fn) => { handlers[t] = fn }
+globalThis.window.removeEventListener = (t) => { delete handlers[t] }
+const edge = allByClass(overlay, /dock-edge/)[0]
+edge.props.onPointerDown({ preventDefault() {}, stopPropagation() {}, clientX: 600, clientY: 300 })
+if (handlers.pointermove) handlers.pointermove({ clientX: 760, clientY: 300 })
+if (handlers.pointerup) handlers.pointerup({})
+globalThis.window.addEventListener = origAdd
+globalThis.window.removeEventListener = origRemove
+const uiLs = JSON.parse(ls.get('wt.ui.v2') || '{}')
+check('拖总览右边缘 → 宽度存到 __overview', Number(uiLs.__overview && uiLs.__overview.dock) > 0, JSON.stringify(uiLs.__overview))
+check('总览宽度与项目宽度互不干扰', !uiLs['custom-1'] || !uiLs['custom-1'].dock, uiLs['custom-1'] && uiLs['custom-1'].dock)
+
+/* 总览切全屏：浮窗收起，面板铺满让位区，右边缘仍在 */
+clickByLabel(overlay, '全屏')
+overlay = render(overlayComp)
+check('总览全屏：没有浮窗', allByClass(overlay, /float-win/).length === 0 && allByClass(overlay, /pane-nest/).length === 0)
+check('总览全屏：右边缘拖动条仍在', allByClass(overlay, /dock-edge/).length === 1)
+check('总览模式写进 __overview', (JSON.parse(ls.get('wt.ui.v2') || '{}').__overview || {}).mode === 'dock')
+clickByLabel(overlay, '窗口')
+overlay = render(overlayComp)
+check('总览切回窗口模式', allByClass(overlay, /float-win/).length === 1)
+clickByLabel(overlay, '全屏')
+overlay = render(overlayComp)
 
 /* 宿主会话页签 */
 clickByLabel(overlay, '◉ 宿主会话')

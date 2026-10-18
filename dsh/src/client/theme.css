@@ -252,11 +252,12 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 
 /* ============================ 卡片网格 ============================ */
 
+/* 卡片墙：总览现在只占对话左侧那块，宽度随让位拖动变化，
+   所以列数交给 auto-fill，别再用视口媒体查询硬编码 4/3/2 列（会溢出）。 */
 .wt-scope .grid {
-  --cols: 4; --gap: 44px;
-  display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 246px));
-  grid-auto-rows: auto; justify-content: center; align-items: start; gap: var(--gap);
-  width: 100%; margin: 6px auto 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+  grid-auto-rows: auto; align-items: start; gap: 12px;
+  width: 100%; max-width: 1000px; margin: 6px auto 0;
 }
 .wt-scope .grid-note { margin: 22px auto 0; text-align: center; font-family: var(--mono); font-size: 10.5px; color: var(--txt-mute); opacity: .7; }
 .wt-scope .card {
@@ -668,10 +669,8 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 
 /* ============================ 响应式 ============================ */
 
-@media (max-width: 1660px) { .wt-scope .grid { --cols: 3 } }
-@media (max-width: 1240px) { .wt-scope .grid { --cols: 2 } }
 @media (max-width: 900px) {
-  .wt-scope .grid { --cols: 1; --gap: 24px }
+  .wt-scope .grid { grid-template-columns: 1fr }
   .wt-scope .ws { padding: 0 12px }
   .wt-scope .layout-row { grid-template-columns: repeat(2, 1fr) }
 }

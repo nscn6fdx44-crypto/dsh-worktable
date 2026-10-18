@@ -1,11 +1,10 @@
 /**
- * 主区：控制室 / 卡片网格 / 项目工作区。
+ * 主区：总览 / 项目工作区。
  *
- * 两态：
- *   grid    整块覆盖（控制室 + 项目卡片）
- *   project 只占对话左侧那块：宿主会话区被右推，右侧始终是 DSH 自己的对话（真能打字）
- *           工作台内部只有主区（标签页：文件 / 编辑器 / 终端 / 浏览器 / 自定义 / 项目信息），
- *           不再有左栏 —— 文件与项目信息都是标签页，对话栏不由我们渲染。
+ * 两种视图 **都只在对话左侧那块**：宿主会话区被右推，右侧始终是 DSH 自己的对话（真能打字）。
+ *   grid    总览（项目 / 宿主会话 / 运行中 三个页签）
+ *   project 项目工作区（文件 / 编辑器 / 终端 / 浏览器 / 自定义 / 项目信息 标签页）
+ * 两者共用同一套外壳：dock-head + ws + pane-main + 右边缘 dock-edge（拖动改宽度）。
  *
  * 让位几何全部来自 hostdock.js，组件只消费 geo，不直接碰宿主 DOM。
  */
@@ -14,7 +13,7 @@ import { el, Light, Splitter, ContextMenu, Toasts } from './ui.js'
 import { ModalHost } from './modals.js'
 import { useHostDock } from './hostdock.js'
 import {
-  store, useStore, STATES, normState, MODES, modeDef, PANE_TABS, INFO_TAB, GRID_TABS,
+  store, useStore, STATES, normState, MODES, modeDef, PANE_TABS, INFO_TAB, GRID_TABS, GRID_PID,
   fmtDuration, relTime, shortPath, projEmoji, openGrid, enterProject, closeOverlay,
   openModal, openMenu, setMode, setDockPx, openTab, closeTab, setActiveTab,
   loadSessions, stateOf, sessionsOf, primarySession, projectBySession, createFromSession,
@@ -27,13 +26,16 @@ export function MainView() {
   const rootRef = useRef(null)
 
   const open = store.open
-  const active = open ? (store.projects.find((p) => p.id === store.activeId) || null) : null
-  const docked = !!(active && store.view === 'project')
-  const ui = active ? uiOf(active.id) : null
+  const project = open && store.view === 'project'
+    ? (store.projects.find((p) => p.id === store.activeId) || null)
+    : null
+  /* 总览也占让位区：右侧永远留着宿主对话，所以它同样有自己的 dock 宽度与窗口几何 */
+  const pid = project ? project.id : GRID_PID
+  const ui = uiOf(pid)
 
-  /* 让位：只有进项目才挤对话；退出/卸载自动还原 */
-  const geo = useHostDock(rootRef, docked, ui ? ui.dock : 0)
-  const dockedFit = docked && geo.ready && geo.width > 0
+  /* 让位：打开工作台就挤对话（总览 / 项目一致）；退出/卸载自动还原 */
+  const geo = useHostDock(rootRef, !!open, ui.dock)
+  const dockedFit = !!open && geo.ready && geo.width > 0
 
   if (!open) return null
 
@@ -60,9 +62,9 @@ export function MainView() {
         el('i', { className: 'wt-blob wt-b3' }),
         el('i', { className: 'wt-blob wt-b4' }),
       ),
-      docked
-        ? el(Workspace, { key: active.id, project: active, ui, geo })
-        : el(Overview, { key: 'grid' }),
+      project
+        ? el(Workspace, { key: project.id, project, ui, geo })
+        : el(Overview, { key: GRID_PID, ui, geo }),
     ),
     /* 菜单 / 小窗 / toast 挂在让位区之外：fixed 定位不受 dock 裁剪 */
     el(ContextMenu),
@@ -74,11 +76,11 @@ export function MainView() {
 /* ============================ 总览：顶栏 + 标签页 ============================ */
 
 /**
- * 总览与工作区同款：一条 34px 顶栏 + 一块带标签页的面板。
- * 原来的「控制室」大统计块拆成了三个页签（项目 / 宿主会话 / 运行中），
- * 数字收进页签上的计数徽标，界面和工作区一个模子。
+ * 总览：和项目工作区一模一样的外壳 —— 占对话左侧那块，右侧留宿主对话，
+ * 右边缘一条 dock-edge 拖动改宽度，顶栏还能切「全屏 / 窗口」。
+ * 内容只有一块面板，三个页签（项目 / 宿主会话 / 运行中），计数挂在页签徽标上。
  */
-function Overview() {
+function Overview({ ui, geo }) {
   useStore()
   const projects = store.projects.filter((p) => !p.hidden)
   const rows = store.sessions.rows || []
@@ -96,11 +98,20 @@ function Overview() {
         : running.length
   )
 
+  /* 右边缘：和项目工作区一样，拖的同时右侧对话跟着变宽变窄 */
+  const onDock = (next, persist) => {
+    if (next == null) { flushUi(); return }
+    if (next === 0) { setDockPx(GRID_PID, 0, true); return }
+    setDockPx(GRID_PID, next, persist)
+  }
+
+  const board = (nest) => el(OverviewPane, { tab, projects, rows, running, waiting, badgeOf, nest })
+
   return el('div', { className: 'dock-wrap' },
     el('header', { className: 'dock-head' },
       el('div', { className: 'dh-main' },
         el('span', { className: 'dh-ico', 'aria-hidden': 'true' }, '🧰'),
-        el('b', { className: 'dh-name' }, '工作台总览'),
+        el('b', { className: 'dh-name', title: '工作台总览（右侧仍是 DSH 对话）' }, '工作台总览'),
         el('span', { className: 'dh-dot', 'aria-hidden': 'true' }, '·'),
         el('span', { className: 'dh-sub mono', title: snap }, snap),
         running.length
@@ -111,35 +122,57 @@ function Overview() {
           : el('span', { className: 'dh-chat off' }, '空闲'),
       ),
       el('div', { className: 'dh-tools' },
-        el('button', { type: 'button', className: 'mini-btn', title: '重新读取宿主会话', onClick: () => { loadSessions() } }, '刷新'),
+        el('div', { className: 'seg tiny', title: '总览模式：全屏 / 窗口' },
+          MODES.map((m) => el('button', {
+            key: m.id, type: 'button', className: m.id === ui.mode ? 'on' : '', title: m.hint,
+            onClick: () => setMode(GRID_PID, m.id),
+          }, m.icon + ' ' + m.label)),
+        ),
+        el('button', { type: 'button', className: 'mini-btn', title: '重新读取宿主会话', onClick: () => { loadSessions() } }, '↻'),
         el('button', { type: 'button', className: 'mini-btn', title: '新建项目', onClick: () => openModal('add') }, '＋ 新建'),
-        el('button', { type: 'button', className: 'mini-btn', title: '关闭 (Esc)', onClick: closeOverlay }, '✕'),
+        el('button', { type: 'button', className: 'mini-btn', title: '关闭工作台 (Esc)', onClick: closeOverlay }, '✕'),
       ),
     ),
 
-    el('div', { className: 'ws', 'data-mode': 'dock' },
-      el('div', { className: 'pane pane-main' },
-        el('div', { className: 'pane-head tabhead' },
-          el('div', { className: 'tabs' },
-            GRID_TABS.map((t) => el('div', {
-              key: t.id,
-              className: 'tab' + (t.id === tab ? ' on' : ''),
-              role: 'button',
-              'data-tab': t.id,
-              onClick: () => setGridTab(t.id),
-            },
-              el('span', { className: 'tab-title' }, t.icon + ' ' + t.label),
-              el('span', { className: 'tab-count' }, String(badgeOf(t.id))),
-            )),
-          ),
-        ),
-        tab === 'sessions'
-          ? el(SessionsTab, { rows })
-          : tab === 'running'
-            ? el(RunningTab, { running, waiting })
-            : el(ProjectsTab, { projects }),
+    el('div', { className: 'ws', 'data-mode': ui.mode },
+      ui.mode === 'float'
+        ? el(FloatWindow, {
+          key: 'main', pid: GRID_PID, ui, title: '工作台总览',
+          subtitle: projects.length + ' 个项目 · ' + rows.length + ' 个会话',
+          children: board(true),
+        })
+        : board(false),
+      /* 右边缘 = 工作台 / 对话的分界，拖动即改让位宽度 */
+      el(Splitter, {
+        key: 'edge', pid: GRID_PID, side: 'left', className: 'dock-edge',
+        width: geo.width || 0, min: 380, max: Math.max(420, geo.max || 1400), onResize: onDock,
+      }),
+    ),
+  )
+}
+
+/** 总览面板本体：一条页签栏 + 页签内容，和 MainPane 同款 */
+function OverviewPane({ tab, projects, rows, running, waiting, badgeOf, nest }) {
+  return el('div', { className: 'pane pane-main' + (nest ? ' pane-nest' : '') },
+    el('div', { className: 'pane-head tabhead' },
+      el('div', { className: 'tabs' },
+        GRID_TABS.map((t) => el('div', {
+          key: t.id,
+          className: 'tab' + (t.id === tab ? ' on' : ''),
+          role: 'button',
+          'data-tab': t.id,
+          onClick: () => setGridTab(t.id),
+        },
+          el('span', { className: 'tab-title' }, t.icon + ' ' + t.label),
+          el('span', { className: 'tab-count' }, String(badgeOf(t.id))),
+        )),
       ),
     ),
+    tab === 'sessions'
+      ? el(SessionsTab, { rows })
+      : tab === 'running'
+        ? el(RunningTab, { running, waiting })
+        : el(ProjectsTab, { projects }),
   )
 }
 
@@ -313,7 +346,11 @@ function Workspace({ project, ui, geo }) {
 
     el('div', { className: 'ws', 'data-mode': ui.mode },
       ui.mode === 'float'
-        ? el(FloatWindow, { key: 'main', project, ui })
+        ? el(FloatWindow, {
+          key: 'main', pid: project.id, ui, title: project.alias || project.name,
+          subtitle: (ui.tabs || []).length + ' 个窗口',
+          children: el(MainPane, { project, ui, nest: true }),
+        })
         : el(MainPane, { key: 'main', project, ui }),
       /* 右边缘 = 工作台 / 对话的分界，拖动即改让位宽度 */
       el(Splitter, {
@@ -327,9 +364,9 @@ function Workspace({ project, ui, geo }) {
 /**
  * 窗口模式：小窗浮在让位区里、紧贴对话栏。
  * 几何存 ui.win（比例），拖标题栏移动、右下角缩放，双击标题栏复位；
- * 与全屏模式共用同一个 MainPane，所以标签页 / 终端 / 浏览器等功能完全一致。
+ * 总览与项目工作区共用这个壳，所以两者的窗口行为完全一致。
  */
-function FloatWindow({ project, ui }) {
+function FloatWindow({ pid, ui, title, subtitle, children }) {
   const rect = ui.win
   const box = useRef(null)
   const drag = useRef(null)
@@ -349,8 +386,8 @@ function FloatWindow({ project, ui }) {
       if (!d) return
       const dx = (pt.x - d.sx) / d.vw
       const dy = (pt.y - d.sy) / d.vh
-      if (d.kind === 'move') setWinRect(project.id, { ...d.rect, x: d.rect.x + dx, y: d.rect.y + dy })
-      else setWinRect(project.id, { ...d.rect, w: d.rect.w + dx * 2, h: d.rect.h + dy * 2 })
+      if (d.kind === 'move') setWinRect(pid, { ...d.rect, x: d.rect.x + dx, y: d.rect.y + dy })
+      else setWinRect(pid, { ...d.rect, w: d.rect.w + dx * 2, h: d.rect.h + dy * 2 })
     }
     const move = (ev) => {
       const d = drag.current
@@ -394,17 +431,17 @@ function FloatWindow({ project, ui }) {
         className: 'float-bar',
         title: '拖动移动窗口 · 双击复位',
         onPointerDown: begin('move'),
-        onDoubleClick: () => resetWinRect(project.id),
+        onDoubleClick: () => resetWinRect(pid),
       },
         el('span', { className: 'fb-dots', 'aria-hidden': 'true' }, el('i'), el('i'), el('i')),
-        el('span', { className: 'fb-title' }, project.alias || project.name),
-        el('span', { className: 'fb-sub mono' }, (ui.tabs || []).length + ' 个窗口'),
+        el('span', { className: 'fb-title', title }, title),
+        el('span', { className: 'fb-sub mono' }, subtitle || ''),
         el('span', { className: 'fb-tools' },
-          el('button', { type: 'button', title: '回到默认位置与大小', onClick: () => resetWinRect(project.id) }, '复位'),
-          el('button', { type: 'button', title: '切换为全屏模式', onClick: () => setMode(project.id, 'dock') }, '全屏'),
+          el('button', { type: 'button', title: '回到默认位置与大小', onClick: () => resetWinRect(pid) }, '复位'),
+          el('button', { type: 'button', title: '切换为全屏模式', onClick: () => setMode(pid, 'dock') }, '全屏'),
         ),
       ),
-      el('div', { className: 'float-body' }, el(MainPane, { project, ui, nest: true })),
+      el('div', { className: 'float-body' }, children),
       el('span', { className: 'float-grip', title: '拖动缩放', onPointerDown: begin('resize') }),
     ),
     el('p', { className: 'canvas-hint' }, '拖动标题栏移动 · 右下角缩放 · 右边缘拖动改工作台宽度'),
