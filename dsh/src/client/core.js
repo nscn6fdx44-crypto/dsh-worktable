@@ -181,6 +181,8 @@ export const store = {
   modal: null,                  // { kind, pid }
   menu: null,                   // { pid, x, y }
   toasts: [],
+  /* 系统文件管理器最近一次调用结果：面板上要能看见「到底打开成功没有」 */
+  reveal: { state: 'idle', path: '', at: 0, error: '', cmd: '' },
   tick: 0,                      // 每秒心跳，用于计时显示
 }
 
@@ -704,7 +706,7 @@ export function openTab(pid, kind, opts = {}) {
   /* 文件管理器不画列表：打开这个标签页 = 让系统资源管理器弹出该目录 */
   if (kind === 'files' && pid !== GRID_PID && !opts.silent) {
     const p = projectOf(pid)
-    if (p) revealPath(workspaceDirOf(p))
+    if (p) revealPath(workspaceDirOf(p), { quiet: true })
   }
 }
 
@@ -717,8 +719,17 @@ export function closeTab(pid, key) {
   patchUi(pid, { tabs, activeTab })
 }
 
-export function setActiveTab(pid, key) {
+/**
+ * 切页签。切到「文件管理器」也要重新弹一次系统窗口 ——
+ * 标签页本来就已经开着的时候，用户再点它就是「我要再看一眼目录」。
+ */
+export function setActiveTab(pid, key, opts = {}) {
   patchUi(pid, { activeTab: key })
+  if (opts.silent === true) return
+  const tab = (uiOf(pid).tabs || []).find((t) => t.key === key)
+  if (!tab || tab.kind !== 'files' || pid === GRID_PID) return
+  const p = projectOf(pid)
+  if (p) revealPath(workspaceDirOf(p), { quiet: true })
 }
 
 /* ============================ 文件管理器（交给系统窗口） ============================ */
@@ -727,16 +738,27 @@ export function setActiveTab(pid, key) {
  * 让操作系统的文件管理器打开这个路径。
  * 本插件不再自绘文件列表：点「文件管理器」标签页 = 直接弹系统窗口，
  * 面板里只留路径、说明和「再打开一次」的按钮。
+ *
+ * 结果一律写进 store.reveal，面板会显示「刚才是打开了，还是失败了、失败在哪儿」。
  */
 export async function revealPath(path, opts = {}) {
   const target = String(path || '').trim()
-  if (!target) { toast('没有可打开的目录', 'warn'); return false }
+  if (!target) {
+    toast('没有可打开的目录', 'warn')
+    emit({ reveal: { state: 'error', path: '', at: Date.now(), error: '没有可打开的目录', cmd: '' } })
+    return false
+  }
+  emit({ reveal: { state: 'loading', path: target, at: Date.now(), error: '', cmd: '' } })
   try {
     const data = await apiPost('/fs/reveal', { path: target, select: opts.select === true }, { timeout: 8000 })
     if (data && data.ok === false) throw new Error(data.error || '打开失败')
+    emit({ reveal: { state: 'ok', path: target, at: Date.now(), error: '', cmd: String(data?.cmd || '') } })
+    if (opts.quiet !== true) toast('已在系统文件管理器中打开', 'ok')
     return true
   } catch (err) {
-    toast('没能打开系统文件管理器：' + String(err?.message ?? err), 'warn')
+    const text = String(err?.message ?? err)
+    emit({ reveal: { state: 'error', path: target, at: Date.now(), error: text, cmd: '' } })
+    toast('没能打开系统文件管理器：' + text, 'warn')
     return false
   }
 }

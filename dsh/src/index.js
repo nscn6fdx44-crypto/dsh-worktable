@@ -20,7 +20,7 @@
  *   3. 凭证目录（.ssh / .aws / .gnupg / .kube）直接拒绝。
  *   4. 不把任意请求体写进包目录（上游 /ping 就这么干过）。
  */
-import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync, appendFileSync } from 'node:fs'
 import { spawn, execFile } from 'node:child_process'
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
@@ -248,8 +248,14 @@ export function apply(ctx) {
     const target = await assertExisting(body?.path, 'any')
     const select = body?.select === true
     const dryRun = process.env.WORKTABLE_OPEN_DRYRUN === '1'
-    if (!dryRun) openInSystem(target, select)
-    sendJson(res, 200, { ok: true, path: target, select, dryRun })
+    if (dryRun) return sendJson(res, 200, { ok: true, path: target, select, dryRun: true, cmd: '' })
+    const r = await openInSystem(target, select)
+    logReveal(target, select, r)
+    if (!r.ok) {
+      console.warn('[worktable] 打开系统文件管理器失败', r.cmd, msg(r.error))
+      return sendJson(res, 500, { error: '系统文件管理器启动失败：' + msg(r.error), path: target, cmd: r.cmd })
+    }
+    sendJson(res, 200, { ok: true, path: target, select, dryRun: false, cmd: r.cmd })
   })})
 
   /* ---------- 终端（NDJSON 流） ---------- */
@@ -707,22 +713,74 @@ function safeTitle(header, observed) {
 /* ============================ 系统文件管理器 ============================ */
 
 /**
+ * 每次「打开系统文件管理器」记一行到 ~/.dsh/worktable-reveal.log。
+ * 用户说「打不开」时，这是唯一能区分「根本没调用 / 调用了但失败 / 调用成功但窗口没到前台」的证据。
+ */
+const REVEAL_LOG_MAX = 128 * 1024
+
+function logReveal(target, select, r) {
+  try {
+    const home = process.env.DSH_HOME || join(homedir(), '.dsh')
+    const file = join(home, 'worktable-reveal.log')
+    try { if (statSync(file).size > REVEAL_LOG_MAX) writeFileSync(file, '') } catch { /* 首次写入 */ }
+    const parts = [
+      new Date().toISOString(),
+      r.ok ? 'ok' : 'fail',
+      'select=' + (select ? 1 : 0),
+      r.cmd || '-',
+      target,
+      r.ok ? '' : msg(r.error),
+    ]
+    appendFileSync(file, parts.join(' | ') + '\n', 'utf8')
+  } catch { /* 日志写不了不影响主流程 */ }
+}
+
+/** Windows 上 explorer.exe 的绝对路径（PATH 在打包后的 Electron 里不一定完整） */function explorerExe() {
+  const root = process.env.SystemRoot || process.env.windir || 'C:\\Windows'
+  const exe = join(root, 'explorer.exe')
+  return existsSync(exe) ? exe : 'explorer.exe'
+}
+
+/**
  * 把路径交给操作系统的文件管理器。目录 → 打开该目录；文件 + select → 在资源管理器里选中它。
- * explorer.exe 的退出码不可信（正常打开也常返回 1），这里只关心「有没有弹出来」。
+ *
+ * 两个坑：
+ *  1. explorer.exe 的退出码不可信 —— 正常打开也常返回 1，所以「exit」一律算成功，
+ *     只有 spawn 本身失败（ENOENT/EACCES）才算失败；
+ *  2. 必须 detached + unref，否则会被宿主的子进程管理连带回收，窗口一闪就没。
  */
 function openInSystem(target, select) {
-  const done = () => { /* 忽略退出码 */ }
-  try {
+  return new Promise((resolveP) => {
+    let cmd
+    let args
     if (process.platform === 'win32') {
-      execFile('explorer.exe', [select ? '/select,' + target : target], { windowsHide: true }, done)
+      cmd = explorerExe()
+      /* /select, 与路径必须是一个参数，Node 会在含空格时整串加引号，explorer 认 */
+      args = [select ? '/select,' + target : target]
+    } else if (process.platform === 'darwin') {
+      cmd = 'open'
+      args = select ? ['-R', target] : [target]
+    } else {
+      cmd = 'xdg-open'
+      args = [select ? dirname(target) : target]
+    }
+
+    let child
+    try {
+      child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: false })
+    } catch (err) {
+      resolveP({ ok: false, error: msg(err), cmd })
       return
     }
-    if (process.platform === 'darwin') {
-      execFile('open', select ? ['-R', target] : [target], done)
-      return
-    }
-    execFile('xdg-open', [select ? dirname(target) : target], done)
-  } catch { /* 打不开就算了，前端会提示 */ }
+
+    let settled = false
+    const done = (r) => { if (!settled) { settled = true; resolveP(r) } }
+    child.on('error', (err) => done({ ok: false, error: msg(err), cmd }))
+    child.on('exit', (code) => done({ ok: true, code, cmd }))
+    /* explorer 可能把请求转交给已在运行的实例后立刻退出，1.5s 兜底 */
+    setTimeout(() => done({ ok: true, code: null, cmd }), 1500)
+    try { child.unref() } catch { /* 已经退出 */ }
+  })
 }
 
 /* ============================ git ============================ */

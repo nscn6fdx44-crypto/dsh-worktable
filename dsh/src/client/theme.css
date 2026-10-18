@@ -449,6 +449,18 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 }
 .wt-scope .sfc-jump input:focus { border-color: var(--amber-line); }
 .wt-scope .sfc-note { margin: 6px 0 0; font-size: 10.5px; line-height: 1.7; color: var(--txt-mute); }
+/* 常用目录：一次点到位，不用记路径 */
+.wt-scope .sfc-quick { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 2px 0; }
+/* 上次调用系统窗口的结果：成功/失败一眼可见 */
+.wt-scope .sfc-status {
+  display: flex; align-items: center; gap: 6px; margin: 4px 0 0; max-width: 100%;
+  font-size: 11px; color: var(--txt-dim);
+}
+.wt-scope .sfc-status.bad { color: #f0a0a0; }
+.wt-scope .sfc-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--txt-mute); }
+.wt-scope .sfc-dot.ok { background: #5ec27e; box-shadow: 0 0 6px rgba(94,194,126,.6); }
+.wt-scope .sfc-dot.error { background: #e5695f; box-shadow: 0 0 6px rgba(229,105,95,.6); }
+.wt-scope .btn[disabled] { opacity: .55; cursor: progress; }
 .wt-scope .ed-open { display: flex; gap: 6px; margin-top: 10px; width: min(420px, 100%); }
 .wt-scope .ed-open input {
   flex: 1; min-width: 0; height: 30px; padding: 0 10px; border-radius: 8px;

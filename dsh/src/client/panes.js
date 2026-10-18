@@ -98,42 +98,68 @@ export function InfoPane({ project }) {
 
 /**
  * 文件管理器：**不再自己画目录树**，直接交给系统的文件管理器（Windows 资源管理器）。
- * 点「🗂 文件管理器」标签页时 core.openTab 已经弹过一次；这里只留路径、
- * 说明和「再打开一次」的按钮，外加一个任意路径的入口。
+ * 点「🗂 文件管理器」标签页时 core.openTab / setActiveTab 已经弹过一次；
+ * 这里只留路径、常用入口和「再打开一次」的按钮，外加一个任意路径的入口。
+ *
+ * 关键是那个状态行：explorer 有没有被真正拉起来，用户得看得见，不然只会觉得「打不开」。
  */
 export function FilesPane({ project }) {
   useStore()
   const [pathInput, setPathInput] = useState('')
-  const [opening, setOpening] = useState('')
+  const [copied, setCopied] = useState(false)
 
+  const rv = store.reveal || {}
   const workDir = workspaceDirOf(project)
   const projDir = String(project.path || '')
+  const homeDir = String(store.defaults.home || '')
   const primary = primarySession(project)
-  const cur = opening || workDir
+  const busy = rv.state === 'loading'
 
-  const open = async (dir) => {
-    const target = String(dir || '').trim()
-    if (!target) return
-    setOpening(target)
-    const ok = await revealPath(target)
-    if (!ok) setOpening('')
-  }
+  const open = (dir) => { const t = String(dir || '').trim(); if (t) revealPath(t) }
   const enter = () => { const p = pathInput.trim(); if (p) { open(p); setPathInput('') } }
+
+  const copy = () => {
+    const target = workDir || projDir
+    if (!target) return
+    try {
+      Promise.resolve(navigator.clipboard?.writeText(target)).then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1600)
+      }, () => toast('复制失败', 'warn'))
+    } catch { toast('复制失败', 'warn') }
+  }
+
+  const quick = []
+  if (workDir) quick.push({ key: 'work', label: '对话工作目录', path: workDir })
+  if (projDir && !samePath(projDir, workDir)) quick.push({ key: 'proj', label: '项目目录', path: projDir })
+  if (homeDir && !samePath(homeDir, workDir) && !samePath(homeDir, projDir)) quick.push({ key: 'home', label: '用户目录', path: homeDir })
 
   return el('div', { className: 'pane-body files-body files-sys' },
     el('div', { className: 'sfc' },
       el('div', { className: 'sfc-ico', 'aria-hidden': 'true' }, '📂'),
       el('h3', { className: 'sfc-title' }, '文件浏览在系统窗口里'),
-      el('p', { className: 'sfc-path mono', title: cur }, cur || '（没有可打开的目录）'),
+      el('p', { className: 'sfc-path mono', title: workDir || projDir }, workDir || projDir || '（没有可打开的目录）'),
       el('p', { className: 'sfc-hint' }, primary && primary.cwd
-        ? '跟随对话：' + (primary.title || primary.id) + ' · ' + primary.cwd
+        ? '跟随对话：' + (primary.title || primary.id)
         : '这个项目还没绑定对话，用项目目录'),
+
       el('div', { className: 'sfc-actions' },
-        el('button', { type: 'button', className: 'btn primary', onClick: () => open(workDir) }, '📂 在系统文件管理器中打开'),
-        projDir && !samePath(projDir, workDir)
-          ? el('button', { type: 'button', className: 'btn', onClick: () => open(projDir) }, '📁 打开项目目录')
-          : null,
+        el('button', {
+          type: 'button', className: 'btn primary', disabled: busy,
+          onClick: () => open(workDir),
+        }, busy ? '正在打开…' : '📂 在系统文件管理器中打开'),
+        el('button', { type: 'button', className: 'btn', onClick: copy }, copied ? '已复制路径' : '复制路径'),
       ),
+
+      quick.length
+        ? el('div', { className: 'sfc-quick' },
+          quick.map((q) => el('button', {
+            key: q.key, type: 'button', className: 'mini-btn', title: q.path,
+            onClick: () => open(q.path),
+          }, '📁 ' + q.label)),
+        )
+        : null,
+
       el('div', { className: 'sfc-jump' },
         el('input', {
           className: 'mono', value: pathInput, autoComplete: 'off',
@@ -142,7 +168,17 @@ export function FilesPane({ project }) {
           onKeyDown: (e) => { if (e.key === 'Enter') enter() },
         }),
       ),
-      el('p', { className: 'sfc-note' }, '再点一次「🗂 文件管理器」标签页会重新打开系统窗口；这个标签页不再自己画目录树。'),
+
+      rv.state === 'ok' || rv.state === 'error'
+        ? el('p', { className: 'sfc-status ' + (rv.state === 'ok' ? 'ok' : 'bad') },
+          el('span', { className: 'sfc-dot ' + rv.state, 'aria-hidden': 'true' }),
+          el('span', null, rv.state === 'ok'
+            ? '上次打开成功 · ' + relTime(rv.at) + (rv.cmd ? ' · ' + rv.cmd : '')
+            : '上次打开失败 · ' + (rv.error || '未知原因')),
+        )
+        : null,
+
+      el('p', { className: 'sfc-note' }, '如果窗口没跳到前面，看一下任务栏 —— 系统资源管理器不会抢焦点。再点一次标签页可以重开。'),
     ),
   )
 }

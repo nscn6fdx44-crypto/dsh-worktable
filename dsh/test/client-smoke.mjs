@@ -345,6 +345,17 @@ check('说明卡有「在系统文件管理器中打开」按钮', textOf(overla
 check('说明卡标出跟随的对话目录', textOf(overlay).includes('跟随对话'), textOf(overlay).slice(0, 120))
 check('说明卡显示对话工作目录', /C:[\\/]+demo[\\/]+app-alpha/.test(textOf(overlay)), textOf(overlay).slice(0, 160))
 
+/* 标签页已经开着的时候再点它，也要重新弹一次系统窗口（用户：「打不开」多半是没重弹） */
+const filesTab = allByClass(overlay, /(^|\s)tab(\s|$)/).find((n) => textOf(n).includes('文件管理器'))
+check('标签栏里有文件管理器标签页', !!filesTab)
+const beforeRetap = reveals.length
+filesTab.props.onClick({ stopPropagation() {} })
+await new Promise((r) => setTimeout(r, 30))
+overlay = render(overlayComp)
+check('再点已开着的文件管理器标签页会重新打开系统窗口', reveals.length === beforeRetap + 1, reveals.length - beforeRetap)
+check('面板显示上次打开结果', textOf(overlay).includes('上次打开成功'), textOf(overlay).slice(0, 140))
+check('面板给出常用目录入口', allByClass(overlay, /sfc-quick/).length === 1)
+
 /* 编辑器：不再从文件列表点，空态直接填路径 */
 clickByLabel(overlay, '◆ 编辑器')
 overlay = render(overlayComp)
