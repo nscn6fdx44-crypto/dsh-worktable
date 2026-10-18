@@ -7,8 +7,8 @@
  *      fs/reveal（交给系统文件管理器，dry-run 不真弹窗）；
  *      git status/log；project/register + /site 静态托管；term/exec NDJSON 流。
  */
-import { apply } from '../lib/index.js'
-import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { apply, sendJson } from '../lib/index.js'
+import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, symlinkSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { Writable } from 'node:stream'
 import { join } from 'node:path'
@@ -97,18 +97,18 @@ function makeRes(done) {
 }
 
 /** 流式 GET：/fs/raw 用 createReadStream().pipe(res)，res 必须是真 Writable */
-function callRaw(path, query) {
+function callRaw(path, query, headers) {
   return new Promise((resolve) => {
     const handler = routeOf(path) || routeOf(path, 'prefix')
     if (!handler) return resolve({ status: 404, body: 'no route', headers: {} })
     const qs = query ? '?' + new URLSearchParams(query).toString() : ''
     const res = makeRes((out) => resolve(out))
-    handler({ method: 'GET', url: path + qs, on() {} }, res)
+    handler({ method: 'GET', url: path + qs, headers: headers || {}, on() {} }, res)
   })
 }
 
-/** 一次性 JSON 调用（query 给 GET 用，例如 /fs/raw?path=…） */
-function call(path, bodyObj, method = 'POST', query) {
+/** 一次性 JSON 调用（query 给 GET 用，例如 /fs/raw?path=…；reqHeaders 用于 CSRF 用例带 Origin） */
+function call(path, bodyObj, method = 'POST', query, reqHeaders) {
   return new Promise((resolve) => {
     const handler = routeOf(path) || routeOf(path, 'prefix')
     if (!handler) return resolve({ status: 404, body: 'no route' })
@@ -118,6 +118,7 @@ function call(path, bodyObj, method = 'POST', query) {
     const req = {
       method,
       url: path + qs,
+      headers: reqHeaders || {},
       on(e, fn) {
         if (e === 'data' && payload) setTimeout(() => { if (!delivered) fn(payload) }, 0)
         if (e === 'end') setTimeout(() => { delivered = true; fn() }, 1)
@@ -529,6 +530,61 @@ try {
   apply({ logger: { info() {}, warn() {} }, effect() {}, get() { return undefined } })
 } catch (e) { boom = e }
 check('无 webServer 时静默降级', !boom, boom && boom.message)
+
+/* ============================ 安全加固回归 ============================ */
+
+/* ① CSRF：跨域 Origin 必须被 403，本机 / 无 Origin 放行 */
+const csrfCross = await call(BASE + '/fs/list', { path: process.cwd() }, 'POST', undefined, { origin: 'https://evil.example.com' })
+check('① CSRF 跨域 Origin → 403', csrfCross.status === 403, csrfCross.status + ' ' + csrfCross.body.slice(0, 60))
+const csrfTerm = await call(BASE + '/term/exec', { id: 'x', cmd: 'echo hi' }, 'POST', undefined, { origin: 'https://evil.example.com' })
+check('① CSRF 跨域也能拦 /term/exec', csrfTerm.status === 403, csrfTerm.status + ' ' + csrfTerm.body.slice(0, 60))
+const csrfLocal = await call(BASE + '/fs/list', { path: process.cwd() }, 'POST', undefined, { origin: 'http://localhost' })
+check('① CSRF 本机 Origin 放行', csrfLocal.status === 200, csrfLocal.status + ' ' + csrfLocal.body.slice(0, 50))
+const csrfNone = await call(BASE + '/fs/list', { path: process.cwd() })
+check('① CSRF 无 Origin（内部/同源）放行', csrfNone.status === 200, csrfNone.status)
+
+/* ⑤ 凭证段补全：.env / .env.local / .npmrc 一律拒绝 */
+const denyEnv = await call(BASE + '/fs/list', { path: join(tmp, '.env', 'tokens') })
+check('⑤ fs/list 拒绝 .env 凭证段', denyEnv.status === 403, denyEnv.body.slice(0, 80))
+const denyEnvLocal = await call(BASE + '/fs/list', { path: join(tmp, '.env.local', 'x') })
+check('⑤ fs/list 拒绝 .env.local 变体', denyEnvLocal.status === 403, denyEnvLocal.body.slice(0, 80))
+const denyNpmrc = await call(BASE + '/fs/list', { path: join(tmp, '.npmrc') })
+check('⑤ fs/list 拒绝 .npmrc', denyNpmrc.status === 403, denyNpmrc.body.slice(0, 80))
+
+/* ⑥ /web/probe SSRF：云元数据 / 链路本地禁止代发请求（连都不连） */
+const probeMeta = await call(BASE + '/web/probe', { url: 'http://169.254.169.254/latest/meta-data' })
+const probeMetaJ = JSON.parse(probeMeta.body).results[0]
+check('⑥ web/probe 拦云元数据端点', probeMetaJ.ok === false && /禁止|元数据|链路本地/.test(probeMetaJ.error || ''), probeMetaJ.error)
+const probeLL = await call(BASE + '/web/probe', { url: 'http://169.254.1.1/' })
+check('⑥ web/probe 拦链路本地地址', JSON.parse(probeLL.body).results[0].ok === false)
+/* 回环（127.0.0.1）不拦：已有的 probeOk 用例（L463）已证明 127.0.0.1 正常 */
+
+/* ④ /site 软链接逃逸：项目内一个指向项目外的链接，读不走外面 */
+let linkOk = false
+try {
+  symlinkSync(process.cwd(), join(tmp, 'escape'), process.platform === 'win32' ? 'junction' : 'dir')
+  linkOk = true
+} catch { linkOk = false }
+if (linkOk) {
+  const siteEscapeFile = await getSite(BASE + '/site/p-test/escape/README.md')
+  check('④ /site 挡软链接指向项目外的文件', siteEscapeFile.status === 403, siteEscapeFile.status + ' ' + siteEscapeFile.body.slice(0, 60))
+  const siteEscapeDir = await getSite(BASE + '/site/p-test/escape/')
+  check('④ /site 挡软链接指向项目外的目录', siteEscapeDir.status === 403, siteEscapeDir.status + ' ' + siteEscapeDir.body.slice(0, 60))
+  /* 确认正常文件仍可读（没把合法请求误伤） */
+  writeFileSync(join(tmp, 'ok.txt'), 'still-ok', 'utf8')
+  const siteStillOk = await getSite(BASE + '/site/p-test/ok.txt')
+  check('④ /site 合法文件仍 200', siteStillOk.status === 200 && siteStillOk.body === 'still-ok', siteStillOk.status + ' ' + siteStillOk.body.slice(0, 20))
+} else {
+  check('④ /site 软链接逃逸测试跳过（环境无法创建链接）', true, 'skip')
+}
+
+/* ② sendJson 对已 headersSent 的响应安全丢弃（不抛错） */
+let guardThrew = false
+try {
+  const gres = { headersSent: true, writableEnded: false, writeHead() {}, end() {}, write() { return true } }
+  sendJson(gres, 200, { ok: true })
+} catch { guardThrew = true }
+check('② sendJson 已发头时安全丢弃（不抛错）', guardThrew === false)
 
 rmSync(tmp, { recursive: true, force: true })
 

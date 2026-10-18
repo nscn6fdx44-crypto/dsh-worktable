@@ -946,6 +946,40 @@ check('小窗提示只写 localStorage', modalText.includes('localStorage'))
   check('joinFs 处理 POSIX 根', R.joinFs('/a/b', '../c') === '/a/c', R.joinFs('/a/b', '../c'))
 }
 
+/* ---------- ③ 编辑器未保存改动不被静默覆盖 ---------- */
+/* 造一个「有未保存改动」的编辑器状态（state=ok、文本≠已保存、非媒体、非片段） */
+Object.assign(mod.store.editor, {
+  state: 'ok', path: 'C:\\x\\A.md', name: 'A.md', kind: 'md',
+  text: '我改了一大堆，还没存', saved: '原始内容', partial: false, truncated: false,
+})
+/* confirm 做成计数器：用来确认守卫「是否真的问过」 */
+let confirmCalls = 0
+/* 用户取消 → openFile 应直接返回，既不切编辑器、也不发 /fs/read，且 confirm 被问了一次 */
+globalThis.window.confirm = () => { confirmCalls += 1; return false }
+const readsBeforeBlock = reads.length
+await mod.openFile('C:\\x\\B.md')
+check('③ 有未保存改动 + 用户取消 → 不覆盖、不发读请求、confirm 被问',
+  mod.store.editor.path === 'C:\\x\\A.md' && reads.slice(readsBeforeBlock).every((p) => p !== 'C:\\x\\B.md') && confirmCalls === 1,
+  'path=' + mod.store.editor.path + ' reads+=' + (reads.length - readsBeforeBlock) + ' confirm=' + confirmCalls)
+/* 用户确认 → 才允许覆盖，并真正发起 /fs/read 去加载新文件（confirm 再问一次） */
+globalThis.window.confirm = () => { confirmCalls += 1; return true }
+const readsBeforeAllow = reads.length
+await mod.openFile('C:\\x\\C.md')
+check('③ 用户确认后 → 发起 /fs/read 加载新文件（confirm 再问一次）',
+  reads.slice(readsBeforeAllow).some((p) => p === 'C:\\x\\C.md') && confirmCalls === 2,
+  JSON.stringify(reads.slice(readsBeforeAllow)) + ' confirm=' + confirmCalls)
+/* 重开「同一文件」：path 一致，守卫应被跳过（不再调 confirm），但仍会正常加载 */
+Object.assign(mod.store.editor, {
+  state: 'ok', path: 'C:\\x\\A.md', name: 'A.md', kind: 'md',
+  text: '我又改了', saved: 'saved', partial: false, truncated: false,
+})
+const confirmBeforeSame = confirmCalls
+await mod.openFile('C:\\x\\A.md')
+check('③ 重开同一文件 → 不经确认守卫（confirm 不被调用）',
+  confirmCalls === confirmBeforeSame,
+  'confirm=' + confirmCalls)
+delete globalThis.window.confirm
+
 const failed = results.filter((r) => !r)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)
 process.exit(failed.length ? 1 : 0)

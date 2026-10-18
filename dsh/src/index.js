@@ -28,6 +28,8 @@
  *      系统目录、白名单根本身、白名单根的祖先。
  *   4. 先 realpath 解析符号链接再判根，避免 ../ 与 symlink 逃逸。
  *   5. 不把任意请求体写进包目录（上游 /ping 就这么干过）。
+ *   6. 所有路由默认只接受本机 DSH 自己的请求（Origin 为 localhost / 127.0.0.1 / 缺省），
+ *      拒绝任何跨域 Origin —— 防 CSRF，尤其挡住恶意网页 drive-by 调 /term/exec。
  */
 import { closeSync, createReadStream, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync, appendFileSync } from 'node:fs'
 import { spawn, execFile } from 'node:child_process'
@@ -71,8 +73,12 @@ const PROBE_BODY_BYTES = 16 * 1024
 const MAX_CUSTOM_ITEMS = 200
 const MAX_CUSTOM_BODY = 512 * 1024
 
-/* 凭证目录：即便在 home 内也不允许读写 */
-const DENY_SEGMENTS = new Set(['.ssh', '.aws', '.gnupg', '.kube', '.dsh', '.netrc', '.git-credentials', '.password-store'])
+/* 凭证目录：即便在 home 内也不允许读写。
+   .npmrc / .gitconfig 里常写 token；.env* 是运行时密钥；.pki / .azure 是证书与云凭据。 */
+const DENY_SEGMENTS = new Set([
+  '.ssh', '.aws', '.gnupg', '.kube', '.dsh', '.netrc', '.git-credentials', '.password-store',
+  '.npmrc', '.gitconfig', '.env', '.pki', '.azure',
+])
 
 /* /fs/raw 放行的媒体类型：这些东西在编辑器里永远是「二进制」，只能让浏览器自己渲染 */
 const MEDIA_EXTS = new Set([
@@ -98,6 +104,17 @@ export function apply(ctx) {
 
   const disposers = []
   const register = (route) => {
+    /* 防 CSRF：所有路由默认只接受「本机 DSH 自己」发起的请求（见 originAllowed）。
+       恶意站点（Origin: https://evil.com）的跨域 POST 会被 403 挡下，
+       避免它借 drive-by 调用 /term/exec 在宿主机器上执行命令。 */
+    const original = route.handler
+    route.handler = (req, res) => {
+      if (!originAllowed(req)) {
+        sendJson(res, 403, { error: '跨域请求被拒绝（仅允许本机 DSH 调用）' })
+        return
+      }
+      return original(req, res)
+    }
     const dispose = webServer.register(route)
     if (typeof dispose === 'function') disposers.push(dispose)
   }
@@ -631,13 +648,20 @@ export function apply(ctx) {
     const root = PROJECT_ROOTS.get(id)
     if (!root) return sendSiteError(res, 404, '这个项目的静态托管还没就绪', '项目「' + id + '」没有登记可用的目录。回到工作台重新进一次项目即可重新登记；没设目录的项目本来就没有站点。')
 
-    const target = safeJoin(root, rel || 'index.html')
-    if (!target) return sendSiteError(res, 403, '路径越界', '请求的路径跑出了项目目录，已拦下。')
+    /* safeSiteTarget 会先挡 ../，再 realpath 跟随软链接，最后再验一次 containment，
+       项目内一个指向外部 / 系统目录的软链接会被拦成 403，读不走项目外的文件。 */
+    const target = safeSiteTarget(root, rel || 'index.html')
+    if (!target) return sendSiteError(res, 403, '路径越界', '请求的路径跑出了项目目录，或软链接指向了项目之外，已拦下。')
     let file = target
-    if (!rel || isDirQuiet(file)) {
-      const index = join(isDirQuiet(file) ? file : root, 'index.html')
-      if (existsSync(index)) file = index
-      else if (!rel || isDirQuiet(target)) return sendListing(res, isDirQuiet(target) ? target : root)
+    const targetIsDir = isDirQuiet(file)
+    if (!rel || targetIsDir) {
+      const indexRel = rel ? rel.replace(/\/+$/, '') + '/index.html' : 'index.html'
+      const indexFile = safeSiteTarget(root, indexRel)
+      if (indexFile && existsSync(indexFile) && !isDirQuiet(indexFile)) {
+        file = indexFile
+      } else if (!rel || targetIsDir) {
+        return sendListing(res, targetIsDir ? target : root)
+      }
     }
     let st
     try { st = statSync(file) } catch {
@@ -1206,10 +1230,28 @@ function frameVerdict(xfo, csp) {
  *  1. 宿主的 Node 里 fetch 到 localhost 会被代理/证书折腾；
  *  2. 我们要读原始响应头（X-Frame-Options / CSP），fetch 拿到的是加工过的。
  */
+/**
+ * 这个 host 地址能不能被「代发请求」去碰？
+ *
+ * 云元数据端点（169.254.169.254）与链路本地（169.254.* / fe80::）是经典 SSRF 猎物：
+ * 恶意自定义窗口/用户误填一个内网地址，宿主就会替他发出请求。
+ * 回环（127.* / ::1）放行 —— 本地 dev server 是正当用途。
+ */
+function isBlockedProbeHost(hostname) {
+  const h = String(hostname || '').toLowerCase()
+  if (h === '169.254.169.254' || h === '::ffff:169.254.169.254') return true
+  if (/^169\.254\./.test(h)) return true
+  if (h === 'fe80::' || h.startsWith('fe80:') || h === '[fe80::]') return true
+  return false
+}
+
 function probeUrl(raw) {
   const u = normUrl(raw)
   if (!u) {
     return Promise.resolve({ ok: false, url: String(raw || ''), error: '地址不合法（只支持 http / https）', frameable: false })
+  }
+  if (isBlockedProbeHost(u.hostname)) {
+    return Promise.resolve({ ok: false, url: u.href, error: '该地址被禁止探测（链路本地 / 云元数据端点）', frameable: false })
   }
   const started = Date.now()
   return new Promise((resolveP) => {
@@ -1569,6 +1611,8 @@ function insideRoot(target, roots) {
 function hasDeniedSegment(target) {
   const parts = target.split(/[\\/]+/).map((p) => p.toLowerCase())
   for (const bad of DENY_SEGMENTS) if (parts.includes(bad.toLowerCase())) return true
+  /* .env 前缀：覆盖 .env.local / .env.production 等运行时密钥文件 */
+  if (parts.some((p) => p.startsWith('.env'))) return true
   return false
 }
 
@@ -1688,6 +1732,24 @@ function isDirQuiet(p) {
   try { return statSync(p).isDirectory() } catch { return false }
 }
 
+/**
+ * /site 的最终路径校验（防软链接逃逸）。
+ *
+ * 先 safeJoin 挡 ../，再 realpath 跟随软链接到真实路径，最后再验一次 containment。
+ * 返回真实绝对路径；若路径存在但软链接指向项目之外 → 返回 ''（调用方转 403）；
+ * 若不存在 → 退回 safeJoin 的字符串结果（container 已保证在根内），让后续 stat 报 404。
+ */
+function safeSiteTarget(root, rel) {
+  const t = safeJoin(root, rel || 'index.html')
+  if (!t) return ''
+  let real
+  try { real = realpathSync(t) } catch { return t }
+  const norm = process.platform === 'win32' ? real.toLowerCase() : real
+  const r = process.platform === 'win32' ? root.toLowerCase() : root
+  if (norm === r || norm.startsWith(r.endsWith(sep) ? r : r + sep)) return real
+  return ''
+}
+
 /* ============================ 工具 ============================ */
 
 function service(ctx, name_) {
@@ -1721,8 +1783,33 @@ function allowMethod(req, res, method) {
   return false
 }
 
-function sendJson(res, status, body) {
-  if (res.writableEnded) return
+/**
+ * 防 CSRF 的 Origin 判定。
+ *
+ * DSH 把客户端与 API 都挂在同一个 localhost（Cordis webServer 同源），
+ * 所以合法请求的 Origin 是 localhost / 127.0.0.1（或浏览器不带的简单请求 / curl / 内部健康检查）。
+ * 任何带「远程站点 Origin」的请求（如恶意网页 drive-by POST）一律拒绝 ——
+ * 这样即使浏览器因无 CORS 头读不到响应，命令也不会被执行。
+ */
+function originAllowed(req) {
+  const origin = req.headers && (req.headers.origin || req.headers.Origin)
+  if (!origin) return true
+  let host
+  try {
+    host = new URL(String(origin)).hostname.toLowerCase()
+  } catch {
+    return false
+  }
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]' || host === '::ffff:127.0.0.1'
+}
+
+export function sendJson(res, status, body) {
+  /* 流式响应（/term/exec 的 NDJSON）先 writeHead 再 end；若中途异常、guard 再调本函数，
+     对已 headersSent 的响应二次 writeHead 会抛错。这里安全降级为丢弃并告警。 */
+  if (res.headersSent || res.writableEnded) {
+    console.warn('[worktable] 响应已发送，丢弃重复写入', status)
+    return
+  }
   const text = JSON.stringify(body)
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',

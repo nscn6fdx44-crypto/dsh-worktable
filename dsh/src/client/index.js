@@ -18,7 +18,7 @@ import { Component } from 'react'
 import CSS from './theme.css'
 import {
   store, useStore, hydrate, setHost, setWorkspace, loadSessions, loadDefaults,
-  closeMenu, closeModal, closeOverlay, startTicker, VERSION,
+  closeMenu, closeModal, closeOverlay, startTicker, VERSION, openFile,
 } from './core.js'
 import { el } from './ui.js'
 import { WorktableSidebar } from './sidebar.js'
@@ -31,6 +31,8 @@ export const inject = ['slots']
 export { VERSION }
 /* 让位接口出口（离线自测用）：宽度换算 + 施加/还原，不参与运行时调用 */
 export { computeDock, attachHost, applyDock, releaseDock } from './hostdock.js'
+/* 离线自测出口：暴露编辑器状态与 openFile，便于断言「未保存改动不被覆盖」守卫 */
+export { store, openFile }
 
 class SidebarBoundary extends Component {
   constructor(props) { super(props); this.state = { err: null } }

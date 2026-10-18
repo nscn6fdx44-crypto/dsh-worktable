@@ -1028,6 +1028,25 @@ export function rawUrl(p) {
   return API + '/fs/raw?path=' + encodeURIComponent(String(p || ''))
 }
 
+/** 编辑器是否处于「有未保存改动」（与 EditorPane 里的 dirty 判定完全一致） */
+function editorDirty() {
+  const ed = store.editor
+  if (ed.state !== 'ok') return false
+  const kind = ed.kind || viewKindOf(ed.name)
+  if (isMediaKind(kind)) return false
+  if (ed.partial || ed.truncated) return false
+  return ed.text !== ed.saved
+}
+
+/** 切换 / 覆盖前若有未保存改动，问一句（与 CustomPane.guardDirty 同手法）。返回 false = 用户取消 */
+function confirmDiscardEditor() {
+  if (!editorDirty()) return true
+  if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+    return window.confirm('当前文件有未保存的改动，继续会丢失，确定？')
+  }
+  return true
+}
+
 /**
  * 打开文件。
  * @param {string} path
@@ -1041,6 +1060,8 @@ export function rawUrl(p) {
 export async function openFile(path, pid, opts = {}) {
   const target = String(path || '')
   if (!target) return
+  /* 用另一个文件覆盖一个「有未保存改动」的编辑器时，先问一句，别默默吃掉用户的改动 */
+  if (target !== store.editor.path && !confirmDiscardEditor()) return
   const name = baseName(target)
   const kind = viewKindOf(name)
 

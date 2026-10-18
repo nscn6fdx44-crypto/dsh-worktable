@@ -1,11 +1,11 @@
-# trae-usage-worktable（DSH 插件 · 0.8.10）
+# trae-usage-worktable（DSH 插件 · 0.8.11）
 
 > DeepSeek Harness 侧边栏的完整工作台。本目录是 `nscn6fdx44-crypto/trae-usage`
 > 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的**独立实现**：
 > 同款 Cordis 双 bundle 协议、同款交互模型，代码自己写、路由前缀自带
 > （`/api/trae-worktable/*`），不与上游抢路径。
 
-## 能力（0.8.10）
+## 能力（0.8.11）
 
 | 半侧 | 文件 | 内容 |
 |---|---|---|
@@ -86,7 +86,8 @@
       （时间 | ok/fail | 耗时 | 退出码 | 路径 | 错误）；
     - **路径权限分三档**（0.8.5 起）：
       - **读**（list / read / stat / reveal）：不设白名单，能一路 `↑` 翻到盘符根，
-        只挡凭证目录（`.ssh` / `.aws` / `.gnupg` / `.kube` / `.dsh` / `.netrc` / `.git-credentials`）；
+        只挡凭证目录（`.ssh` / `.aws` / `.gnupg` / `.kube` / `.dsh` / `.netrc` / `.git-credentials`
+        / `.npmrc` / `.gitconfig` / `.pki` / `.azure` / `.env*`，0.8.11 起补全）；
       - **写**（write / mkdir / rename）：只允许工作目录 / 用户目录 / DSH_HOME / 已注册项目内；
         在别处浏览时面板会把 `＋ 新建`、`✎ 重命名` 置灰，状态栏标「只读」；
       - **删**：不要求白名单（回收站本身可撤销），但拒绝**磁盘根**、**系统目录**、
@@ -158,6 +159,24 @@
 > 让位几何全部来自实测：`left = 中心列 · 侧边栏右边界`、`top = 宿主标题栏 padding`，
 > 并避开「侧边栏收起」时浮在左上角的展开按钮。宿主结构认不出来时自动降级成整块覆盖
 > （功能不变，只是看不到右侧对话），不会白屏。
+
+### 安全加固（0.8.11）
+
+本版补齐六项 P0 级安全 / 健壮性缺口（均有离线自测回归）：
+
+- **① 防 CSRF（跨域调用）**：所有 `/api/trae-worktable` 路由默认只接受「本机 DSH 自己」发起的请求——
+  带远程站点 `Origin`（如恶意网页 drive-by `POST`）一律 `403` 挡下，避免它在宿主机器上借 `/term/exec` 执行命令；
+  本机 `localhost` / `127.0.0.1` / `::1` 或无 `Origin`（内部 / 同源 / curl）正常放行。
+- **② `sendJson` 二次写头守卫**：流式响应（如 `/term/exec` 的 NDJSON）先 `writeHead` 再 `end`，若中途异常又调本函数，
+  对已 `headersSent` / `writableEnded` 的响应安全丢弃并告警，不再抛错崩进程。
+- **③ 编辑器未保存改动不再被静默覆盖**：用另一个文件覆盖一个有未保存改动的编辑器时，先 `confirm` 问一句，
+  用户取消就放弃切换（仅对「不同文件」触发；重开同一文件、关标签页不弹，避免误导）。
+- **④ `/site` 软链接逃逸**：静态托管先 `realpath` 跟随软链接，再校验是否仍落在项目目录内，
+  指向项目外的链接一律 `403`（路径越界），正常文件不受影响。
+- **⑤ 凭证段补全**：`DENY_SEGMENTS` 在原有 `.ssh/.aws/.gnupg/.kube/.dsh/.netrc/.git-credentials` 基础上，
+  新增 `.npmrc` / `.gitconfig` / `.pki` / `.azure` / `.env*`（覆盖 `.env.local` 等变体），读操作一律 `403`。
+- **⑥ `/web/probe` SSRF 防护**：发起探测前拦截链路本地地址（`169.254.*` / `fe80::`）与云元数据端点
+  （`169.254.169.254`），连都不连，杜绝借插件读取云厂商临时凭证。
 
 ## host 路由
 
@@ -248,8 +267,8 @@ dsh/
 │       ├── modals.js   # 新建 / 编辑 / 绑定
 │       └── theme.css   # 全套样式（收在 .wt-scope 下）
 ├── test/
-│   ├── host-routes.mjs # 114 项：路由 / 沙箱 / 文件（大文件预览 / tail / fs-raw） / reveal / open / git / 托管 / web 探测 / 自定义库 / 终端 / 四态判定
-│   └── client-smoke.mjs# 222 项：座位 / 侧边栏四态 / 菜单 / 让位换算 / 文件管理器 / 大文件只读预览 / 渲染层（md·高亮·媒体）/ 浏览器窗格（单行工具条·下拉·历史·探测·视口）/ 自定义窗口（生成·保存·预览）/ 标签页
+│   ├── host-routes.mjs # 127 项：路由 / 沙箱 / 文件（大文件预览 / tail / fs-raw） / reveal / open / git / 托管 / web 探测 / 自定义库 / 终端 / 四态判定 / 安全加固（CSRF·凭证段·SSRF·软链接逃逸·二次写头守卫）
+│   └── client-smoke.mjs# 225 项：座位 / 侧边栏四态 / 菜单 / 让位换算 / 文件管理器 / 大文件只读预览 / 渲染层（md·高亮·媒体）/ 浏览器窗格（单行工具条·下拉·历史·探测·视口）/ 自定义窗口（生成·保存·预览）/ 标签页 / 编辑器未保存改动守卫
 └── lib/                # 构建产物（安装前必须 build）
 ```
 
@@ -327,7 +346,7 @@ npm run build && npm pack
 
 ## 与上游的差异（有意为之）
 
-| 项 | 上游 0.4.0 | 本插件 0.8.10 |
+| 项 | 上游 0.4.0 | 本插件 0.8.11 |
 |---|---|---|
 | 右侧对话 | 宿主会话视图让位（margin + CSS 变量），可真实输入 | 给宿主中心列写 `marginLeft` 让位，右侧就是原生会话（真能输入） |
 | 终端 | node-pty + WebSocket，真 PTY | 每命令一进程 + NDJSON 流，无原生依赖 |
