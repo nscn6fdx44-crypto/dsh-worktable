@@ -91,6 +91,18 @@ export function tabDef(id) {
   return PANE_TABS.find((t) => t.id === id) || (id === INFO_TAB.id ? INFO_TAB : null)
 }
 
+/**
+ * 总览（卡片网格）的页签。总览现在是「顶栏 + 一条标签页」的工作台同款结构，
+ * 不再是一个大统计块：数字都收进页签上的计数徽标。
+ */
+export const GRID_TABS = [
+  { id: 'projects', label: '项目', icon: '▦' },
+  { id: 'sessions', label: '宿主会话', icon: '◉' },
+  { id: 'running', label: '运行中', icon: '◐' },
+]
+
+export const GRID_TAB_IDS = GRID_TABS.map((t) => t.id)
+
 export const EMOJI_CHOICES = ['🧰', '📁', '🔌', '🐍', '🌐', '🖥️', '🎨', '📜', '🗄️', '🧩', '📚', '🛠️', '⚙️', '🚀']
 
 const LANG_EMOJI = [
@@ -176,6 +188,7 @@ function writeLS(key, value) {
 export const store = {
   ready: false,
   view: 'grid',                 // grid | project
+  gridTab: 'projects',          // 总览页签：projects | sessions | running
   open: false,
   activeId: null,
   projects: [],
@@ -304,6 +317,13 @@ export function projectOf(pid) {
 
 export function sessionById(sid) {
   return store.sessions.rows.find((s) => s.id === sid) || null
+}
+
+/** 某个宿主会话被绑到了哪个项目（没有就 null） */
+export function projectBySession(sid) {
+  const id = String(sid || '')
+  if (!id) return null
+  return store.projects.find((p) => Array.isArray(p.sessions) && p.sessions.includes(id)) || null
 }
 
 export function sessionsOf(project) {
@@ -450,6 +470,12 @@ export function openGrid() {
   writeLS(LS.view, 'grid')
   loadSessions()
   if (!store.defaults.loaded) loadDefaults()
+}
+
+/** 切总览页签（项目 / 宿主会话 / 运行中）；再次打开总览保持上次页签 */
+export function setGridTab(id) {
+  if (!GRID_TAB_IDS.includes(id)) return
+  if (store.gridTab !== id) emit({ gridTab: id })
 }
 
 export function enterProject(pid) {

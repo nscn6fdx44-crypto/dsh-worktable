@@ -374,12 +374,35 @@ check('标签页有关闭按钮', !!closeX)
 clickByLabel(overlay, '≡ 项目')
 overlay = render(overlayComp)
 const gridText = textOf(overlay)
-check('回到网格：显示控制室', gridText.includes('控制室'))
-check('控制室显示四格统计', allByClass(overlay, /cc-cell/).length === 4, allByClass(overlay, /cc-cell/).length)
-check('控制室显示运行中会话', gridText.includes('app-alpha 会话'))
+check('回到总览：顶栏是「工作台总览」', gridText.includes('工作台总览'))
+check('总览与工作区同款：一条顶栏 + 一块 pane-main', allByClass(overlay, /dock-head/).length === 1 && allByClass(overlay, /pane-main/).length === 1)
+check('总览分成三个页签', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 3, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
+check('页签带计数徽标', allByClass(overlay, /tab-count/).length === 3 && gridText.includes('宿主会话'), gridText.slice(0, 80))
+check('控制室统计块已拆掉（不再有 cc-cell）', allByClass(overlay, /cc-cell/).length === 0)
+check('默认停在「项目」页', allByClass(overlay, /project-card/).length === 2 && allByClass(overlay, /add-card/).length === 1)
 check('网格渲染两张项目卡', allByClass(overlay, /project-card/).length === 2, allByClass(overlay, /project-card/).length)
-check('网格有新建卡片', allByClass(overlay, /add-card/).length === 1)
 check('卡片状态用中文标签', /进行中|待处理|已完成|待命/.test(gridText))
+
+/* 宿主会话页签 */
+clickByLabel(overlay, '◉ 宿主会话')
+overlay = render(overlayComp)
+const sessText = textOf(overlay)
+check('宿主会话页签列出全部会话', allByClass(overlay, /ov-row/).length === 3, allByClass(overlay, /ov-row/).length)
+check('会话行显示标题与工作目录', sessText.includes('app-alpha') && sessText.includes('C:\\demo'), sessText.slice(0, 100))
+check('未绑定给「建为项目」，已绑定给「进入项目」', sessText.includes('建为项目') && sessText.includes('进入项目'))
+check('已绑定会话标出所属项目', allByClass(overlay, /tag gold/).length >= 1, allByClass(overlay, /tag gold/).length)
+
+/* 运行中页签 */
+clickByLabel(overlay, '◐ 运行中')
+overlay = render(overlayComp)
+check('运行中页签只列进行中的会话', allByClass(overlay, /ov-row/).length === 1, allByClass(overlay, /ov-row/).length)
+check('运行中带实时计时', allByClass(overlay, /ov-time/).length === 1, allByClass(overlay, /ov-time/).length)
+check('待处理只做提示，不混进运行中', textOf(overlay).includes('待处理会话'), textOf(overlay).slice(-60))
+
+/* 切回项目页 */
+clickByLabel(overlay, '▦ 项目')
+overlay = render(overlayComp)
+check('切回「项目」页签', allByClass(overlay, /project-card/).length === 2)
 
 /* 卡片上的绑定按钮 → 单一绑定入口 */
 clickByLabel(overlay, '1 个对话')

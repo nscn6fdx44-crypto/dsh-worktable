@@ -14,10 +14,11 @@ import { el, Light, Splitter, ContextMenu, Toasts } from './ui.js'
 import { ModalHost } from './modals.js'
 import { useHostDock } from './hostdock.js'
 import {
-  store, useStore, STATES, normState, MODES, modeDef, PANE_TABS, INFO_TAB,
+  store, useStore, STATES, normState, MODES, modeDef, PANE_TABS, INFO_TAB, GRID_TABS,
   fmtDuration, relTime, shortPath, projEmoji, openGrid, enterProject, closeOverlay,
   openModal, openMenu, setMode, setDockPx, openTab, closeTab, setActiveTab,
-  loadSessions, stateOf, sessionsOf, primarySession, uiOf, flushUi, setWinRect, resetWinRect,
+  loadSessions, stateOf, sessionsOf, primarySession, projectBySession, createFromSession,
+  jumpToSession, setGridTab, uiOf, flushUi, setWinRect, resetWinRect,
 } from './core.js'
 import { InfoPane, FilesPane, EditorPane, TermPane, WebPane, CustomPane } from './panes.js'
 
@@ -61,7 +62,7 @@ export function MainView() {
       ),
       docked
         ? el(Workspace, { key: active.id, project: active, ui, geo })
-        : [el(Topbar, { key: 'top' }), el(GridView, { key: 'grid' })],
+        : el(Overview, { key: 'grid' }),
     ),
     /* 菜单 / 小窗 / toast 挂在让位区之外：fixed 定位不受 dock 裁剪 */
     el(ContextMenu),
@@ -70,77 +71,152 @@ export function MainView() {
   )
 }
 
-/* ============================ 顶栏（控制室） ============================ */
+/* ============================ 总览：顶栏 + 标签页 ============================ */
 
-function Topbar() {
-  const counts = store.sessions.counts || {}
-  const sub = '项目 ' + store.projects.length + ' 个 · 宿主会话 ' + (counts.total || 0) + ' 个 · 快照 '
-    + (store.sessions.at ? relTime(store.sessions.at) : '—')
+/**
+ * 总览与工作区同款：一条 34px 顶栏 + 一块带标签页的面板。
+ * 原来的「控制室」大统计块拆成了三个页签（项目 / 宿主会话 / 运行中），
+ * 数字收进页签上的计数徽标，界面和工作区一个模子。
+ */
+function Overview() {
+  useStore()
+  const projects = store.projects.filter((p) => !p.hidden)
+  const rows = store.sessions.rows || []
+  const running = rows.filter((s) => normState(s.state) === 'working')
+  const waiting = rows.filter((s) => normState(s.state) === 'needs-you')
+  const tab = store.gridTab
 
-  return el('header', { className: 'topbar' },
-    el('div', null,
-      el('div', { className: 'tb-title' },
-        el('h1', null, '控制室'),
-        el('span', { className: 'eyebrow' }, 'Control'),
+  const snap = store.sessions.state === 'ok'
+    ? '快照 ' + relTime(store.sessions.at) + ' · 来源 ' + (store.sessions.source || 'live')
+    : (store.sessions.state === 'pending' ? '读取中…' : ('不可用：' + (store.sessions.error || '未知')))
+
+  const badgeOf = (id) => (
+    id === 'projects' ? projects.length
+      : id === 'sessions' ? rows.length
+        : running.length
+  )
+
+  return el('div', { className: 'dock-wrap' },
+    el('header', { className: 'dock-head' },
+      el('div', { className: 'dh-main' },
+        el('span', { className: 'dh-ico', 'aria-hidden': 'true' }, '🧰'),
+        el('b', { className: 'dh-name' }, '工作台总览'),
+        el('span', { className: 'dh-dot', 'aria-hidden': 'true' }, '·'),
+        el('span', { className: 'dh-sub mono', title: snap }, snap),
+        running.length
+          ? el('span', { className: 'dh-chat', title: running.slice(0, 4).map((s) => s.title || s.id).join(' · ') },
+            el('span', { className: 'light working', 'aria-hidden': 'true' }),
+            running.length + ' 个在跑',
+          )
+          : el('span', { className: 'dh-chat off' }, '空闲'),
       ),
-      el('p', { className: 'tb-sub', title: sub }, sub),
+      el('div', { className: 'dh-tools' },
+        el('button', { type: 'button', className: 'mini-btn', title: '重新读取宿主会话', onClick: () => { loadSessions() } }, '刷新'),
+        el('button', { type: 'button', className: 'mini-btn', title: '新建项目', onClick: () => openModal('add') }, '＋ 新建'),
+        el('button', { type: 'button', className: 'mini-btn', title: '关闭 (Esc)', onClick: closeOverlay }, '✕'),
+      ),
     ),
-    el('div', { className: 'tb-actions' },
-      el('button', { type: 'button', className: 'btn', onClick: () => { loadSessions() } }, '刷新'),
-      el('button', { type: 'button', className: 'btn primary', onClick: () => openModal('add') }, '＋ 新建项目'),
-      el('button', { type: 'button', className: 'btn ico', title: '关闭 (Esc)', onClick: closeOverlay }, '✕'),
+
+    el('div', { className: 'ws', 'data-mode': 'dock' },
+      el('div', { className: 'pane pane-main' },
+        el('div', { className: 'pane-head tabhead' },
+          el('div', { className: 'tabs' },
+            GRID_TABS.map((t) => el('div', {
+              key: t.id,
+              className: 'tab' + (t.id === tab ? ' on' : ''),
+              role: 'button',
+              'data-tab': t.id,
+              onClick: () => setGridTab(t.id),
+            },
+              el('span', { className: 'tab-title' }, t.icon + ' ' + t.label),
+              el('span', { className: 'tab-count' }, String(badgeOf(t.id))),
+            )),
+          ),
+        ),
+        tab === 'sessions'
+          ? el(SessionsTab, { rows })
+          : tab === 'running'
+            ? el(RunningTab, { running, waiting })
+            : el(ProjectsTab, { projects }),
+      ),
     ),
   )
 }
 
-/* ============================ 控制室 + 卡片网格 ============================ */
-
-function GridView() {
-  useStore()
-  const projects = store.projects.filter((p) => !p.hidden)
-  const counts = store.sessions.counts || { running: 0, waiting: 0, done: 0, idle: 0, total: 0 }
-  const running = store.sessions.rows.filter((s) => normState(s.state) === 'working')
-
-  return el('section', { className: 'view active' },
-
-    /* 控制室：宿主真实状态，不调模型 */
-    el('div', { className: 'control' },
-      el('div', { className: 'control-head' },
-        el('span', { className: 'cc-badge' }, '控制室'),
-        el('span', { className: 'mono' }, store.sessions.state === 'ok'
-          ? '快照 ' + relTime(store.sessions.at) + ' · 来源 ' + (store.sessions.source || 'live')
-          : (store.sessions.state === 'pending' ? '读取中…' : ('不可用：' + (store.sessions.error || '未知')))),
-      ),
-      el('div', { className: 'cc-grid' },
-        statCell('进行中', counts.running || 0, 'working'),
-        statCell('待处理', counts.waiting || 0, 'needs'),
-        statCell('已完成', counts.done || 0, 'done'),
-        statCell('项目', projects.length, 'gold'),
-      ),
-      running.length
-        ? el('div', { className: 'cc-running' },
-          running.slice(0, 6).map((s) => el('div', { key: s.id, className: 'cc-run' },
-            el('span', { className: 'light working', 'aria-hidden': 'true' }),
-            el('span', { className: 'cc-run-title' }, s.title || s.id),
-            el('span', { className: 'cc-run-time mono' }, fmtDuration(Date.now() - (Number(s.updatedAt) || Date.now()))),
-          )),
-        )
-        : null,
-    ),
-
+function ProjectsTab({ projects }) {
+  return el('div', { className: 'pane-body overview-body' },
     el('div', { className: 'grid' },
       projects.map((p) => el(ProjectCard, { key: p.id, project: p })),
       el(AddCard),
-      projects.length ? null : el('div', { className: 'empty' }, '还没有项目，点「新建项目」开始'),
+      projects.length ? null : el('div', { className: 'empty' }, '还没有项目，点「＋ 新建」开始'),
     ),
     el('p', { className: 'grid-note' }, '右击项目或卡片：模式 · 编辑 · 绑定 · 删除 · 隐藏'),
   )
 }
 
-function statCell(label, value, tone) {
-  return el('div', { className: 'cc-cell' },
-    el('div', { className: 'k' }, label),
-    el('div', { className: 'v ' + (tone || '') }, String(value)),
+/** 宿主会话：直接列出宿主那边所有会话，可打开对话，也可一键建成项目 */
+function SessionsTab({ rows }) {
+  if (!rows.length) {
+    return el('div', { className: 'pane-body' },
+      el('div', { className: 'pane-empty' },
+        el('span', { className: 'pe-ico' }, '◉'),
+        el('p', null, '没有读到宿主会话'),
+        el('p', { className: 'hint' }, store.sessions.state === 'error'
+          ? '读取失败：' + (store.sessions.error || '未知')
+          : '点顶栏「刷新」重新读取；宿主会话服务不可用时这里会一直是空的。'),
+      ),
+    )
+  }
+  return el('div', { className: 'pane-body overview-body' },
+    el('div', { className: 'ov-list' }, rows.map((s) => el(SessionRow, { key: s.id, session: s }))),
+    el('p', { className: 'grid-note' }, '「建为项目」会以会话标题和它自己的工作目录新建一个项目，并立刻进入'),
+  )
+}
+
+/** 运行中：只列「进行中」，带实时计时；待处理只提一句，细节在「宿主会话」页签 */
+function RunningTab({ running, waiting }) {
+  if (!running.length) {
+    return el('div', { className: 'pane-body' },
+      el('div', { className: 'pane-empty' },
+        el('span', { className: 'pe-ico' }, '◐'),
+        el('p', null, waiting.length ? '没有在跑的会话，但有 ' + waiting.length + ' 个待处理' : '当前没有在跑的会话'),
+        el('p', { className: 'hint' }, waiting.length
+          ? '待处理的会话在「宿主会话」页签里，状态灯是橙色的那些。'
+          : '会话一跑起来就会出现在这里，计时每秒刷新。'),
+      ),
+    )
+  }
+  return el('div', { className: 'pane-body overview-body' },
+    el('div', { className: 'ov-list' }, running.map((s) => el(SessionRow, { key: s.id, session: s, timing: true }))),
+    waiting.length
+      ? el('p', { className: 'grid-note' }, '另有 ' + waiting.length + ' 个待处理会话，在「宿主会话」页签里')
+      : null,
+  )
+}
+
+function SessionRow({ session, timing }) {
+  const st = normState(session.state)
+  const project = projectBySession(session.id)
+  return el('div', { className: 'ov-row', 'data-state': st },
+    el('span', { className: 'light ' + st, 'aria-hidden': 'true' }),
+    el('div', { className: 'ov-main' },
+      el('b', { className: 'ov-title', title: session.id }, session.title || session.id),
+      el('span', { className: 'ov-sub mono', title: session.cwd || '' }, shortPath(session.cwd || '未记录工作目录', 52)),
+    ),
+    timing
+      ? el('span', { className: 'ov-time mono' }, fmtDuration(Date.now() - (Number(session.updatedAt) || Date.now())))
+      : null,
+    el('span', { className: 'ov-state ' + st }, STATES[st].label),
+    project ? el('span', { className: 'tag gold', title: '已绑定项目：' + (project.alias || project.name) }, (project.alias || project.name).slice(0, 10)) : null,
+    el('div', { className: 'ov-act' },
+      el('button', {
+        type: 'button', className: 'mini-btn', title: '在宿主里打开这个对话',
+        onClick: () => { jumpToSession(session.id); closeOverlay() },
+      }, '打开对话'),
+      project
+        ? el('button', { type: 'button', className: 'mini-btn', title: '进入项目工作区', onClick: () => enterProject(project.id) }, '进入项目')
+        : el('button', { type: 'button', className: 'mini-btn', title: '以这个会话新建项目', onClick: () => createFromSession(session) }, '建为项目'),
+    ),
   )
 }
 
