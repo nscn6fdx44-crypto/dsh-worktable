@@ -1,11 +1,11 @@
-# trae-usage-worktable（DSH 插件 · 0.8.8）
+# trae-usage-worktable（DSH 插件 · 0.8.9）
 
 > DeepSeek Harness 侧边栏的完整工作台。本目录是 `nscn6fdx44-crypto/trae-usage`
 > 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的**独立实现**：
 > 同款 Cordis 双 bundle 协议、同款交互模型，代码自己写、路由前缀自带
 > （`/api/trae-worktable/*`），不与上游抢路径。
 
-## 能力（0.8.8）
+## 能力（0.8.9）
 
 | 半侧 | 文件 | 内容 |
 |---|---|---|
@@ -125,8 +125,24 @@
       macOS `open`，Linux `xdg-open`），文件管理器右键菜单也多了 `🚀 用系统程序打开`；
   - **终端**：把命令交给宿主所在机器执行，NDJSON 流式回显；`cd` 由 host 接管并保持；
     `↑↓` 翻历史、`Ctrl+L` 清屏、可中断、120s 超时、512KB 输出上限；
-  - **浏览器**：iframe + 地址栏；默认打项目的静态托管地址，也可填 `localhost` 开发服务器；
-  - **自定义**：左边写 HTML、右边实时预览（iframe sandbox）。
+  - **浏览器**：真窗格，不是一根地址栏（0.8.9 起）
+    - 导航：`← →` 历史（我们自己记的，iframe 跨域读不到 location）、`⟳` 真重建 iframe、
+      地址栏（`localhost:5173` 这种半截地址自动补 `http://`）、`项目页` 一键回静态托管；
+    - **探测**（`POST /web/probe`）：开之前先问清楚「服务在不在、多快、页面叫什么、
+      **能不能被 iframe 嵌**」——宿主直连读响应头，`X-Frame-Options: DENY/SAMEORIGIN` 与
+      `CSP frame-ancestors` 都会提前摊开，不用先看一屏白框再猜；
+    - 加载 8 秒还没 `load` → 判「嵌入被拒绝 / 无响应」，给 `重试 / 探测原因 / 复制地址 /
+      🚀 系统浏览器打开` 四个出口；
+    - 视口：`自适应 / 平板 768 / 手机 375`，调试响应式布局不用改窗口大小；
+    - `:3000 :5173 :8080 :4173` 一键换端口；地址按项目记住（切回来还是上次那页）；
+  - **自定义**：仿上游的「一句话需求 → 做成一个窗格」，但产物能落地（0.8.9 起）
+    - 左栏是窗口库，条目存在 `~/.dsh/worktable-custom.json`（**不写用户项目目录**）；
+    - `✨ 生成`：写需求 → 生成结构化提示词（含沙箱限制、宿主接口、配色）→
+      **填进右侧宿主对话的输入框**（不代发，你自己按回车）；AI 给了 HTML 就点
+      `⤓ 粘贴结果`（自动剥 ``` 围栏）→ 保存；
+    - `编辑`：`HTML` 片段或 `网址` 两种窗口，`Ctrl+S` 保存；
+    - `预览`：沙箱 iframe（`allow-scripts allow-forms`，**不给** `allow-same-origin`，
+      所以自定义代码拿不到工作台自己的 DOM / 存储）。
 - **进项目即切对话**：把宿主切到项目的主绑定对话（`uiWorkspace.openSession`，
   缺席时退到 `sessions.open`），所见即所聊；顶栏左侧一盏状态灯 + 对话气泡里只写标题。
 - **绑定只有一个入口**：右击项目（或卡片按钮 / 顶栏气泡）打开的同一张小窗里，
@@ -160,7 +176,13 @@
 | POST | `/term/kill` | `{ id }` → 终止当前命令 |
 | POST | `/git` | `{ path, op:'status'|'log'|'branches' }` → **只读**，`status` 解析 `-z` porcelain |
 | POST | `/project/register` | `{ id, root }` → 登记项目根，供静态托管与路径白名单使用 |
-| GET | `/site/<项目id>/<相对路径>` | 前缀路由，托管项目目录；目录回退 `index.html`，拦截路径穿越 |
+| GET | `/site/<项目id>/<相对路径>` | 前缀路由，托管项目目录；目录回退 `index.html`，拦截路径穿越；404/403 返回**中文 HTML 说明页**（不是 JSON，iframe 里才看得懂） |
+| POST | `/web/probe` | `{ url }` 或 `{ urls:[…] }`（≤8）→ `{ results:[{ok,status,ms,title,contentType,frameable,frameReason,error}] }`；只收 http/https，3.5s 超时，自签证书放行 |
+| POST | `/web/open` | `{ url }` → 交给系统默认浏览器（`explorer.exe <url>` / `open` / `xdg-open`） |
+| POST | `/custom/list` | `{}` → `{ file, items:[{id,name,kind,pid,created,updated,size}] }`（列表不带正文） |
+| POST | `/custom/get` | `{ id }` → `{ item }`，没有则 404 |
+| POST | `/custom/save` | `{ id?, name?, kind:'html'\|'url', body, pid? }` → 新建时由**宿主发号**，同 id 覆盖；`url` 型会归一成 `http(s)://` 并挡掉 `javascript:`；正文上限 512KB |
+| POST | `/custom/delete` | `{ id }` → `{ ok }` |
 
 ### 会话四态判定（只读事件日志，不调模型）
 
@@ -222,8 +244,8 @@ dsh/
 │       ├── modals.js   # 新建 / 编辑 / 绑定
 │       └── theme.css   # 全套样式（收在 .wt-scope 下）
 ├── test/
-│   ├── host-routes.mjs # 94 项：路由 / 沙箱 / 文件（大文件预览 / tail / fs-raw） / reveal / open / git / 托管 / 终端 / 四态判定
-│   └── client-smoke.mjs# 185 项：座位 / 侧边栏四态 / 菜单 / 让位换算 / 文件管理器 / 大文件只读预览 / 渲染层（md·高亮·媒体）/ 标签页
+│   ├── host-routes.mjs # 114 项：路由 / 沙箱 / 文件（大文件预览 / tail / fs-raw） / reveal / open / git / 托管 / web 探测 / 自定义库 / 终端 / 四态判定
+│   └── client-smoke.mjs# 217 项：座位 / 侧边栏四态 / 菜单 / 让位换算 / 文件管理器 / 大文件只读预览 / 渲染层（md·高亮·媒体）/ 浏览器窗格（历史·探测·视口）/ 自定义窗口（生成·保存·预览）/ 标签页
 └── lib/                # 构建产物（安装前必须 build）
 ```
 
@@ -301,13 +323,15 @@ npm run build && npm pack
 
 ## 与上游的差异（有意为之）
 
-| 项 | 上游 0.4.0 | 本插件 0.8.8 |
+| 项 | 上游 0.4.0 | 本插件 0.8.9 |
 |---|---|---|
 | 右侧对话 | 宿主会话视图让位（margin + CSS 变量），可真实输入 | 给宿主中心列写 `marginLeft` 让位，右侧就是原生会话（真能输入） |
 | 终端 | node-pty + WebSocket，真 PTY | 每命令一进程 + NDJSON 流，无原生依赖 |
 | 文件安全 | 任意绝对路径 | 根白名单 + realpath + 凭证目录拒绝 |
 | 文件管理 | 单栏递归树，无删除 / 重命名 / 元信息 | 目录一屏 + 面包屑 + 排序 + 搜索 + 回收站删除 + 系统窗口 |
 | 文件预览 | markdown-it + highlight.js + pdf/img（1.4 MB bundle） | 自写零依赖渲染器（十几 KB）：md / 高亮 / pdf / 图片 / 音视频，语义近似 |
+| 浏览器窗格 | 一个输入框 + iframe，不判成败 | 历史前进后退 + 探测（能否嵌入提前说）+ 视口预设 + 加载超时兜底 + 系统浏览器出口 |
+| 自定义窗口 | 表单把需求丢给宿主建会话 → AI 生成 widget manifest | 同款「一句话需求」入口，但提示词填进**当前对话**（不抢宿主建会话接口），产出 HTML 直接存本地库、可编辑可预览 |
 | 窗口模型 | 窗格内多标签、跨格拖拽、自由浮动层 | 单工作区多标签页（无左栏），工作台固定铺满让位区（无浮动窗口）；对话栏用宿主原生会话区 |
 | 路由前缀 | `/api/worktable` | `/api/trae-worktable`（不抢注） |
 

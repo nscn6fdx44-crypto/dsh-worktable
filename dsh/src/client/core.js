@@ -21,6 +21,7 @@ const LS = {
   ui: 'wt.ui.v2',
   view: 'wt.view',
   termHist: 'wt.termHistory',
+  web: 'wt.web',
 }
 
 export const STATES = {
@@ -217,8 +218,20 @@ export const store = {
   },
   terms: {},                    // { [pid]: { id, cwd, busy, lines: [] } }
   git: { state: 'idle', repo: false, branch: '', changes: [], counts: null, error: '', log: [], branches: [] },
-  web: { url: '', state: 'idle' },
-  custom: { html: '<!doctype html><html><body style="font-family:system-ui;background:#0f1218;color:#e6e8eb;padding:24px"><h2>自定义窗口</h2><p>在下方编辑 HTML，Ctrl+S 刷新预览。</p></body></html>' },
+  /* 浏览器窗格：地址栏历史 + 加载态 + 视口 + 探测结果（探测能提前知道「能不能嵌」） */
+  web: {
+    pid: '', defaultUrl: '', url: '', state: 'idle', error: '',
+    at: 0, startedAt: 0, ms: 0, viewport: 'auto',
+    history: [], index: -1,
+    probe: { state: 'idle', url: '', ok: false, status: 0, ms: 0, title: '', frameable: true, reason: '', error: '', at: 0 },
+  },
+  /* 自定义窗口库：列表 / 当前条目 / 编辑副本 / 三种视图（生成 · 预览 · 编辑） */
+  custom: {
+    state: 'idle', items: [], active: '', item: null, draft: null,
+    view: 'prompt', busy: '', error: '', prompt: '', file: '',
+    /* 需求草稿放 store：切标签页回来还在，不用重打 */
+    requirement: '',
+  },
   modal: null,                  // { kind, pid }
   menu: null,                   // { pid, x, y }
   toasts: [],
@@ -1290,19 +1303,457 @@ export async function loadGit(pid) {
   }
 }
 
-/* ============================ 浏览器 / 自定义 ============================ */
+/* ============================ 浏览器 ============================ */
 
 export function siteUrlOf(project) {
   if (!project) return ''
   return API + '/site/' + encodeURIComponent(project.id) + '/'
 }
 
-export function setWebUrl(url) {
-  emit({ web: { url: String(url || ''), state: 'ok' } })
+/**
+ * 地址归一：
+ *  - `localhost:5173` / `127.0.0.1:8080` → 补 http://
+ *  - `/api/...` 这类站内相对地址原样放行（项目静态托管就是这种）
+ *  - 其它一律判非法（javascript:/file: 不该进 iframe）
+ */
+export function normalizeWebUrl(raw) {
+  const s = String(raw || '').trim()
+  if (!s) return ''
+  if (s.startsWith('/') && !s.startsWith('//')) return s
+  if (/^https?:\/\/\S+$/i.test(s)) return s
+  if (/^[a-z0-9][a-z0-9.-]*(:\d+)?([/?#]\S*)?$/i.test(s) && /[.:]/.test(s)) return 'http://' + s
+  return ''
 }
 
-export function setCustomHtml(html) {
-  emit({ custom: { html: String(html ?? '') } })
+/** 记住每个项目上次停在哪（切回项目不用重填） */
+function rememberWeb(pid, url) {
+  if (!pid) return
+  const map = readLS(LS.web, {}) || {}
+  const next = { ...map, [pid]: url }
+  writeLS(LS.web, next)
+}
+
+/** 切项目时把地址、历史、探测结果都对到那个项目上 */
+export function webSync(project) {
+  const pid = project?.id || ''
+  const def = siteUrlOf(project)
+  if (store.web.pid === pid && store.web.defaultUrl === def) return
+  const remembered = readLS(LS.web, {}) || {}
+  const saved = typeof remembered[pid] === 'string' ? remembered[pid] : ''
+  const url = saved || def
+  emit({
+    web: {
+      pid,
+      defaultUrl: def,
+      url,
+      state: 'idle',
+      error: '',
+      ms: 0,
+      startedAt: 0,
+      at: Date.now(),
+      viewport: store.web.viewport || 'auto',
+      history: url ? [url] : [],
+      index: url ? 0 : -1,
+      probe: { ...store.web.probe, state: 'idle', url, ok: false, status: 0, ms: 0, title: '', frameable: true, reason: '', error: '', at: 0 },
+    },
+  })
+}
+
+/*
+ * iframe 的同源策略挡住了「读它的 location」，所以我们读不到真实的加载失败 ——
+ * 只能靠 onLoad 计时：8 秒还没 load，就按「被拒绝嵌入 / 服务没起来」处理，
+ * 给用户一个能动的出口，而不是让他盯着白框猜。
+ */
+let webTimer = 0
+
+function armWebTimeout(url) {
+  if (webTimer) clearTimeout(webTimer)
+  webTimer = setTimeout(() => {
+    webTimer = 0
+    const w = store.web
+    if (w.state === 'loading' && w.url === url) {
+      emit({
+        web: {
+          ...w,
+          state: 'blocked',
+          error: '8 秒内没有加载完成：多半是这个地址用 X-Frame-Options / CSP 拒绝了 iframe 嵌入，或者服务根本没起来。',
+          ms: Date.now() - (w.startedAt || Date.now()),
+        },
+      })
+    }
+  }, 8000)
+  if (webTimer && typeof webTimer.unref === 'function') webTimer.unref()
+}
+
+export function webClearTimer() {
+  if (webTimer) { clearTimeout(webTimer); webTimer = 0 }
+}
+
+export function webLoaded() {
+  webClearTimer()
+  const w = store.web
+  if (w.state === 'loading') {
+    emit({ web: { ...w, state: 'ok', error: '', ms: Date.now() - (w.startedAt || Date.now()) } })
+  }
+}
+
+/**
+ * 导航。
+ * @param {{push?: boolean}} [opts] push=false 表示这次不算新历史（重载 / 回退用）
+ */
+export function webGoto(raw, opts = {}) {
+  const url = normalizeWebUrl(raw)
+  if (!url) {
+    toast('地址不合法：只支持 http / https，或者站内 / 开头的相对地址', 'warn')
+    return false
+  }
+  const w = store.web
+  let history = w.history
+  let index = w.index
+  if (opts.push !== false) {
+    history = w.history.slice(0, w.index + 1)
+    if (history[history.length - 1] !== url) history = history.concat([url])
+    index = history.length - 1
+  }
+  const now = Date.now()
+  emit({
+    web: {
+      ...w,
+      url,
+      state: 'loading',
+      error: '',
+      ms: 0,
+      startedAt: now,
+      at: now,
+      history,
+      index,
+      probe: { ...w.probe, state: 'idle' },
+    },
+  })
+  armWebTimeout(url)
+  rememberWeb(w.pid, url)
+  return true
+}
+
+export function webReload() {
+  const w = store.web
+  if (!w.url) return
+  webGoto(w.url, { push: false })
+}
+
+export function webBack() {
+  const w = store.web
+  if (w.index <= 0) return
+  const next = w.index - 1
+  const url = w.history[next]
+  emit({ web: { ...w, index: next } })
+  webGoto(url, { push: false })
+}
+
+export function webForward() {
+  const w = store.web
+  if (w.index >= w.history.length - 1) return
+  const next = w.index + 1
+  const url = w.history[next]
+  emit({ web: { ...w, index: next } })
+  webGoto(url, { push: false })
+}
+
+export function webSetViewport(v) {
+  const allowed = ['auto', 'tablet', 'mobile']
+  emit({ web: { ...store.web, viewport: allowed.includes(v) ? v : 'auto' } })
+}
+
+/** 站内相对地址（项目静态托管）要探测就得补成 absolute —— 宿主只认带协议的 URL */
+function absoluteWebUrl(u) {
+  const s = String(u || '')
+  if (!s.startsWith('/')) return s
+  try {
+    if (typeof location !== 'undefined' && location.origin) return new URL(s, location.origin).href
+  } catch { /* 没有 location（离线自测）就原样传 */ }
+  return s
+}
+
+/** 探测：活没活 + 能不能嵌。比「先打开再看白框」有用地多。 */
+export async function webProbe(raw) {
+  const target = absoluteWebUrl(normalizeWebUrl(raw) || String(raw || '').trim())
+  if (!target) { toast('先填个地址再探测', 'warn'); return null }
+  emit({ web: { ...store.web, probe: { ...store.web.probe, state: 'loading', url: target, error: '', at: Date.now() } } })
+  try {
+    const data = await apiPost('/web/probe', { url: target }, { timeout: 15_000 })
+    const r = (Array.isArray(data?.results) ? data.results[0] : null) || {}
+    const probe = {
+      state: 'ok',
+      url: r.url || target,
+      ok: r.ok === true,
+      status: Number(r.status) || 0,
+      ms: Number(r.ms) || 0,
+      title: String(r.title || ''),
+      frameable: r.frameable !== false,
+      reason: String(r.frameReason || ''),
+      error: String(r.error || ''),
+      at: Date.now(),
+    }
+    emit({ web: { ...store.web, probe } })
+    return probe
+  } catch (err) {
+    const probe = { ...store.web.probe, state: 'error', url: target, ok: false, error: String(err?.message ?? err), at: Date.now() }
+    emit({ web: { ...store.web, probe } })
+    return probe
+  }
+}
+
+/** 交给系统默认浏览器（iframe 打不开的最后一招） */
+export async function webOpenExternal(raw) {
+  const target = normalizeWebUrl(raw) || String(raw || '').trim()
+  if (!target) { toast('没有可打开的地址', 'warn'); return false }
+  if (target.startsWith('/')) { toast('站内相对地址只能在工作台里看，没法交给系统浏览器', 'warn'); return false }
+  try {
+    const data = await apiPost('/web/open', { url: target }, { timeout: 10_000 })
+    if (data?.ok === false) throw new Error(data.error || '打开失败')
+    toast('已用系统浏览器打开：' + target.replace(/^https?:\/\//i, '').slice(0, 40), 'ok')
+    return true
+  } catch (err) {
+    toast('没能打开系统浏览器：' + String(err?.message ?? err), 'warn')
+    return false
+  }
+}
+
+/* ============================ 自定义窗口 ============================ */
+
+export const CUSTOM_PRESET = [
+  '<div class="wt-custom-demo">',
+  '  <h2>自定义窗口</h2>',
+  '  <p>这段 HTML 会在沙箱 iframe 里跑，可以用 <code>&lt;style&gt;</code> 和 <code>&lt;script&gt;</code>。</p>',
+  '</div>',
+  '<style>',
+  '  body { margin: 0; padding: 20px; background: #0f1218; color: #e6e8eb;',
+  '         font: 13px/1.6 system-ui, "Segoe UI", sans-serif; }',
+  '  .wt-custom-demo h2 { margin: 0 0 8px; font-size: 15px; color: #5b9dff; }',
+  '  .wt-custom-demo p { margin: 0; color: #9aa4b2; }',
+  '</style>',
+].join('\n')
+
+function customMetaOf(it) {
+  return { id: it.id, name: it.name, kind: it.kind, pid: it.pid || '', updated: it.updated || '', size: Number(it.size) || 0 }
+}
+
+export async function loadCustom(opts = {}) {
+  emit({ custom: { ...store.custom, state: 'loading', error: '' } })
+  try {
+    const data = await apiPost('/custom/list', {}, { timeout: 10_000 })
+    const items = (Array.isArray(data?.items) ? data.items : []).map(customMetaOf)
+    const active = items.some((it) => it.id === store.custom.active) ? store.custom.active : (items[0]?.id || '')
+    emit({ custom: { ...store.custom, state: 'ready', items, active, file: String(data?.file || ''), error: '' } })
+    if (active && (!store.custom.item || store.custom.item.id !== active)) await openCustom(active, { quiet: opts.quiet })
+    return items
+  } catch (err) {
+    emit({ custom: { ...store.custom, state: 'error', error: String(err?.message ?? err) } })
+    return []
+  }
+}
+
+export async function openCustom(id, opts = {}) {
+  const target = String(id || '')
+  if (!target) return null
+  emit({ custom: { ...store.custom, active: target, busy: 'loading', error: '' } })
+  try {
+    const data = await apiPost('/custom/get', { id: target }, { timeout: 10_000 })
+    const item = data?.item || null
+    if (!item) throw new Error('条目为空')
+    emit({
+      custom: {
+        ...store.custom,
+        state: 'ready',
+        active: target,
+        item,
+        draft: { id: item.id, name: item.name, kind: item.kind, body: item.body, pid: item.pid || '' },
+        busy: '',
+        error: '',
+      },
+    })
+    return item
+  } catch (err) {
+    emit({ custom: { ...store.custom, busy: '', error: String(err?.message ?? err), item: null, draft: null } })
+    if (opts.quiet !== true) toast('读取自定义窗口失败：' + String(err?.message ?? err), 'warn')
+    return null
+  }
+}
+
+/** 新建一份草稿（还没落盘，保存时才由宿主发号） */
+export function newCustomDraft(kind = 'html', view = '') {
+  emit({
+    custom: {
+      ...store.custom,
+      active: '',
+      item: null,
+      view: view || (kind === 'url' ? 'edit' : 'prompt'),
+      busy: '',
+      error: '',
+      prompt: '',
+      draft: {
+        id: '',
+        name: '',
+        kind: kind === 'url' ? 'url' : 'html',
+        body: kind === 'url' ? '' : CUSTOM_PRESET,
+        pid: store.web.pid || '',
+      },
+    },
+  })
+}
+
+export function setCustomRequirement(text) {
+  emit({ custom: { ...store.custom, requirement: String(text ?? '') } })
+}
+
+export function editCustom(patch) {
+  if (!store.custom.draft) return
+  emit({ custom: { ...store.custom, draft: { ...store.custom.draft, ...patch } } })
+}
+
+export function setCustomView(view) {
+  const allowed = ['prompt', 'preview', 'edit']
+  emit({ custom: { ...store.custom, view: allowed.includes(view) ? view : 'prompt' } })
+}
+
+export async function saveCustom() {
+  const draft = store.custom.draft
+  if (!draft) return null
+  const body = String(draft.body || '')
+  if (draft.kind === 'url' && !normalizeWebUrl(body)) {
+    toast('窗口地址不合法：只支持 http / https', 'warn')
+    return null
+  }
+  emit({ custom: { ...store.custom, busy: 'saving', error: '' } })
+  try {
+    const data = await apiPost('/custom/save', {
+      id: draft.id || undefined,
+      name: draft.name || undefined,
+      kind: draft.kind,
+      body,
+      pid: draft.pid || store.web.pid || '',
+    }, { timeout: 15_000 })
+    const item = data?.item || null
+    const meta = data?.meta || (item ? customMetaOf(item) : null)
+    const items = meta
+      ? (store.custom.items.some((it) => it.id === meta.id)
+        ? store.custom.items.map((it) => (it.id === meta.id ? meta : it))
+        : store.custom.items.concat([meta]))
+      : store.custom.items
+    emit({
+      custom: {
+        ...store.custom,
+        state: 'ready',
+        busy: '',
+        items,
+        active: item?.id || store.custom.active,
+        item,
+        draft: item ? { id: item.id, name: item.name, kind: item.kind, body: item.body, pid: item.pid || '' } : draft,
+      },
+    })
+    toast('已保存自定义窗口：' + (item?.name || '未命名'), 'ok')
+    return item
+  } catch (err) {
+    emit({ custom: { ...store.custom, busy: '', error: String(err?.message ?? err) } })
+    toast('保存失败：' + String(err?.message ?? err), 'warn')
+    return null
+  }
+}
+
+export async function deleteCustom(id) {
+  const target = String(id || store.custom.active || '')
+  if (!target) return false
+  emit({ custom: { ...store.custom, busy: 'deleting', error: '' } })
+  try {
+    await apiPost('/custom/delete', { id: target }, { timeout: 10_000 })
+    const items = store.custom.items.filter((it) => it.id !== target)
+    const next = items[0]?.id || ''
+    emit({
+      custom: {
+        ...store.custom,
+        busy: '',
+        items,
+        active: next,
+        item: null,
+        draft: next ? store.custom.draft : null,
+        view: next ? store.custom.view : 'prompt',
+      },
+    })
+    toast('已删除', 'ok')
+    if (next) await openCustom(next, { quiet: true })
+    else newCustomDraft()
+    return true
+  } catch (err) {
+    emit({ custom: { ...store.custom, busy: '', error: String(err?.message ?? err) } })
+    toast('删除失败：' + String(err?.message ?? err), 'warn')
+    return false
+  }
+}
+
+/**
+ * 生成提示词 —— 这一招是从上游 dsh-worktable 抄的：上游的「自定义窗口」本质是
+ * 「一句话需求 → 交给 AI 做成一个窗口」，我们保留了同样的形态，
+ * 只是把最后一步改成把提示词填进宿主对话输入框（我们拿不到它的建会话接口）。
+ */
+export function buildCustomPrompt(project, requirement, name) {
+  const req = String(requirement || '').trim()
+  if (!req) return ''
+  const p = project || {}
+  const lines = [
+    '在工作台里做一个自定义窗口' + (name ? '「' + name + '」' : '') + '。',
+    '',
+    '需求：' + req,
+    '',
+    '项目：' + (p.alias || p.name || '未指定') + (p.path ? '（' + p.path + '）' : ''),
+    '',
+    '约束（很重要）：',
+    '1. 产物是一份自包含的 HTML 片段：可以带 <style> 和 <script>，不要外链 CDN，不要 <html>/<head> 外壳；',
+    '2. 它会在沙箱 iframe 里跑，拿不到父页面 DOM，也没有 localStorage；状态放内存，持久化需求告诉我们再商量；',
+    '3. 深色主题：背景 #0f1218、正文 #e6e8eb、次要文字 #9aa4b2、强调 #5b9dff；尺寸自适应；',
+    '4. 需要文件数据时调宿主接口 POST /api/trae-worktable/fs/list 与 POST /api/trae-worktable/fs/read（body: { path }）；',
+    '5. 先只输出 HTML 代码块，我会把它粘进工作台「自定义 → 编辑 → 保存」。',
+  ]
+  return lines.join('\n')
+}
+
+/** 把提示词写进宿主右侧对话的输入框（不代为发送） */
+export function fillHostInput(text) {
+  const value = String(text || '')
+  if (!value) return false
+  if (typeof document === 'undefined') return false
+  try {
+    /* 我们自己的 textarea 绝不能误填 —— 那会把用户的输入冲掉 */
+    const pick = (sel) => {
+      const list = Array.from(document.querySelectorAll(sel))
+      return list.find((n) => !n.closest('.wt-scope')) || null
+    }
+    const ta = pick('textarea[data-phase]') || pick('textarea')
+    if (ta && !ta.disabled && !ta.readOnly) {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      const next = String(ta.value || '').trim() ? ta.value + '\n\n' + value : value
+      if (setter) setter.call(ta, next)
+      else ta.value = next
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+      try {
+        ta.focus()
+        ta.setSelectionRange(ta.value.length, ta.value.length)
+      } catch { /* 有的输入框不支持选区 */ }
+      return true
+    }
+    const editable = pick('[contenteditable="true"]')
+    if (editable) {
+      const next = (editable.textContent || '').trim() ? editable.textContent + '\n\n' + value : value
+      editable.textContent = next
+      editable.dispatchEvent(new Event('input', { bubbles: true }))
+      try { editable.focus() } catch { /* 忽略 */ }
+      return true
+    }
+  } catch { /* 宿主结构变了：走复制兜底 */ }
+  return false
+}
+
+export function setCustomPrompt(text) {
+  emit({ custom: { ...store.custom, prompt: String(text || '') } })
 }
 
 /* ============================ 菜单 / 弹窗 ============================ */

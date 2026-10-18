@@ -76,6 +76,11 @@ const deletes = []
 const opens = []
 const writes = []
 const reads = []
+/* 浏览器 · 探测结果可控；自定义窗口库用内存数组模拟宿主侧 */
+const probeCalls = []
+const webOpens = []
+let probeFrameable = false
+const customStore = []
 /* 'big' 时把 /fs/read 变成「8 MB 大文件」：不带 mode → 413，带 mode → 只读预览 */
 let readCase = ''
 globalThis.fetch = async (url, opts) => {
@@ -117,6 +122,63 @@ globalThis.fetch = async (url, opts) => {
       partial: true, mode: req.mode, limit: 4 * 1024 * 1024, previewBytes: 262144, window: { offset: 0, bytes: 262144 },
     }
     return { ok: true, status: 200, json: async () => part, text: async () => JSON.stringify(part) }
+  }
+  /* ---------- 浏览器 / 自定义 的桩 ---------- */
+  if (u.endsWith('/web/probe')) {
+    try { probeCalls.push(JSON.parse(String(opts?.body || '{}'))) } catch { /* ignore */ }
+    const body = {
+      results: [{
+        ok: true, url: 'http://localhost:5173/', status: 200, ms: 12, title: 'Vite',
+        frameable: probeFrameable, frameReason: probeFrameable ? '' : 'X-Frame-Options: SAMEORIGIN',
+      }],
+    }
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+  }
+  if (u.endsWith('/web/open')) {
+    try { webOpens.push(JSON.parse(String(opts?.body || '{}'))) } catch { /* ignore */ }
+    const body = { ok: true, url: 'http://localhost:5173/' }
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+  }
+  if (u.endsWith('/custom/list')) {
+    const items = customStore.map((it) => ({ id: it.id, name: it.name, kind: it.kind, pid: it.pid, updated: it.updated, size: it.body.length }))
+    const body = { file: 'C:\\Users\\demo\\.dsh\\worktable-custom.json', items }
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+  }
+  if (u.endsWith('/custom/get')) {
+    let req = {}
+    try { req = JSON.parse(String(opts?.body || '{}')) } catch { /* ignore */ }
+    const item = customStore.find((it) => it.id === req.id)
+    if (!item) return { ok: false, status: 404, json: async () => ({ error: '没有这个自定义窗口' }), text: async () => '{}' }
+    return { ok: true, status: 200, json: async () => ({ item }), text: async () => '{}' }
+  }
+  if (u.endsWith('/custom/save')) {
+    let req = {}
+    try { req = JSON.parse(String(opts?.body || '{}')) } catch { /* ignore */ }
+    const now = new Date().toISOString()
+    const id = req.id || 'ctest1'
+    const prev = customStore.find((it) => it.id === id)
+    const item = {
+      id,
+      name: req.name || prev?.name || '未命名窗口',
+      kind: req.kind || prev?.kind || 'html',
+      body: String(req.body ?? prev?.body ?? ''),
+      pid: req.pid || '',
+      created: prev?.created || now,
+      updated: now,
+    }
+    const idx = customStore.findIndex((it) => it.id === id)
+    if (idx === -1) customStore.push(item)
+    else customStore[idx] = item
+    const body = { ok: true, item, meta: { id, name: item.name, kind: item.kind, pid: item.pid, updated: now, size: item.body.length } }
+    return { ok: true, status: 200, json: async () => body, text: async () => '{}' }
+  }
+  if (u.endsWith('/custom/delete')) {
+    let req = {}
+    try { req = JSON.parse(String(opts?.body || '{}')) } catch { /* ignore */ }
+    const idx = customStore.findIndex((it) => it.id === req.id)
+    if (idx !== -1) customStore.splice(idx, 1)
+    const body = { ok: true, id: req.id }
+    return { ok: true, status: 200, json: async () => body, text: async () => '{}' }
   }
   const body = u.endsWith('/sessions') ? fakeSessions
     : u.endsWith('/defaults') ? fakeDefaults
@@ -242,8 +304,18 @@ function clickByLabel(root, label) {
   hit.props.onClick({ preventDefault() {}, stopPropagation() {}, clientX: 10, clientY: 10, target: { closest: () => null, value: '' }, key: '' })
   return hit
 }
-function rightClickByText(root, label) {
-  const hit = collect(root).find((n) => n.props && typeof n.props.onContextMenu === 'function' && textOf(n).includes(label))
+/** 按「按钮文字完全相等」找按钮（'←' / ':5173' 这种短标签用） */
+function btnByText(root, label) {
+  return collect(root).find((n) => n.props && typeof n.props.onClick === 'function' && textOf(n).trim() === label) || null
+}
+function clickExact(root, label) {
+  const hit = btnByText(root, label)
+  if (!hit) throw new Error('找不到按钮：' + label)
+  hit.props.onClick({ preventDefault() {}, stopPropagation() {}, target: { closest: () => null, value: '' }, key: '' })
+  return hit
+}
+const iframeOf = (root) => collect(root).find((n) => n.type === 'iframe') || null
+function rightClickByText(root, label) {  const hit = collect(root).find((n) => n.props && typeof n.props.onContextMenu === 'function' && textOf(n).includes(label))
   if (!hit) throw new Error('找不到可右击节点：' + label)
   hit.props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 100, clientY: 120 })
 }
@@ -589,16 +661,117 @@ check('终端标签页与编辑器并存', allByClass(overlay, /(^|\s)tab(\s|$)/
 /* 打开浏览器标签页 */
 clickByLabel(overlay, '浏览器')
 overlay = render(overlayComp)
-const frame = allByClass(overlay, /web-frame/)[0]
-check('浏览器窗格渲染 iframe', !!frame || textOf(overlay).includes('浏览器窗格'), textOf(overlay).slice(0, 60))
+check('浏览器窗格：导航条 + 视口条两行', allByClass(overlay, /wb-bar/).length === 2, allByClass(overlay, /wb-bar/).length)
+check('浏览器空态：地址栏给示例占位', allByClass(overlay, /wb-url/)[0]?.props.placeholder === 'http://localhost:5173')
+check('浏览器空态说明', textOf(overlay).includes('浏览器窗格'), textOf(overlay).slice(0, 60))
+check('常见端口有快捷键', [':3000', ':5173', ':8080', ':4173'].every((t) => btnByText(overlay, t)), textOf(overlay).slice(0, 120))
+check('没有历史时前进后退都禁用', btnByText(overlay, '←').props.disabled === true && btnByText(overlay, '→').props.disabled === true)
+
+clickByLabel(overlay, '项目页')
+overlay = render(overlayComp)
+let wframe = iframeOf(overlay)
+check('点「项目页」把 iframe 指向项目静态托管', !!wframe && String(wframe.props.src).includes('/site/custom-1/'), wframe && String(wframe.props.src))
+check('加载中显示进度条', allByClass(overlay, /wb-loading/).length === 1)
+check('加载中状态文字', textOf(overlay).includes('加载中'), textOf(overlay).slice(0, 80))
+
+clickByLabel(overlay, ':5173')
+overlay = render(overlayComp)
+wframe = iframeOf(overlay)
+check('端口快捷键切到本地服务', String(wframe.props.src) === 'http://localhost:5173/', wframe && String(wframe.props.src))
+check('有两条历史后「后退」可用', btnByText(overlay, '←').props.disabled === false && btnByText(overlay, '→').props.disabled === true)
+
+clickExact(overlay, '←')
+overlay = render(overlayComp)
+check('后退回到项目页', String(iframeOf(overlay).props.src).includes('/site/custom-1/'), String(iframeOf(overlay).props.src))
+check('后退后「前进」可用', btnByText(overlay, '→').props.disabled === false)
+
+clickByLabel(overlay, '探测')
+await new Promise((r) => setTimeout(r, 20))
+overlay = render(overlayComp)
+check('探测把 X-Frame-Options 摊开说', textOf(overlay).includes('X-Frame-Options: SAMEORIGIN'), textOf(overlay).slice(-90))
+check('探测结果带状态码与耗时', textOf(overlay).includes('HTTP 200') && textOf(overlay).includes('12ms'), textOf(overlay).slice(-90))
+check('探测用的是当前地址', probeCalls.length === 1 && String(probeCalls[0].url).includes('/site/custom-1/'), JSON.stringify(probeCalls[0]))
+
+clickByLabel(overlay, '手机 375')
+overlay = render(overlayComp)
+const viewport = allByClass(overlay, /wb-view/)[0]
+check('切到手机视口：固定 375 宽', /fixed/.test(String(viewport.props.className)) && viewport.props.style.width === '375px', viewport.props.style.width)
+
+const webOpensBefore = webOpens.length
+clickByLabel(overlay, '🚀 系统浏览器')
+await new Promise((r) => setTimeout(r, 20))
+check('站内相对地址不误送系统浏览器', webOpens.length === webOpensBefore, JSON.stringify(webOpens.slice(-1)))
+
+clickByLabel(overlay, ':5173')
+overlay = render(overlayComp)
+clickByLabel(overlay, '🚀 系统浏览器')
+await new Promise((r) => setTimeout(r, 20))
+check('绝对地址交给系统浏览器', webOpens.length === webOpensBefore + 1 && webOpens[webOpens.length - 1].url === 'http://localhost:5173/', JSON.stringify(webOpens[webOpens.length - 1]))
 
 check('多个标签页并存', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 5, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
-check('当前窗格内容仍在渲染', !!allByClass(overlay, /web-frame/)[0] || textOf(overlay).includes('浏览器窗格'))
+check('当前窗格内容仍在渲染', !!allByClass(overlay, /wb-stage/)[0] || textOf(overlay).includes('浏览器窗格'))
 
 /* 关闭当前标签 */
 overlay = render(overlayComp)
 const closeX = collect(overlay).find((n) => n.props && /tab-x/.test(String(n.props.className || '')) && typeof n.props.onClick === 'function')
 check('标签页有关闭按钮', !!closeX)
+
+/* ---------- 自定义窗口 ---------- */
+clickByLabel(overlay, '自定义')
+overlay = render(overlayComp)
+check('自定义窗格：左栏在、主体是空态', allByClass(overlay, /(^|\s)cu-side(\s|$)/).length === 1 && textOf(overlay).includes('自定义窗口'), allByClass(overlay, /(^|\s)cu-side(\s|$)/).length)
+check('空态说明数据存本机', textOf(overlay).includes('不写进项目仓库'), textOf(overlay).slice(0, 120))
+check('左栏空态有提示', textOf(overlay).includes('还没有保存过'))
+
+clickByLabel(overlay, '✨ 新建一个')
+overlay = render(overlayComp)
+check('新建后进「生成」卡片（仿上游的形态）', allByClass(overlay, /(^|\s)cu-card(\s|$)/).length === 1 && textOf(overlay).includes('描述你想要的窗口'))
+
+const reqTa = allByClass(overlay, /cu-input/)[0]
+check('生成卡片有需求输入框', !!reqTa && typeof reqTa.props.onChange === 'function')
+reqTa.props.onChange({ target: { value: '做个构建看板' } })
+overlay = render(overlayComp)
+clickByLabel(overlay, '生成提示词')
+overlay = render(overlayComp)
+const promptTa = allByClass(overlay, /cu-prompt/)[0]
+check('生成提示词带需求正文', !!promptTa && String(promptTa.props.value).includes('做个构建看板'), promptTa && String(promptTa.props.value).slice(0, 50))
+check('提示词写明沙箱约束与宿主接口', /沙箱/.test(String(promptTa?.props.value)) && String(promptTa?.props.value).includes('/api/trae-worktable/fs/list'))
+
+/* 填进宿主输入框：给一个假 textarea，验证「追加而不是覆盖」 */
+globalThis.HTMLTextAreaElement = class { constructor() { this.value = '' } }
+const hostTa = {
+  value: '已有内容', disabled: false, readOnly: false, closest: () => null,
+  dispatchEvent() { this.fired = true }, focus() { this.focused = true }, setSelectionRange() {},
+}
+const savedQSA = globalThis.document.querySelectorAll
+globalThis.document.querySelectorAll = () => [hostTa]
+clickByLabel(overlay, '✨ 填到对话输入框')
+globalThis.document.querySelectorAll = savedQSA
+check('提示词写进宿主输入框（保留原文、不代发）', hostTa.value.startsWith('已有内容') && hostTa.value.includes('做个构建看板') && hostTa.fired === true, hostTa.value.slice(0, 40))
+
+/* 自己写 → 保存 → 预览 → 删除 */
+clickByLabel(overlay, '＋ 自己写')
+overlay = render(overlayComp)
+const codeTa = allByClass(overlay, /cu-code/)[0]
+check('新建草稿落到编辑视图并带模板', !!codeTa && String(codeTa.props.value).includes('自定义窗口'), codeTa && String(codeTa.props.value).slice(0, 30))
+check('新草稿标「新建」', textOf(overlay).includes('新建'))
+
+clickByLabel(overlay, '保存')
+await new Promise((r) => setTimeout(r, 20))
+overlay = render(overlayComp)
+check('保存后条目进左栏', customStore.length === 1 && textOf(overlay).includes('未命名窗口'), JSON.stringify(customStore.map((i) => i.name)))
+check('保存后「未保存」标记消失', !allByClass(overlay, /tag warn/).length, allByClass(overlay, /tag warn/).length)
+
+clickByLabel(overlay, '预览')
+overlay = render(overlayComp)
+const cuFrame = iframeOf(overlay)
+check('预览用 srcDoc 渲染草稿', !!cuFrame && String(cuFrame.props.srcDoc).includes('<h2>自定义窗口</h2>'))
+check('预览沙箱不给 allow-same-origin', !!cuFrame && !/allow-same-origin/.test(String(cuFrame.props.sandbox)), cuFrame && cuFrame.props.sandbox)
+
+clickByLabel(overlay, '删除')
+await new Promise((r) => setTimeout(r, 20))
+overlay = render(overlayComp)
+check('删除后库清空、左栏回到空态', customStore.length === 0 && textOf(overlay).includes('还没有保存过'), customStore.length)
 
 /* 回到全部项目 */
 clickByLabel(overlay, '≡ 项目')
@@ -617,7 +790,7 @@ check('卡片状态用中文标签', /进行中|待处理|已完成|待命/.test
 check('总览也贴着对话（有让位边界 dock-edge）', allByClass(overlay, /dock-edge/).length === 1, allByClass(overlay, /dock-edge/).length)
 check('总览没有左栏', allByClass(overlay, /pane-left/).length === 0)
 check('总览只有一块面板', allByClass(overlay, /pane-main/).length === 1, allByClass(overlay, /pane-main/).length)
-check('总览顶栏没有模式切换', !['全屏', '窗口'].some((t) => gridText.includes(t)), gridText.slice(0, 120))
+check('总览顶栏没有模式切换', !['全屏', '窗口'].some((t) => textOf(allByClass(overlay, /(^|\s)dock-head(\s|$)/)[0] || {}).includes(t)), textOf(allByClass(overlay, /(^|\s)dock-head(\s|$)/)[0] || {}))
 check('总览也没有浮动窗口', allByClass(overlay, /float-win/).length === 0 && allByClass(overlay, /pane-nest/).length === 0)
 
 /* 拖右边缘：改的是总览自己的 dock 宽度，不碰任何项目 */

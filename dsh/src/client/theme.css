@@ -700,18 +700,83 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 
 /* 浏览器 */
 .wt-scope .web-body { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; overflow: hidden; }
-.wt-scope .web-bar { display: flex; align-items: center; gap: 5px; flex: none; }
-.wt-scope .web-bar input { flex: 1; }
-.wt-scope .web-frame { flex: 1; min-height: 0; border-radius: 10px; border: 1px solid var(--line); overflow: hidden; background: #0b0e14; }
-.wt-scope .web-frame iframe { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
-.wt-scope .web-note { margin: 0; font-size: 9.5px; color: var(--txt-mute); line-height: 1.5; }
+.wt-scope .wb-bar { display: flex; align-items: center; gap: 5px; flex: none; }
+.wt-scope .wb-bar .wb-url { flex: 1; min-width: 0; }
+.wt-scope .wb-sub { gap: 4px; flex-wrap: wrap; row-gap: 4px; }
+.wt-scope .wb-vps { display: flex; gap: 3px; }
+.wt-scope .wb-vps .mini-btn { padding: 2px 7px; font-size: 9.5px; }
+.wt-scope .wb-ports { display: flex; gap: 3px; }
+.wt-scope .wb-ports .mini-btn { padding: 2px 6px; font-size: 9px; color: var(--txt-mute); }
+.wt-scope .wb-spacer { flex: 1; }
+.wt-scope .wb-state { font-size: 9.5px; color: var(--txt-mute); white-space: nowrap; }
+.wt-scope .wb-state.loading { color: #e9c778; }
+.wt-scope .wb-state.ok { color: #63c98a; }
+.wt-scope .wb-state.blocked, .wt-scope .wb-state.error { color: #f0897d; }
 
-/* 自定义窗口 */
-.wt-scope .custom-body { padding: 8px 10px 10px; overflow: hidden; }
-.wt-scope .custom-split { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 8px; height: 100%; }
-.wt-scope .custom-editor { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
-.wt-scope .custom-preview { border-radius: 10px; border: 1px solid var(--line); overflow: hidden; background: #fff; }
-.wt-scope .custom-preview iframe { width: 100%; height: 100%; border: 0; display: block; }
+/* 舞台：固定视口宽度时居中给一条「设备边框」 */
+.wt-scope .wb-stage { flex: 1; min-height: 0; display: flex; justify-content: center; border-radius: 10px; border: 1px solid var(--line); background: #0b0e14; overflow: hidden; }
+.wt-scope .wb-view { position: relative; width: 100%; height: 100%; background: #0b0e14; display: flex; flex-direction: column; }
+.wt-scope .wb-view.fixed { max-width: 100%; border-left: 1px solid rgba(240,180,41,.2); border-right: 1px solid rgba(240,180,41,.2); box-shadow: 0 0 0 1px rgba(0,0,0,.5); }
+.wt-scope .wb-view iframe { flex: 1; width: 100%; min-height: 0; border: 0; display: block; background: #fff; }
+.wt-scope .wb-loading { position: absolute; left: 0; right: 0; top: 0; height: 2px; background: linear-gradient(90deg, transparent, rgba(240,180,41,.9), transparent); animation: wtWebLoad 1.1s linear infinite; }
+@keyframes wtWebLoad { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+
+.wt-scope .wb-fail { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 18px; text-align: center; }
+.wt-scope .wb-fail-ico { font-size: 22px; color: #e9c778; }
+.wt-scope .wb-fail-title { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--txt); }
+.wt-scope .wb-fail-text { margin: 0; max-width: 380px; font-size: 10.5px; line-height: 1.6; color: var(--txt-dim); }
+.wt-scope .wb-fail-url { margin: 0; max-width: 420px; font-size: 9.5px; color: var(--txt-mute); word-break: break-all; }
+.wt-scope .wb-fail-acts { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; margin-top: 4px; }
+
+.wt-scope .wb-note { margin: 0; font-size: 9.5px; color: var(--txt-mute); line-height: 1.5; }
+.wt-scope .wb-note.ok { color: #63c98a; }
+.wt-scope .wb-note.warn { color: #e9c778; }
+
+/* 自定义窗口：左列表 + 右主体 */
+.wt-scope .cu-body { display: flex; gap: 8px; padding: 8px 10px 10px; overflow: hidden; }
+.wt-scope .cu-side { flex: none; width: 132px; display: flex; flex-direction: column; gap: 5px; min-height: 0; }
+.wt-scope .cu-side-head { display: flex; align-items: center; justify-content: space-between; font-size: 9.5px; color: var(--txt-mute); letter-spacing: .04em; padding: 0 2px; }
+.wt-scope .cu-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.wt-scope .cu-item { display: flex; align-items: center; gap: 5px; padding: 4px 6px; border-radius: 7px; cursor: pointer; border: 1px solid transparent; }
+.wt-scope .cu-item:hover { background: rgba(255,255,255,.04); }
+.wt-scope .cu-item.on { background: rgba(240,180,41,.12); border-color: rgba(240,180,41,.28); }
+.wt-scope .cu-item-ico { flex: none; font-size: 9px; color: var(--txt-mute); }
+.wt-scope .cu-item-name { flex: 1; min-width: 0; font-size: 10.5px; color: var(--txt-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wt-scope .cu-item.on .cu-item-name { color: var(--txt); }
+.wt-scope .cu-empty { margin: 0; padding: 6px; font-size: 10px; color: var(--txt-mute); line-height: 1.5; }
+.wt-scope .cu-side-foot { flex: none; display: flex; flex-direction: column; gap: 3px; }
+
+.wt-scope .cu-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.wt-scope .cu-bar { flex: none; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; row-gap: 4px; }
+.wt-scope .cu-name { flex: 1; min-width: 0; font-size: 11px; }
+.wt-scope .cu-views { display: flex; gap: 3px; }
+.wt-scope .cu-views .mini-btn { padding: 2px 7px; font-size: 9.5px; }
+.wt-scope .cu-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.wt-scope .cu-stage > .pane-empty { flex: 1; }
+
+.wt-scope .cu-card { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.012); }
+.wt-scope .cu-card-title { font-size: 12px; font-weight: 600; color: var(--txt); }
+.wt-scope .cu-hint { margin: 0; font-size: 10.5px; line-height: 1.65; color: var(--txt-mute); }
+.wt-scope .cu-input { width: 100%; box-sizing: border-box; min-height: 88px; resize: vertical; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line); background: rgba(0,0,0,.28); color: var(--txt); font: inherit; font-size: 11.5px; line-height: 1.6; outline: 0; }
+.wt-scope .cu-input:focus { border-color: rgba(240,180,41,.42); }
+.wt-scope .cu-row { display: flex; align-items: center; gap: 7px; }
+.wt-scope .cu-label { flex: none; font-size: 10px; color: var(--txt-mute); }
+.wt-scope .cu-select { flex: 1; min-width: 0; padding: 4px 7px; border-radius: 7px; border: 1px solid var(--line); background: rgba(0,0,0,.28); color: var(--txt); font: inherit; font-size: 11px; outline: 0; }
+.wt-scope .cu-acts { display: flex; flex-wrap: wrap; gap: 5px; }
+.wt-scope .cu-prompt { width: 100%; box-sizing: border-box; min-height: 110px; resize: vertical; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line); background: rgba(0,0,0,.3); color: var(--txt-dim); font-size: 10.5px; line-height: 1.6; outline: 0; }
+
+.wt-scope .cu-preview { flex: 1; min-height: 0; border-radius: 10px; border: 1px solid var(--line); overflow: hidden; background: #fff; }
+.wt-scope .cu-preview iframe { width: 100%; height: 100%; border: 0; display: block; }
+.wt-scope .cu-code { flex: 1; min-height: 0; resize: none; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: rgba(0,0,0,.3); color: var(--txt-dim); font-size: 11px; line-height: 1.65; outline: 0; }
+.wt-scope .cu-code:focus { border-color: rgba(240,180,41,.36); }
+.wt-scope .cu-urlbox { flex: none; display: flex; flex-direction: column; gap: 6px; }
+.wt-scope .cu-url { width: 100%; box-sizing: border-box; padding: 6px 9px; border-radius: 8px; border: 1px solid var(--line); background: rgba(0,0,0,.3); color: var(--txt); font-size: 11.5px; outline: 0; }
+
+.wt-scope .cu-foot { flex: none; display: flex; gap: 10px; align-items: center; font-size: 9px; color: var(--txt-mute); white-space: nowrap; overflow: hidden; }
+.wt-scope .cu-foot > span { overflow: hidden; text-overflow: ellipsis; }
+.wt-scope .cu-err { color: #f0897d; }
+.wt-scope .mini-btn[disabled] { opacity: .38; cursor: default; pointer-events: none; }
+.wt-scope .mini-btn.danger:hover:not([disabled]) { background: rgba(232,115,74,.12); }
 
 /* 对话不在这里：右栏是宿主自己的会话区，由 hostdock.js 让位 */
 

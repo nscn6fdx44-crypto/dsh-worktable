@@ -15,6 +15,9 @@
  *   命令           POST /term/exec（NDJSON 流）          POST /term/kill
  *   版本控制       POST /git（只读：status / log / branches）
  *   项目静态托管   POST /project/register               GET  /site/<id>/<rel...>（prefix）
+ *   浏览器窗格     POST /web/probe（活没活 / 能不能 iframe 嵌）  POST /web/open（系统浏览器）
+ *   自定义窗口库   POST /custom/list  /custom/get  /custom/save  /custom/delete
+ *                  （存 ~/.dsh/worktable-custom.json，不写用户项目目录）
  *
  * 安全边界（与上游有意不同）
  *   1. 读（list / read / stat / reveal）：不设白名单，文件管理器要能一路翻到盘符根；
@@ -28,6 +31,8 @@
  */
 import { closeSync, createReadStream, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync, appendFileSync } from 'node:fs'
 import { spawn, execFile } from 'node:child_process'
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -58,6 +63,13 @@ const MAX_BODY_JSON = 64 * 1024
 const MAX_TERM_OUTPUT = 512 * 1024
 const TERM_TIMEOUT_MS = 120_000
 const GIT_TIMEOUT_MS = 10_000
+/* 探测本地开发服务器：超时要短（3.5s 已经比「人觉得卡了」长） */
+const PROBE_TIMEOUT_MS = 3_500
+/* 探测时最多读多少响应体（只为了抠 <title>，不是下载页面） */
+const PROBE_BODY_BYTES = 16 * 1024
+/* 自定义窗口：条目数 / 单份内容上限 */
+const MAX_CUSTOM_ITEMS = 200
+const MAX_CUSTOM_BODY = 512 * 1024
 
 /* 凭证目录：即便在 home 内也不允许读写 */
 const DENY_SEGMENTS = new Set(['.ssh', '.aws', '.gnupg', '.kube', '.dsh', '.netrc', '.git-credentials', '.password-store'])
@@ -385,6 +397,108 @@ export function apply(ctx) {
     sendJson(res, 200, { ok: true, path: target, select, dryRun: false, cmd: r.cmd })
   })})
 
+  /* ---------- 浏览器窗格 ---------- */
+
+  register({ kind: 'exact', path: BASE + '/web/probe', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const list = Array.isArray(body?.urls) ? body.urls : [body?.url]
+    const targets = list.filter((u) => typeof u === 'string' && u.trim()).slice(0, 8)
+    if (!targets.length) return sendJson(res, 400, { error: 'url required' })
+    const dryRun = process.env.WORKTABLE_PROBE_DRYRUN === '1'
+    if (dryRun) {
+      return sendJson(res, 200, {
+        results: targets.map((u) => ({ ok: true, url: u, status: 200, ms: 1, title: '', frameable: true, frameReason: '', dryRun: true })),
+      })
+    }
+    const results = await Promise.all(targets.map((u) => probeUrl(u)))
+    sendJson(res, 200, { results })
+  })})
+
+  register({ kind: 'exact', path: BASE + '/web/open', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const u = normUrl(body?.url)
+    if (!u) return sendJson(res, 400, { error: '只支持 http / https 地址' })
+    /* 空 host（例如 http://）会让 explorer 去开「我的电脑」，直接挡掉 */
+    if (!u.hostname) return sendJson(res, 400, { error: '地址缺少主机名' })
+    if (process.env.WORKTABLE_OPEN_DRYRUN === '1') return sendJson(res, 200, { ok: true, url: u.href, dryRun: true, cmd: '' })
+    const r = await openInSystem(u.href, false)
+    if (!r.ok) return sendJson(res, 500, { error: '浏览器启动失败：' + msg(r.error), cmd: r.cmd })
+    sendJson(res, 200, { ok: true, url: u.href, cmd: r.cmd })
+  })})
+
+  /* ---------- 自定义窗口库 ---------- */
+
+  register({ kind: 'exact', path: BASE + '/custom/list', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const data = readCustomStore()
+    sendJson(res, 200, { file: customStoreFile(), items: data.items.map(customMeta) })
+  })})
+
+  register({ kind: 'exact', path: BASE + '/custom/get', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const id = String(body?.id || '')
+    const item = readCustomStore().items.find((it) => it.id === id)
+    if (!item) return sendJson(res, 404, { error: '没有这个自定义窗口：' + id })
+    sendJson(res, 200, { item })
+  })})
+
+  register({ kind: 'exact', path: BASE + '/custom/save', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    /* 内容上限 512KB，JSON 转义会膨胀，读的时候按 2 倍 + 余量放 */
+    const body = await readJson(req, res, MAX_CUSTOM_BODY * 2 + MAX_BODY_JSON)
+    if (body === undefined) return
+    const store = readCustomStore()
+    const now = new Date().toISOString()
+    const wanted = String(body?.id || '').trim()
+    const existing = wanted ? store.items.find((it) => it.id === wanted) : null
+    /* 新建时宿主发号：前端不用自己编 id（编了也不会撞） */
+    const id = existing ? existing.id : (wanted && CUSTOM_ID_RE.test(wanted) ? wanted : 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6))
+    const merged = normalizeCustomItem({
+      id,
+      name: body?.name ?? existing?.name,
+      kind: body?.kind ?? existing?.kind,
+      body: body?.body ?? existing?.body,
+      pid: body?.pid ?? existing?.pid,
+      created: existing?.created || now,
+      updated: now,
+    })
+    if (!merged) return sendJson(res, 400, { error: '自定义窗口定义不合法（需要 id / name / 内容）' })
+    if (!existing && store.items.length >= MAX_CUSTOM_ITEMS) {
+      return sendJson(res, 409, { error: '自定义窗口最多 ' + MAX_CUSTOM_ITEMS + ' 个，先删掉一些' })
+    }
+    const items = existing
+      ? store.items.map((it) => (it.id === id ? merged : it))
+      : store.items.concat([merged])
+    try {
+      writeCustomStore({ version: 1, items })
+    } catch (err) {
+      return sendJson(res, 500, { error: '保存失败：' + msg(err) })
+    }
+    sendJson(res, 200, { ok: true, item: merged, meta: customMeta(merged) })
+  })})
+
+  register({ kind: 'exact', path: BASE + '/custom/delete', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const id = String(body?.id || '')
+    const store = readCustomStore()
+    const items = store.items.filter((it) => it.id !== id)
+    if (items.length === store.items.length) return sendJson(res, 404, { error: '没有这个自定义窗口：' + id })
+    try {
+      writeCustomStore({ version: 1, items })
+    } catch (err) {
+      return sendJson(res, 500, { error: '删除失败：' + msg(err) })
+    }
+    sendJson(res, 200, { ok: true, id })
+  })})
+
   /* ---------- 终端（NDJSON 流） ---------- */
 
   register({ kind: 'exact', path: BASE + '/term/exec', handler: guard(async (req, res) => {
@@ -515,10 +629,10 @@ export function apply(ctx) {
     const id = decodeURIComponent(slash === -1 ? rest : rest.slice(0, slash))
     const rel = slash === -1 ? '' : decodeURIComponent(rest.slice(slash + 1))
     const root = PROJECT_ROOTS.get(id)
-    if (!root) return sendJson(res, 404, { error: '项目未注册静态托管：' + id })
+    if (!root) return sendSiteError(res, 404, '这个项目的静态托管还没就绪', '项目「' + id + '」没有登记可用的目录。回到工作台重新进一次项目即可重新登记；没设目录的项目本来就没有站点。')
 
     const target = safeJoin(root, rel || 'index.html')
-    if (!target) return sendJson(res, 403, { error: '路径越界' })
+    if (!target) return sendSiteError(res, 403, '路径越界', '请求的路径跑出了项目目录，已拦下。')
     let file = target
     if (!rel || isDirQuiet(file)) {
       const index = join(isDirQuiet(file) ? file : root, 'index.html')
@@ -527,9 +641,9 @@ export function apply(ctx) {
     }
     let st
     try { st = statSync(file) } catch {
-      return sendJson(res, 404, { error: '文件不存在：' + (rel || 'index.html') })
+      return sendSiteError(res, 404, '文件不存在', '这个路径下没有 ' + (rel || 'index.html') + '。项目目录可能还没登记，或者文件被挪走了。')
     }
-    if (!st.isFile()) return sendJson(res, 404, { error: '不是文件' })
+    if (!st.isFile()) return sendSiteError(res, 404, '不是文件', rel + ' 是个目录，而这里需要一个能打开的文件。')
     res.writeHead(200, {
       'content-type': mimeOf(file),
       'content-length': st.size,
@@ -1042,11 +1156,185 @@ function openInSystem(target, select) {
   })
 }
 
+/* ============================ 浏览器窗格：地址归一 / 探测 / 外部打开 ============================ */
+
+/** 补协议、挡掉非 http(s)。「localhost:5173」这种半截地址也认。 */
+function normUrl(raw) {
+  const s = String(raw || '').trim()
+  if (!s) return null
+  const withProto = /^https?:\/\//i.test(s)
+    ? s
+    : (/^[a-z0-9.-]+(:\d+)?([/?#]|$)/i.test(s) ? 'http://' + s : '')
+  if (!withProto) return null
+  let u
+  try { u = new URL(withProto) } catch { return null }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+  return u
+}
+
+function decodeEntities(s) {
+  return String(s || '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+}
+
+/**
+ * 这个响应头组合允不允许被 iframe 嵌？
+ *
+ * 这是浏览器窗格最需要的一条信息：本地 dev server 常带
+ * `X-Frame-Options: SAMEORIGIN`，用户只会看到一个白框，然后以为工作台坏了。
+ */
+function frameVerdict(xfo, csp) {
+  const x = String(xfo || '').toLowerCase()
+  if (x.includes('deny')) return { ok: false, reason: 'X-Frame-Options: DENY' }
+  if (x.includes('sameorigin')) return { ok: false, reason: 'X-Frame-Options: SAMEORIGIN' }
+  const m = /frame-ancestors([^;]*)/i.exec(String(csp || ''))
+  if (m) {
+    const val = m[1].trim()
+    if (/^'none'$/i.test(val)) return { ok: false, reason: "CSP frame-ancestors 'none'" }
+    if (val && !val.includes('*')) return { ok: false, reason: 'CSP frame-ancestors ' + val }
+  }
+  return { ok: true, reason: '' }
+}
+
+/**
+ * 探测一个地址：活没活、多快、页面标题、能不能嵌。
+ *
+ * 走原生 http/https 而不是 fetch：
+ *  1. 宿主的 Node 里 fetch 到 localhost 会被代理/证书折腾；
+ *  2. 我们要读原始响应头（X-Frame-Options / CSP），fetch 拿到的是加工过的。
+ */
+function probeUrl(raw) {
+  const u = normUrl(raw)
+  if (!u) {
+    return Promise.resolve({ ok: false, url: String(raw || ''), error: '地址不合法（只支持 http / https）', frameable: false })
+  }
+  const started = Date.now()
+  return new Promise((resolveP) => {
+    let done = false
+    const finish = (r) => { if (done) return; done = true; resolveP(r) }
+    const lib = u.protocol === 'https:' ? httpsRequest : httpRequest
+    let req
+    try {
+      req = lib({
+        protocol: u.protocol,
+        hostname: u.hostname,
+        port: u.port || (u.protocol === 'https:' ? 443 : 80),
+        path: (u.pathname || '/') + (u.search || ''),
+        method: 'GET',
+        timeout: PROBE_TIMEOUT_MS,
+        /* 本地 dev server 常挂自签证书；探测只问「能不能连上」，不做信任判断 */
+        rejectUnauthorized: false,
+        headers: {
+          'user-agent': 'trae-worktable-probe',
+          accept: 'text/html,application/xhtml+xml,*/*;q=0.8',
+          'accept-encoding': 'identity',
+        },
+      }, (res) => {
+        const headers = res.headers || {}
+        const verdict = frameVerdict(headers['x-frame-options'], headers['content-security-policy'])
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', (chunk) => { if (body.length < PROBE_BODY_BYTES) body += chunk })
+        res.on('end', () => {
+          const raw2 = (/<title[^>]*>([\s\S]{0,300}?)<\/title>/i.exec(body) || [])[1] || ''
+          finish({
+            ok: true,
+            url: u.href,
+            status: res.statusCode || 0,
+            ms: Date.now() - started,
+            title: decodeEntities(String(raw2).replace(/\s+/g, ' ').trim()),
+            contentType: String(headers['content-type'] || ''),
+            frameable: verdict.ok,
+            frameReason: verdict.reason,
+          })
+        })
+        res.on('error', (err) => finish({ ok: false, url: u.href, error: msg(err), ms: Date.now() - started, frameable: true }))
+      })
+    } catch (err) {
+      finish({ ok: false, url: u.href, error: msg(err), ms: Date.now() - started, frameable: true })
+      return
+    }
+    req.on('timeout', () => req.destroy(new Error('超时 ' + Math.round(PROBE_TIMEOUT_MS / 1000) + 's 没有响应')))
+    req.on('error', (err) => finish({ ok: false, url: u.href, error: msg(err), ms: Date.now() - started, frameable: true }))
+    req.end()
+  })
+}
+
+/* ============================ 自定义窗口库 ============================ */
+
+/** 自定义窗口存这儿：不碰用户项目目录，随 DSH 一起走 */
+function customStoreFile() {
+  const home = process.env.DSH_HOME || join(homedir(), '.dsh')
+  return join(home, 'worktable-custom.json')
+}
+
+const CUSTOM_ID_RE = /^[a-z0-9][a-z0-9_-]{0,47}$/i
+
+function normalizeCustomItem(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {}
+  const id = String(src.id || '').trim()
+  if (!CUSTOM_ID_RE.test(id)) return null
+  const kind = src.kind === 'url' ? 'url' : 'html'
+  let body = String(src.body ?? '')
+  if (kind === 'url') {
+    const u = normUrl(body)
+    if (!u) return null
+    body = u.href
+  }
+  if (body.length > MAX_CUSTOM_BODY) body = body.slice(0, MAX_CUSTOM_BODY)
+  const name = String(src.name || '').trim().slice(0, 60) || '未命名窗口'
+  return {
+    id,
+    name,
+    kind,
+    body,
+    pid: String(src.pid || '').slice(0, 64),
+    created: String(src.created || new Date().toISOString()),
+    updated: String(src.updated || new Date().toISOString()),
+  }
+}
+
+function readCustomStore() {
+  let data
+  try {
+    data = JSON.parse(readFileSync(customStoreFile(), 'utf8'))
+  } catch {
+    return { version: 1, items: [] }
+  }
+  const items = (Array.isArray(data?.items) ? data.items : [])
+    .map(normalizeCustomItem)
+    .filter(Boolean)
+    .slice(0, MAX_CUSTOM_ITEMS)
+  return { version: 1, items }
+}
+
+function writeCustomStore(data) {
+  const file = customStoreFile()
+  mkdirSync(dirname(file), { recursive: true })
+  const tmp = file + '.' + process.pid + '.tmp'
+  writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8')
+  renameSync(tmp, file)
+}
+
+function customMeta(item) {
+  return {
+    id: item.id,
+    name: item.name,
+    kind: item.kind,
+    pid: item.pid,
+    created: item.created,
+    updated: item.updated,
+    size: item.body.length,
+  }
+}
+
 /**
  * 只读预览：从文件里切一段（'head' 从头，'tail' 从尾）。
  * 大文件不该整份读进内存 —— 编辑器要的只是「能看见的那一屏」。
- */
-function readWindow(target, size, mode, bytes) {
+ */function readWindow(target, size, mode, bytes) {
   const len = Math.max(0, Math.min(bytes, size))
   const offset = mode === 'tail' ? Math.max(0, size - len) : 0
   const fd = openSync(target, 'r')
@@ -1484,6 +1772,21 @@ function guard(handler) {
       if (!res.writableEnded) sendJson(res, status, { error: msg(err) })
     }
   }
+}
+
+/** /site 的错误页：iframe 里直接看到中文说明，而不是一坨 JSON */
+function sendSiteError(res, status, title, detail) {
+  const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  const html = '<!doctype html><meta charset="utf-8"><title>' + esc(title) + '</title>'
+    + '<style>body{font:13px/1.7 system-ui,"Segoe UI",sans-serif;background:#0f1218;color:#dfe4ea;padding:32px;max-width:640px}'
+    + 'h1{font-size:15px;color:#f0b429;margin:0 0 8px}p{color:#8b95a3;margin:0 0 7px;font-size:12px}'
+    + 'code{color:#cfd6df}</style>'
+    + '<h1>⚠ ' + esc(title) + '</h1><p>' + esc(detail) + '</p>'
+    + '<p>这是工作台的项目静态托管（<code>' + esc(BASE) + '/site/…</code>），不是你的开发服务器；'
+    + '要连 dev server 请在浏览器窗格地址栏直接填 <code>http://localhost:端口</code>。</p>'
+  const body = Buffer.from(html, 'utf8')
+  res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' })
+  res.end(body)
 }
 
 /** 没有 index.html 时给一个纯静态目录页，浏览器窗格不至于只看到 404 JSON */

@@ -9,6 +9,7 @@
  */
 import { apply } from '../lib/index.js'
 import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { Writable } from 'node:stream'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
@@ -365,7 +366,9 @@ check('/site 返回 index.html', siteRes.status === 200 && siteRes.body.includes
 check('/site 带 html mime', String(siteRes.headers['content-type']).includes('text/html'))
 
 const siteMiss = await getSite(BASE + '/site/p-unknown/')
-check('/site 未注册项目 → 404', siteMiss.body.includes('未注册'), siteMiss.body.slice(0, 60))
+check('/site 未注册项目 → 404（HTML 说明页，不是 JSON）',
+  siteMiss.status === 404 && String(siteMiss.headers['content-type']).includes('text/html') && siteMiss.body.includes('静态托管还没就绪'),
+  siteMiss.status + ' ' + siteMiss.body.slice(0, 50))
 
 const siteTrav = await getSite(BASE + '/site/p-test/%2e%2e%2f%2e%2e%2fpackage.json')
 check('/site 拦截编码路径穿越', siteTrav.status === 403, siteTrav.status + ' ' + siteTrav.body.slice(0, 60))
@@ -441,6 +444,84 @@ const bare = await new Promise((resolve) => {
   handler({ method: 'GET' }, res)
 })
 check('无会话服务时降级不抛', bare.ok === true && bare.counts.total === 0 && bare.degraded === true, JSON.stringify(bare.counts))
+
+/* ============================ 浏览器窗格：探测 / 外部打开 ============================ */
+
+/* 起一个真服务：一条带 X-Frame-Options 的路由 + 一条正常路由 */
+const probeSrv = createServer((req, res) => {
+  if (req.url === '/blocked') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'x-frame-options': 'SAMEORIGIN' })
+    res.end('<html><head><title>拒绝嵌入的服务</title></head><body>x</body></html>')
+    return
+  }
+  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+  res.end('<html><head><title>本地开发服务</title></head><body>ok</body></html>')
+})
+await new Promise((r) => probeSrv.listen(0, '127.0.0.1', r))
+const probePort = probeSrv.address().port
+
+const probeOk = await call(BASE + '/web/probe', { url: 'http://127.0.0.1:' + probePort + '/' })
+const probeOkJ = JSON.parse(probeOk.body).results[0]
+check('web/probe 探到活服务 + 标题', probeOkJ.ok === true && probeOkJ.status === 200 && probeOkJ.title === '本地开发服务', JSON.stringify(probeOkJ))
+check('web/probe 正常页判定可嵌入', probeOkJ.frameable === true && probeOkJ.frameReason === '', probeOkJ.frameReason)
+
+const probeXfo = await call(BASE + '/web/probe', { urls: ['http://127.0.0.1:' + probePort + '/blocked'] })
+const probeXfoJ = JSON.parse(probeXfo.body).results[0]
+check('web/probe 认出 X-Frame-Options 不能嵌', probeXfoJ.frameable === false && /SAMEORIGIN/i.test(probeXfoJ.frameReason), probeXfoJ.frameReason)
+
+const probeDead = await call(BASE + '/web/probe', { url: 'http://127.0.0.1:1/' })
+const probeDeadJ = JSON.parse(probeDead.body).results[0]
+check('web/probe 死端口 ok=false', probeDeadJ.ok === false && !!probeDeadJ.error, probeDeadJ.error)
+
+const probeBadProto = await call(BASE + '/web/probe', { url: 'ftp://example.com/x' })
+check('web/probe 挡掉非 http 协议', JSON.parse(probeBadProto.body).results[0].ok === false)
+const probeNone = await call(BASE + '/web/probe', {})
+check('web/probe 没地址 400', probeNone.status === 400)
+
+probeSrv.close()
+
+const openBad = await call(BASE + '/web/open', { url: 'file:///C:/Windows' })
+check('web/open 挡掉 file: 协议', openBad.status === 400)
+const openNoHost = await call(BASE + '/web/open', { url: 'http://' })
+check('web/open 挡掉空主机', openNoHost.status === 400)
+const openOk = await call(BASE + '/web/open', { url: 'localhost:5173' })
+const openOkJ = JSON.parse(openOk.body)
+check('web/open 归一地址（dry-run 不真弹浏览器）', openOk.status === 200 && openOkJ.url === 'http://localhost:5173/', openOkJ.url)
+
+/* ============================ 自定义窗口库 ============================ */
+
+/* 用临时 DSH_HOME，别把测试数据写进真实的 ~/.dsh */
+process.env.DSH_HOME = join(tmp, 'dsh-home')
+
+const cNew = await call(BASE + '/custom/save', { name: '构建看板', kind: 'html', body: '<h1>hi</h1>' })
+const cNewJ = JSON.parse(cNew.body)
+const cid = cNewJ.item?.id
+check('custom/save 新建（宿主发号）', cNew.status === 200 && cNewJ.ok === true && /^c[a-z0-9]{4,}$/.test(String(cid)), cid)
+check('custom/save 落盘到 DSH_HOME', existsSync(join(tmp, 'dsh-home', 'worktable-custom.json')))
+
+const cList = await call(BASE + '/custom/list', {})
+const cListJ = JSON.parse(cList.body)
+check('custom/list 有条目且不带正文', cListJ.items.length === 1 && cListJ.items[0].name === '构建看板' && cListJ.items[0].body === undefined, JSON.stringify(cListJ.items[0]))
+
+const cGet = await call(BASE + '/custom/get', { id: cid })
+check('custom/get 回正文', JSON.parse(cGet.body).item.body === '<h1>hi</h1>')
+
+const cUpd = await call(BASE + '/custom/save', { id: cid, body: '<h2>改过</h2>' })
+const cUpdJ = JSON.parse(cUpd.body)
+check('custom/save 按 id 覆盖，不新增', cUpdJ.item.id === cid && cUpdJ.item.body === '<h2>改过</h2>' && cUpdJ.item.name === '构建看板', JSON.stringify({ n: cUpdJ.item.name, b: cUpdJ.item.body }))
+const cCount = JSON.parse((await call(BASE + '/custom/list', {})).body).items.length
+check('custom/save 覆盖后条目数不变', cCount === 1, cCount)
+
+const cUrl = await call(BASE + '/custom/save', { name: '监控页', kind: 'url', body: 'localhost:3000/dash' })
+check('custom/save 网址型归一成 http', JSON.parse(cUrl.body).item.body === 'http://localhost:3000/dash')
+const cBadUrl = await call(BASE + '/custom/save', { name: '坏', kind: 'url', body: 'javascript:alert(1)' })
+check('custom/save 挡掉 javascript: 网址', cBadUrl.status === 400)
+
+const cDel = await call(BASE + '/custom/delete', { id: cid })
+const cGone = await call(BASE + '/custom/get', { id: cid })
+check('custom/delete 后 get 404', cDel.status === 200 && cGone.status === 404)
+check('custom/get 非法 id 安全返回 404', (await call(BASE + '/custom/get', { id: '../etc/passwd' })).status === 404)
+check('custom/delete 不存在的 id 404', (await call(BASE + '/custom/delete', { id: 'nope' })).status === 404)
 
 /* 无 webServer 时不抛 */
 let boom = null

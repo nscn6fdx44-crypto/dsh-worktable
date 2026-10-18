@@ -17,7 +17,11 @@ import {
   openFsMenu, closeFsMenu,
   joinPath, crumbsOf,
   sessionsOf, primarySession, stateOf, jumpToSession,
-  openModal, siteUrlOf, setWebUrl, setCustomHtml, cycleStatus, updateProject, projectOf, toast,
+  openModal, siteUrlOf, cycleStatus, updateProject, projectOf, toast,
+  webSync, webGoto, webBack, webForward, webReload, webLoaded, webProbe,
+  webSetViewport, webOpenExternal,
+  loadCustom, openCustom, newCustomDraft, editCustom, setCustomView, saveCustom,
+  deleteCustom, buildCustomPrompt, fillHostInput, setCustomPrompt, setCustomRequirement,
 } from './core.js'
 
 /* ============================ 文件 / 项目信息（标签页） ============================ */
@@ -639,72 +643,419 @@ export function TermPane({ project }) {
 
 /* ============================ 主区：浏览器 ============================ */
 
+const VIEWPORTS = [
+  { id: 'auto', label: '自适应', width: 0 },
+  { id: 'tablet', label: '平板 768', width: 768 },
+  { id: 'mobile', label: '手机 375', width: 375 },
+]
+
+function copyText(text) {
+  const run = async () => {
+    try {
+      await navigator.clipboard.writeText(String(text || ''))
+      toast('已复制到剪贴板', 'ok')
+    } catch {
+      toast('复制失败：浏览器没给剪贴板权限', 'warn')
+    }
+  }
+  run()
+}
+
+function webStateText(web) {
+  if (web.state === 'loading') return '加载中…'
+  if (web.state === 'blocked') return '嵌入被拒绝 / 无响应'
+  if (web.state === 'ok') return '已加载' + (web.ms ? ' · ' + web.ms + 'ms' : '')
+  if (web.state === 'error') return '加载失败'
+  return '未加载'
+}
+
+/* 开发时真正会用到的几个端口：一键换，不用手打 */
+const LOCAL_PORTS = [3000, 5173, 8080, 4173]
+
+function localPortUrl(current, port) {
+  try {
+    const u = new URL(current || '/', 'http://localhost')
+    return u.protocol + '//' + u.hostname + ':' + port + '/'
+  } catch {
+    return 'http://localhost:' + port + '/'
+  }
+}
+
 export function WebPane({ project }) {
   useStore()
   const web = store.web
-  const defaultUrl = siteUrlOf(project)
   const [draft, setDraft] = useState('')
-  const url = web.url || defaultUrl
 
-  const go = (raw) => {
-    let next = String(raw || '').trim()
-    if (!next) return
-    if (!/^https?:\/\//i.test(next) && !next.startsWith('/')) next = 'http://' + next
-    setWebUrl(next)
-  }
-  const reload = () => setWebUrl(url)
+  /* 切项目时把地址 / 历史 / 探测结果都换到那个项目上 */
+  useEffect(() => { webSync(project) }, [project?.id])
+
+  const url = web.url
+  const shown = draft || url
+  const probe = web.probe
+  const vp = VIEWPORTS.find((v) => v.id === web.viewport) || VIEWPORTS[0]
+  const atStart = web.index <= 0
+  const atEnd = web.index >= web.history.length - 1
+
+  const go = (raw) => { if (webGoto(raw)) setDraft('') }
 
   return el('div', { className: 'pane-body web-body' },
-    el('div', { className: 'web-bar' },
-      el('button', { type: 'button', className: 'mini-btn', title: '刷新', onClick: reload }, '⟳'),
+    el('div', { className: 'wb-bar' },
+      el('button', { type: 'button', className: 'mini-btn', title: '后退', disabled: atStart, onClick: () => webBack() }, '←'),
+      el('button', { type: 'button', className: 'mini-btn', title: '前进', disabled: atEnd, onClick: () => webForward() }, '→'),
+      el('button', {
+        type: 'button', className: 'mini-btn' + (web.state === 'loading' ? ' on' : ''),
+        title: '重新加载', onClick: () => webReload(),
+      }, '⟳'),
       el('input', {
-        className: 'mono', value: draft || url, spellCheck: false,
-        placeholder: 'http://localhost:3000',
+        className: 'mono wb-url', value: shown, spellCheck: false, autoComplete: 'off',
+        placeholder: 'http://localhost:5173',
         onChange: (e) => setDraft(e.target.value),
-        onKeyDown: (e) => { if (e.key === 'Enter') { go(draft || url); setDraft('') } },
+        onKeyDown: (e) => {
+          if (e.key === 'Enter') go(draft || url)
+          if (e.key === 'Escape') setDraft('')
+        },
       }),
       el('button', { type: 'button', className: 'mini-btn', onClick: () => go(draft || url) }, '打开'),
-      el('button', { type: 'button', className: 'mini-btn', title: '恢复项目静态站点', onClick: () => { setDraft(''); setWebUrl('') } }, '项目页'),
+      el('button', {
+        type: 'button', className: 'mini-btn',
+        title: '探测：服务在不在、能不能被 iframe 嵌',
+        onClick: () => webProbe(draft || url),
+      }, probe.state === 'loading' ? '探测中…' : '探测'),
     ),
-    el('div', { className: 'web-frame' },
-      url
-        ? el('iframe', { src: url, title: '浏览器', sandbox: 'allow-scripts allow-same-origin allow-forms allow-popups' })
-        : el('div', { className: 'pane-empty' },
-          el('span', { className: 'pe-ico' }, '◍'),
-          el('p', null, '浏览器窗格'),
-          el('p', { className: 'hint' }, '默认打开项目的静态托管地址（宿主 /api/trae-worktable/site/<项目>/）。也可以填本地开发服务器地址，例如 http://localhost:5173。'),
-        ),
+
+    el('div', { className: 'wb-bar wb-sub' },
+      el('button', {
+        type: 'button', className: 'mini-btn',
+        title: '项目静态托管页（宿主 /site/<项目>/）',
+        onClick: () => { setDraft(''); go(siteUrlOf(project)) },
+      }, '项目页'),
+      el('div', { className: 'wb-ports' },
+        LOCAL_PORTS.map((p) => el('button', {
+          key: p, type: 'button', className: 'mini-btn',
+          title: '切到 ' + localPortUrl(url, p),
+          onClick: () => { setDraft(''); go(localPortUrl(url, p)) },
+        }, ':' + p)),
+      ),
+      el('div', { className: 'wb-vps' },
+        VIEWPORTS.map((v) => el('button', {
+          key: v.id, type: 'button',
+          className: 'mini-btn' + (web.viewport === v.id ? ' on' : ''),
+          title: '视口宽度：' + v.label,
+          onClick: () => webSetViewport(v.id),
+        }, v.label)),
+      ),
+      el('span', { className: 'wb-spacer' }),
+      el('span', { className: 'wb-state ' + web.state }, webStateText(web)),
+      el('button', { type: 'button', className: 'mini-btn', title: '复制地址', onClick: () => copyText(url) }, '⧉'),
+      el('button', {
+        type: 'button', className: 'mini-btn', title: '用系统浏览器打开（iframe 被拒时唯一出路）',
+        onClick: () => webOpenExternal(draft || url),
+      }, '🚀 系统浏览器'),
     ),
-    el('p', { className: 'web-note' }, '提示：本地开发服务器页面在 iframe 里可能因 X-Frame-Options 拒绝加载，此时请用系统浏览器打开。'),
+
+    el('div', { className: 'wb-stage' },
+      el('div', {
+        className: 'wb-view' + (vp.width ? ' fixed' : ''),
+        style: vp.width ? { width: vp.width + 'px' } : null,
+      },
+        web.state === 'blocked'
+          ? el('div', { className: 'wb-fail' },
+            el('span', { className: 'wb-fail-ico', 'aria-hidden': 'true' }, '⚠'),
+            el('p', { className: 'wb-fail-title' }, '这个页面没能嵌进来'),
+            el('p', { className: 'wb-fail-text' }, web.error || 'iframe 没有加载完成。'),
+            el('p', { className: 'wb-fail-url mono' }, url),
+            el('div', { className: 'wb-fail-acts' },
+              el('button', { type: 'button', className: 'mini-btn', onClick: () => webReload() }, '重试'),
+              el('button', { type: 'button', className: 'mini-btn', onClick: () => webProbe(url) }, '探测原因'),
+              el('button', { type: 'button', className: 'mini-btn', onClick: () => copyText(url) }, '复制地址'),
+              el('button', { type: 'button', className: 'mini-btn on', onClick: () => webOpenExternal(url) }, '🚀 系统浏览器打开'),
+            ),
+          )
+          : url
+            ? el('iframe', {
+              /* key 里带 at：点刷新时整个 iframe 重建，等于真刷新 */
+              key: url + '|' + web.at,
+              src: url,
+              title: '浏览器',
+              sandbox: 'allow-scripts allow-same-origin allow-forms allow-popups',
+              onLoad: () => webLoaded(),
+            })
+            : el('div', { className: 'pane-empty' },
+              el('span', { className: 'pe-ico' }, '◍'),
+              el('p', null, '浏览器窗格'),
+              el('p', { className: 'hint' }, '默认打开项目的静态托管地址；也可以填本地开发服务器，例如 http://localhost:5173（省略 http:// 也认）。'),
+            ),
+        web.state === 'loading' ? el('div', { className: 'wb-loading', 'aria-hidden': 'true' }) : null,
+      ),
+    ),
+
+    probe.state !== 'idle'
+      ? el('p', {
+        className: 'wb-note ' + (probe.state === 'error' || !probe.ok ? 'warn' : (probe.frameable ? 'ok' : 'warn')),
+      },
+        probe.state === 'loading' ? '探测中…'
+          : probe.state === 'error' ? '探测失败：' + probe.error
+            : probe.ok
+              ? '✅ HTTP ' + (probe.status || '?') + ' · ' + probe.ms + 'ms'
+                + (probe.title ? ' · ' + probe.title : '')
+                + (probe.frameable ? ' · 可以嵌入' : ' · 不能嵌入（' + probe.reason + '）')
+              : '❌ 连不上：' + (probe.error || '没有响应'),
+      )
+      : el('p', { className: 'wb-note' }, '提示：dev server 若带 X-Frame-Options / CSP，iframe 会白屏。先点「探测」，它会提前告诉你能不能嵌。'),
   )
 }
 
 /* ============================ 主区：自定义窗口 ============================ */
 
-export function CustomPane() {
+const CUSTOM_VIEWS = [
+  { id: 'prompt', label: '✨ 生成' },
+  { id: 'preview', label: '预览' },
+  { id: 'edit', label: '编辑' },
+]
+
+export function CustomPane({ project }) {
   useStore()
-  const html = store.custom.html
-  const [draft, setDraft] = useState(html)
-  const [applied, setApplied] = useState(html)
+  const cu = store.custom
+  const draft = cu.draft
+  const requirement = cu.requirement || ''
+  const [targetPid, setTargetPid] = useState(project?.id || '')
+  const [nonce, setNonce] = useState(0)
 
-  const apply = () => { setCustomHtml(draft); setApplied(draft) }
+  useEffect(() => {
+    if (store.custom.state === 'idle') loadCustom()
+  }, [])
 
-  return el('div', { className: 'pane-body custom-body' },
-    el('div', { className: 'custom-split' },
-      el('div', { className: 'custom-editor' },
-        el('div', { className: 'ed-bar' },
-          el('span', { className: 'ed-name' }, '自定义 HTML'),
-          el('button', { type: 'button', className: 'mini-btn on', onClick: apply }, '运行'),
-          el('button', { type: 'button', className: 'mini-btn', onClick: () => { setDraft(''); apply() } }, '清空'),
+  useEffect(() => {
+    if (project?.id) setTargetPid((cur) => cur || project.id)
+  }, [project?.id])
+
+  const projects = (store.projects || []).filter((p) => !p.hidden)
+  const targetProject = projects.find((p) => p.id === targetPid) || project || null
+  const body = draft ? String(draft.body || '') : ''
+  const isUrl = draft?.kind === 'url'
+  const isNew = !!draft && !draft.id
+  const dirty = !!draft && !!cu.item && (draft.name !== cu.item.name || draft.body !== cu.item.body || draft.kind !== cu.item.kind)
+
+  const makePrompt = () => {
+    const text = buildCustomPrompt(targetProject, requirement, draft?.name || '')
+    if (!text) { toast('先写一句需求', 'warn'); return }
+    setCustomPrompt(text)
+  }
+
+  const sendToHost = () => {
+    const text = cu.prompt || buildCustomPrompt(targetProject, requirement, draft?.name || '')
+    if (!text) { toast('先写一句需求', 'warn'); return }
+    if (fillHostInput(text)) toast('已填进右侧对话输入框，回车发送即可', 'ok')
+    else {
+      copyText(text)
+      toast('没找到宿主输入框：提示词已复制，粘到右侧对话里即可', 'warn')
+    }
+  }
+
+  const pasteResult = async () => {
+    try {
+      const text = await navigator.clipboard.readText()
+      if (!text.trim()) { toast('剪贴板是空的', 'warn'); return }
+      /* AI 爱把 HTML 包在 ```html 围栏里，粘进来顺手剥掉 */
+      const clean = String(text).replace(/^\s*```[a-z]*\s*\n/i, '').replace(/\n```\s*$/, '')
+      editCustom({ body: clean })
+      setCustomView('preview')
+      setNonce((n) => n + 1)
+      toast('已从剪贴板粘入，别忘了「保存」', 'ok')
+    } catch {
+      toast('读不到剪贴板，手动切到「编辑」粘贴吧', 'warn')
+    }
+  }
+
+  /* 切走会丢未保存的改动：问一句，别默默吃掉 */
+  const guardDirty = () => {
+    if (!dirty) return true
+    if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      return window.confirm('当前改动还没保存，继续就会丢掉。确定？')
+    }
+    return true
+  }
+
+  const openNew = (kind, view) => {
+    if (!guardDirty()) return
+    newCustomDraft(kind, view)
+    /* 记一下是哪个项目里建的，方便以后按项目分组 */
+    if (project?.id) editCustom({ pid: project.id })
+    setNonce((n) => n + 1)
+  }
+
+  if (cu.state === 'loading' && !cu.items.length) {
+    return el('div', { className: 'pane-body' }, el('p', { className: 'wt-mute' }, '读取自定义窗口…'))
+  }
+
+  if (cu.state === 'error' && !cu.items.length) {
+    return el('div', { className: 'pane-body' },
+      el('div', { className: 'pane-error' },
+        el('p', null, '自定义窗口读不出来：' + cu.error),
+        el('p', { className: 'hint' }, '这个功能把内容存在 DSH 主目录的 worktable-custom.json 里，读写失败通常是权限或磁盘问题。'),
+        el('div', { className: 'ed-note-acts' },
+          el('button', { type: 'button', className: 'btn small', onClick: () => loadCustom() }, '重试'),
+          el('button', { type: 'button', className: 'mini-btn', onClick: () => openNew('html', 'edit') }, '不用库，直接写一个'),
         ),
-        el('textarea', {
-          className: 'ed-area mono', spellCheck: false, value: draft,
-          onChange: (e) => setDraft(e.target.value),
-          onKeyDown: (e) => { if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') { e.preventDefault(); apply() } },
-        }),
       ),
-      el('div', { className: 'custom-preview' },
-        el('iframe', { title: '自定义预览', sandbox: 'allow-scripts allow-forms', srcDoc: applied }),
+    )
+  }
+
+  /* ---------- 主体内容（三种视图） ---------- */
+
+  let stage
+  if (!draft) {
+    stage = el('div', { className: 'pane-empty' },
+      el('span', { className: 'pe-ico' }, '❖'),
+      el('p', null, '自定义窗口'),
+      el('p', { className: 'hint' }, '把常用的小工具做成工作台里的一个窗格。一句话描述让 AI 写，或者自己贴一段 HTML。内容存在本机 DSH 主目录，不写进项目仓库。'),
+      el('div', { className: 'pe-actions' },
+        el('button', { type: 'button', className: 'btn small', onClick: () => openNew('html') }, '✨ 新建一个'),
+        el('button', { type: 'button', className: 'mini-btn', onClick: () => loadCustom() }, '⟳ 重新读取'),
+      ),
+      cu.items.length
+        ? el('p', { className: 'hint' }, '左边有 ' + cu.items.length + ' 个已保存的窗口，点一下就能看。')
+        : null,
+    )
+  } else if (cu.view === 'prompt') {
+    stage = el('div', { className: 'cu-card' },
+      el('span', { className: 'cu-card-title' }, '✨ 描述你想要的窗口'),
+      el('p', { className: 'cu-hint' },
+        '写一句需求 → 生成提示词 → 填进右侧对话输入框。AI 给出 HTML 后，切到「编辑」贴进来再保存，就成这个窗格了。'),
+      el('textarea', {
+        className: 'cu-input',
+        value: requirement,
+        autoFocus: true,
+        placeholder: '例如：做一个读 package.json 的脚本速查卡，列出所有 npm run 命令，点一下复制',
+        onChange: (e) => setCustomRequirement(e.target.value),
+        onKeyDown: (e) => { if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'enter') makePrompt() },
+      }),
+      el('div', { className: 'cu-row' },
+        el('span', { className: 'cu-label' }, '项目'),
+        projects.length
+          ? el('select', {
+            className: 'cu-select', value: targetPid,
+            onChange: (e) => setTargetPid(e.target.value),
+          }, projects.map((p) => el('option', { key: p.id, value: p.id }, p.alias || p.name)))
+          : el('span', { className: 'cu-label' }, '（还没有项目）'),
+      ),
+      el('div', { className: 'cu-acts' },
+        el('button', { type: 'button', className: 'btn small', onClick: makePrompt }, '生成提示词'),
+        el('button', { type: 'button', className: 'mini-btn', disabled: !cu.prompt, onClick: () => copyText(cu.prompt) }, '复制'),
+        el('button', { type: 'button', className: 'mini-btn on', title: '写进右侧对话的输入框，不替你发送', onClick: sendToHost }, '✨ 填到对话输入框'),
+        el('button', { type: 'button', className: 'mini-btn', title: '把剪贴板里的 HTML 贴进来', onClick: pasteResult }, '⤓ 粘贴结果'),
+      ),
+      cu.prompt
+        ? el('textarea', { className: 'cu-prompt mono', readOnly: true, value: cu.prompt, spellCheck: false })
+        : null,
+    )
+  } else if (cu.view === 'preview') {
+    stage = body
+      ? el('div', { className: 'cu-preview' },
+        isUrl
+          ? el('iframe', {
+            key: 'u' + nonce,
+            src: body,
+            title: draft.name || '自定义窗口',
+            sandbox: 'allow-scripts allow-forms allow-popups allow-same-origin',
+          })
+          : el('iframe', {
+            key: 'h' + nonce + ':' + body.length,
+            srcDoc: body,
+            title: draft.name || '自定义窗口',
+            sandbox: 'allow-scripts allow-forms allow-modals',
+          }),
+      )
+      : el('div', { className: 'pane-empty' },
+        el('span', { className: 'pe-ico' }, '◇'),
+        el('p', null, isUrl ? '还没填地址' : '还没有内容'),
+        el('p', { className: 'hint' }, isUrl ? '切到「编辑」填一个 http/https 地址。' : '切到「编辑」写点 HTML，或者用「生成」让 AI 来做。'),
+      )
+  } else {
+    stage = isUrl
+      ? el('div', { className: 'cu-urlbox' },
+        el('p', { className: 'cu-hint' }, '窗口内容就是这个网址（iframe 嵌入）。跨域页面若带 X-Frame-Options，同样会白屏 —— 可以先回「生成」页用浏览器窗格探测。'),
+        el('input', {
+          className: 'mono cu-url', value: body, spellCheck: false, placeholder: 'https://example.com/dashboard',
+          onChange: (e) => editCustom({ body: e.target.value }),
+        }),
+      )
+      : el('textarea', {
+        className: 'cu-code mono',
+        spellCheck: false,
+        value: body,
+        placeholder: '<!-- 一段自包含的 HTML：可以带 <style> / <script> -->',
+        onChange: (e) => editCustom({ body: e.target.value }),
+        onKeyDown: (e) => {
+          if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') { e.preventDefault(); saveCustom() }
+        },
+      })
+  }
+
+  return el('div', { className: 'pane-body cu-body' },
+    el('div', { className: 'cu-side' },
+      el('div', { className: 'cu-side-head' },
+        el('span', null, '窗口'),
+        el('button', { type: 'button', className: 'mini-btn', title: '新建', onClick: () => openNew('html', 'edit') }, '＋'),
+      ),
+      el('div', { className: 'cu-list' },
+        cu.items.length
+          ? cu.items.map((it) => el('div', {
+            key: it.id,
+            className: 'cu-item' + (it.id === cu.active ? ' on' : ''),
+            role: 'button',
+            title: it.id,
+            onClick: () => { if (guardDirty()) { openCustom(it.id); setNonce((n) => n + 1) } },
+          },
+            el('span', { className: 'cu-item-ico', 'aria-hidden': 'true' }, it.kind === 'url' ? '◍' : '❖'),
+            el('span', { className: 'cu-item-name' }, it.name),
+          ))
+          : el('p', { className: 'cu-empty' }, '还没有保存过'),
+      ),
+      el('div', { className: 'cu-side-foot' },
+        el('button', { type: 'button', className: 'mini-btn', onClick: () => openNew('html', 'edit') }, '＋ 自己写'),
+        el('button', { type: 'button', className: 'mini-btn', onClick: () => openNew('url', 'edit') }, '＋ 网址'),
+      ),
+    ),
+
+    el('div', { className: 'cu-main' },
+      el('div', { className: 'cu-bar' },
+        el('input', {
+          className: 'cu-name',
+          value: draft ? String(draft.name || '') : '',
+          placeholder: isNew ? '给这个窗口起个名字' : '窗口名',
+          spellCheck: false,
+          onChange: (e) => editCustom({ name: e.target.value }),
+        }),
+        dirty ? el('span', { className: 'tag warn' }, '未保存') : null,
+        isNew && draft ? el('span', { className: 'tag' }, '新建') : null,
+        el('div', { className: 'cu-views' },
+          CUSTOM_VIEWS.map((v) => el('button', {
+            key: v.id, type: 'button',
+            className: 'mini-btn' + (cu.view === v.id ? ' on' : ''),
+            onClick: () => { setCustomView(v.id); if (v.id === 'preview') setNonce((n) => n + 1) },
+          }, v.label)),
+        ),
+        el('button', {
+          type: 'button', className: 'mini-btn on',
+          disabled: !draft || cu.busy === 'saving',
+          title: '保存 (Ctrl+S)',
+          onClick: () => saveCustom(),
+        }, cu.busy === 'saving' ? '保存中…' : '保存'),
+        el('button', {
+          type: 'button', className: 'mini-btn danger',
+          disabled: !cu.item || cu.busy === 'deleting',
+          title: '从库里删掉这个窗口',
+          onClick: () => deleteCustom(cu.active),
+        }, cu.busy === 'deleting' ? '删除中…' : '删除'),
+      ),
+
+      el('div', { className: 'cu-stage' }, stage),
+
+      el('div', { className: 'cu-foot' },
+        cu.file ? el('span', { className: 'mono', title: cu.file }, '库：' + shortPath(cu.file, 46)) : null,
+        cu.item ? el('span', { className: 'mono' }, cu.item.id + ' · ' + (cu.item.kind === 'url' ? '网址' : 'HTML') + ' · ' + fmtSize(body.length)) : null,
+        cu.error ? el('span', { className: 'cu-err' }, cu.error) : null,
       ),
     ),
   )
