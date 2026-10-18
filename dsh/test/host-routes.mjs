@@ -249,7 +249,12 @@ const siteTrav = await getSite(BASE + '/site/p-test/%2e%2e%2f%2e%2e%2fpackage.js
 check('/site 拦截编码路径穿越', siteTrav.status === 403, siteTrav.status + ' ' + siteTrav.body.slice(0, 60))
 
 const siteDeep = await getSite(BASE + '/site/p-test/sub2/deep/')
-check('/site 目录回退 index 或 404', siteDeep.status === 404, siteDeep.status + ' ' + siteDeep.body.slice(0, 50))
+check('/site 无 index 时回退目录页', siteDeep.status === 200 && siteDeep.body.includes('deep') && siteDeep.body.includes('目录列表'), siteDeep.status + ' ' + siteDeep.body.slice(0, 60))
+
+writeFileSync(join(tmp, 'plain.txt'), 'plain', 'utf8')
+const siteFile = await getSite(BASE + '/site/p-test/plain.txt')
+check('/site 直出普通文件', siteFile.status === 200 && siteFile.body === 'plain', siteFile.status + ' ' + siteFile.body.slice(0, 20))
+check('/site 普通文件 mime', String(siteFile.headers['content-type']).includes('text/plain'), siteFile.headers['content-type'])
 
 /* ============================ 终端 ============================ */
 

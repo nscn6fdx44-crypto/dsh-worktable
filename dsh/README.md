@@ -128,7 +128,7 @@ dsh/
 │       ├── modals.js   # 新建 / 编辑 / 绑定
 │       └── theme.css   # 全套样式（收在 .wt-scope 下）
 ├── test/
-│   ├── host-routes.mjs # 54 项：路由 / 沙箱 / 文件 / git / 托管 / 终端
+│   ├── host-routes.mjs # 56 项：路由 / 沙箱 / 文件 / git / 托管 / 终端
 │   └── client-smoke.mjs# 57 项：座位 / 侧边栏 / 菜单 / 分栏 / 标签页 / 小窗
 └── lib/                # 构建产物（安装前必须 build）
 ```

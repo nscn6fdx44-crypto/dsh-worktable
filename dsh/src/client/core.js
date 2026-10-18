@@ -450,9 +450,11 @@ export function enterProject(pid) {
   loadTranscript(primary ? primary.id : '')
   loadSessions()
   if (!store.defaults.loaded) loadDefaults()
-  registerProjectRoot(project)
-  loadTree(project.path)
-  loadGit(pid)
+  /* 先登记项目根，再读目录：host 的路径白名单靠这次登记放行（D 盘项目尤其需要） */
+  registerProjectRoot(project).finally(() => {
+    loadTree(project.path)
+    loadGit(pid)
+  })
 }
 
 export function closeOverlay() {

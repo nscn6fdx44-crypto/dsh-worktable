@@ -373,9 +373,11 @@ export function apply(ctx) {
     const target = safeJoin(root, rel || 'index.html')
     if (!target) return sendJson(res, 403, { error: '路径越界' })
     let file = target
-    try {
-      if (isDirQuiet(file)) file = join(file, 'index.html')
-    } catch { /* 交给下面的 stat 报错 */ }
+    if (!rel || isDirQuiet(file)) {
+      const index = join(isDirQuiet(file) ? file : root, 'index.html')
+      if (existsSync(index)) file = index
+      else if (!rel || isDirQuiet(target)) return sendListing(res, isDirQuiet(target) ? target : root)
+    }
     let st
     try { st = statSync(file) } catch {
       return sendJson(res, 404, { error: '文件不存在：' + (rel || 'index.html') })
@@ -1011,6 +1013,30 @@ function guard(handler) {
       if (!res.writableEnded) sendJson(res, status, { error: msg(err) })
     }
   }
+}
+
+/** 没有 index.html 时给一个纯静态目录页，浏览器窗格不至于只看到 404 JSON */
+function sendListing(res, dir) {
+  let rows = []
+  try {
+    rows = readdirSync(dir, { withFileTypes: true })
+      .map((d) => ({ name: d.name, dir: d.isDirectory() }))
+      .sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1))
+  } catch (err) {
+    return sendJson(res, 403, { error: '目录不可读：' + msg(err) })
+  }
+  const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  const items = rows.map((r) => '<li><a href="' + encodeURIComponent(r.name) + (r.dir ? '/' : '') + '">'
+    + (r.dir ? '📁 ' : '📄 ') + esc(r.name) + (r.dir ? '/' : '') + '</a></li>').join('')
+  const html = '<!doctype html><meta charset="utf-8"><title>' + esc(basename(dir)) + '</title>'
+    + '<style>body{font:14px/1.6 system-ui,"Segoe UI",sans-serif;background:#0f1218;color:#dfe4ea;padding:28px}'
+    + 'h1{font-size:16px;color:#f0b429;margin:0 0 4px}p{color:#6e7683;font-size:12px;margin:0 0 16px}'
+    + 'ul{list-style:none;padding:0;margin:0}li{border-bottom:1px solid #1c2129}'
+    + 'a{display:block;padding:7px 4px;color:#cfd6df;text-decoration:none}a:hover{color:#f0b429}</style>'
+    + '<h1>' + esc(basename(dir)) + '</h1><p>没有 index.html，这是托管目录列表</p><ul>' + items + '</ul>'
+  const body = Buffer.from(html, 'utf8')
+  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' })
+  res.end(body)
 }
 
 function mimeOf(file) {
