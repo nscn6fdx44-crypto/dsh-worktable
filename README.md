@@ -16,6 +16,22 @@ This repo is an independent re-implementation (MIT) of the open-source project [
 
 ---
 
+# DSH plugin — install
+
+The repo's headline artifact: a DeepSeek Harness (DSH) side-panel worktable. Requires **DSH `0.2.0-rc.2` or `0.2.1-rc.2`**.
+
+**Install from the Release (recommended)** — download the prebuilt package, no build step:
+
+1. Download `trae-usage-worktable-0.8.11.tgz` from the [v0.8.11 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.8.11)
+2. **Fully quit DSH first** (right-click the tray icon → Exit) — otherwise the CLI refuses with `profile "desktop" is managed exclusively by the Electron application`
+3. In PowerShell:
+   ```powershell
+   & "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "C:\path\to\trae-usage-worktable-0.8.11.tgz"
+   ```
+4. Reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar
+
+For building from source or the developer `link` install, see [`dsh/README.md`](dsh/README.md).
+
 # Single-file workbench
 
 Three core capabilities:

@@ -14,6 +14,22 @@
 
 ---
 
+# DSH 插件 —— 安装
+
+本仓库的主打产物：DeepSeek Harness（DSH）侧边栏工作台。需要 **DSH `0.2.0-rc.2` 或 `0.2.1-rc.2`**。
+
+**从 Release 安装（推荐）**——下载预构建包，无需自己构建：
+
+1. 从 [v0.8.11 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.8.11) 下载 `trae-usage-worktable-0.8.11.tgz`
+2. **先完整退出 DSH**（右键托盘图标 → 退出）——否则 CLI 会报错 `profile "desktop" is managed exclusively by the Electron application`
+3. 在 PowerShell 执行：
+   ```powershell
+   & "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "C:\路径\trae-usage-worktable-0.8.11.tgz"
+   ```
+4. 重开 DSH —— 侧边栏即出现「工作台」面板
+
+从源码构建或开发者 `link` 安装，见 [`dsh/README.md`](dsh/README.md)。
+
 # workbench 单文件工作台
 
 三个核心能力：
