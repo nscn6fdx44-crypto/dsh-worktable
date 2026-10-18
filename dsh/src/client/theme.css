@@ -47,15 +47,19 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 
 .wt-side {
   display: flex; flex-direction: column; gap: 9px; width: 100%; min-width: 0;
-  /* 固定高度：侧边栏面积不随项目数量变，项目列表在内部滚动 */
-  height: min(70vh, 640px); padding: 10px 9px 9px; border-radius: 14px;
+  /* 不参与宿主侧边栏的拉伸：高度只由内容和上面的上限决定 */
+  flex: 0 0 auto;
+  /* 保持原来的紧凑大小：高度跟着内容走，不拉满整列；
+     项目多了才往上长，且封顶在 min(46vh, 330px)，超出部分由 .plist 内部滚动。
+     注意别用固定 height —— 会把项目少的卡片撑出一大片空白。 */
+  max-height: min(46vh, 330px); padding: 10px 9px 9px; border-radius: 14px;
   border: 1px solid rgba(240, 180, 41, .34);
   background:
     radial-gradient(120% 70% at 12% -10%, rgba(240,180,41,.30), rgba(240,180,41,.06) 55%, transparent 78%),
     linear-gradient(170deg, rgba(58,44,16,.62), rgba(28,24,16,.86) 46%, rgba(16,15,13,.92));
   box-shadow: 0 12px 30px -22px rgba(240,180,41,.55), inset 0 1px 0 rgba(255,224,150,.14);
 }
-.wt-side .brand { display: flex; align-items: center; gap: 9px; padding: 0 4px 2px; min-width: 0; }
+.wt-side .brand { display: flex; align-items: center; gap: 9px; flex: none; padding: 0 4px 2px; min-width: 0; }
 .wt-side .brand-mark {
   width: 28px; height: 28px; flex: none; border-radius: 9px; display: grid; place-items: center;
   background: linear-gradient(150deg, rgba(240,180,41,.30), rgba(240,180,41,.06));
@@ -119,7 +123,7 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 .wt-side .show-hidden { margin-top: 4px; padding: 5px 8px; border: 1px dashed rgba(240,180,41,.28); border-radius: 8px; background: transparent; color: rgba(246,218,156,.6); font-size: 10.5px; cursor: pointer; }
 .wt-side .show-hidden:hover { color: #f7dd9f; border-color: rgba(240,180,41,.5); }
 
-.wt-side .side-tip { margin: 0; padding: 2px 8px 0; font-size: 9.5px; line-height: 1.5; color: rgba(246,218,156,.42); }
+.wt-side .side-tip { flex: none; margin: 0; padding: 2px 8px 0; font-size: 9.5px; line-height: 1.5; color: rgba(246,218,156,.42); }
 
 /* ============================ 状态灯 ============================ */
 
