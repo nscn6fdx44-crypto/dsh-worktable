@@ -3,11 +3,11 @@
  * 全部只写 localStorage（项目元数据），不动磁盘。
  */
 import { useState } from 'react'
-import { el, Modal, LayoutSketch, Light } from './ui.js'
+import { el, Modal, ModeSketch, Light } from './ui.js'
 import {
-  store, useStore, STATES, normState, LAYOUTS, DEFAULT_LAYOUT,
-  EMOJI_CHOICES, shortPath, relTime, addProject, updateProject, closeModal,
-  bindSession, unbindSession, sessionsOf, openModal, loadSessions, projectOf,
+  store, useStore, STATES, normState, MODES, DEFAULT_MODE,
+  EMOJI_CHOICES, shortPath, addProject, updateProject, closeModal,
+  bindSession, unbindSession, setPrimarySession, sessionsOf, loadSessions, projectOf,
 } from './core.js'
 
 export function ModalHost() {
@@ -28,12 +28,12 @@ function AddProjectModal() {
   const [name, setName] = useState('')
   const [path, setPath] = useState(defaults.workspace || '')
   const [emoji, setEmoji] = useState('')
-  const [layout, setLayout] = useState(DEFAULT_LAYOUT)
+  const [mode, setMode] = useState(DEFAULT_MODE)
   const [sessionId, setSessionId] = useState('')
   const rows = store.sessions.rows
 
   const submit = () => {
-    const pid = addProject({ name, path, emoji, layout, sessionId })
+    const pid = addProject({ name, path, emoji, mode, sessionId })
     if (pid) closeModal()
   }
   const onKey = (e) => { if (e.key === 'Enter') submit() }
@@ -82,13 +82,13 @@ function AddProjectModal() {
         : '可手填绝对路径（需在用户目录 / DSH 工作区内）'),
     ),
     el('div', { className: 'field' },
-      el('label', null, '界面布局'),
+      el('label', null, '工作区模式'),
       el('div', { className: 'layout-row' },
-        LAYOUTS.map((item) => el('button', {
-          key: item.id, type: 'button', className: 'layout-card' + (item.id === layout ? ' on' : ''), title: item.hint,
-          onClick: (e) => { e.preventDefault(); setLayout(item.id) },
+        MODES.map((item) => el('button', {
+          key: item.id, type: 'button', className: 'layout-card' + (item.id === mode ? ' on' : ''), title: item.hint,
+          onClick: (e) => { e.preventDefault(); setMode(item.id) },
         },
-          el(LayoutSketch, { layout: item.id }),
+          el(ModeSketch, { mode: item.id }),
           el('span', { className: 'lc-label' }, item.label),
           el('small', { className: 'lc-k' }, item.hint),
         )),
@@ -192,19 +192,25 @@ function BindModal({ pid }) {
       bound.map((s, i) => el('span', { key: s.id, className: 'bound-chip' + (i === 0 ? ' main' : '') },
         el('span', { className: 'light ' + normState(s.state), 'aria-hidden': 'true' }),
         el('span', { className: 'bc-title' }, s.title || s.id),
-        i === 0 ? el('small', null, '主') : null,
+        i === 0
+          ? el('small', null, '主')
+          : el('button', {
+            type: 'button', className: 'bc-main', title: '设为主对话',
+            onClick: () => setPrimarySession(pid, s.id),
+          }, '设为主'),
         el('button', {
           type: 'button', className: 'bc-x', title: '解除绑定',
           onClick: () => unbindSession(pid, s.id),
         }, '✕'),
       )),
-    ) : el('div', { className: 'modal-note' }, '还没有绑定任何对话'),
+    ) : el('div', { className: 'modal-note' }, '还没有绑定任何对话，点下面的会话即可绑定'),
     state === 'error' ? el('div', { className: 'modal-note err' }, '读取会话失败：' + (store.sessions.error || '未知原因')) : null,
     state === 'pending' ? el('div', { className: 'modal-note' }, '正在读取会话…') : null,
     el('div', { className: 'session-list' },
       rows.length
         ? rows.slice(0, 80).map((s) => {
           const on = project.sessions.includes(s.id)
+          const isPrimary = project.sessions[0] === s.id
           return el('button', {
             key: s.id, type: 'button',
             className: 'session-row' + (on ? ' active' : ''),
@@ -216,7 +222,7 @@ function BindModal({ pid }) {
               el('span', { className: 'sr-sub' }, shortPath(s.cwd || s.id, 46)),
             ),
             el('span', { className: 'tag' }, STATES[normState(s.state)].label),
-            el('span', { className: 'sr-act' }, on ? '已绑定' : '绑定'),
+            el('span', { className: 'sr-act' }, isPrimary ? '主对话' : (on ? '已绑定' : '绑定')),
           )
         })
         : el('div', { className: 'empty' }, state === 'pending' ? '读取中…' : '宿主没有返回任何会话'),

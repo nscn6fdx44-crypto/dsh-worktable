@@ -42,20 +42,36 @@ export function normState(raw) {
 }
 
 /**
- * 布局预设：parts 决定分几栏，split 是初始像素宽。
- * 新增预设只需往这里加一行 —— 渲染、草图、右击菜单、小窗都读这张表。
+ * 工作区模式：左栏（项目/文件）与对话栏恒在两侧，只有中间工作区的形态变化。
+ *   dock  全屏 —— 工作区铺满中间区域
+ *   float 窗口 —— 工作区是浮在对话栏旁的视窗，可拖动、可缩放
+ * 两种模式共用同一套标签页与窗格组件，功能完全一致。
  */
-export const LAYOUTS = [
-  { id: 'l3', label: '三分式', hint: '项目 / 工作区 / 对话', parts: ['left', 'main', 'chat'], split: { left: 250, chat: 380 } },
-  { id: 'l2', label: '两分', hint: '工作区 / 对话', parts: ['main', 'chat'], split: { chat: 400 } },
-  { id: 'full', label: '单栏', hint: '仅工作区，对话隐藏', parts: ['main'], split: {} },
-  { id: 'wide', label: '对话主导', hint: '窄工作区 / 宽对话', parts: ['main', 'chat'], split: { chat: 560 } },
+export const MODES = [
+  { id: 'dock', label: '全屏', icon: '⛶', hint: '工作区铺满中间区域' },
+  { id: 'float', label: '窗口', icon: '▣', hint: '浮在对话栏旁的视窗' },
 ]
-export const LAYOUT_IDS = LAYOUTS.map((l) => l.id)
-export const DEFAULT_LAYOUT = 'l3'
+export const MODE_IDS = MODES.map((m) => m.id)
+export const DEFAULT_MODE = 'float'
 
-export function layoutDef(id) {
-  return LAYOUTS.find((l) => l.id === id) || LAYOUTS[0]
+export function modeDef(id) {
+  return MODES.find((m) => m.id === id) || MODES[1]
+}
+
+/** 中间栏与两侧的默认宽度：中间尽量大，两侧只留够用 */
+export const DEFAULT_SPLIT = { left: 208, chat: 318 }
+
+/** 浮动窗口默认位置：偏右、贴着对话栏，四周留出可拖动的背景 */
+export const DEFAULT_WIN = { x: 0.54, y: 0.5, w: 0.9, h: 0.9 }
+
+export function clampWin(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {}
+  const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d)
+  const w = Math.max(0.42, Math.min(1, num(src.w, DEFAULT_WIN.w)))
+  const h = Math.max(0.38, Math.min(1, num(src.h, DEFAULT_WIN.h)))
+  const x = Math.max(w / 2, Math.min(1 - w / 2, num(src.x, DEFAULT_WIN.x)))
+  const y = Math.max(h / 2, Math.min(1 - h / 2, num(src.y, DEFAULT_WIN.y)))
+  return { x, y, w, h }
 }
 
 export const PANE_TABS = [
@@ -225,8 +241,8 @@ export function hydrate() {
     if (!rec.sessions.length && legacyBind && typeof legacyBind[rec.id] === 'string') {
       rec.sessions = [legacyBind[rec.id]]
     }
-    if (!ui[rec.id] && LAYOUT_IDS.includes(legacyLayouts?.[rec.id])) {
-      ui[rec.id] = { layout: legacyLayouts[rec.id] }
+    if (!ui[rec.id] && legacyLayouts && legacyLayouts[rec.id]) {
+      ui[rec.id] = { mode: 'dock' }      // 旧布局预设 → 全屏模式
     }
     return rec
   })
@@ -243,17 +259,19 @@ export function hydrate() {
 
 /* ============================ ui 片段读写 ============================ */
 
-function defaultUi(pid) {
-  return { layout: DEFAULT_LAYOUT, split: {}, leftTab: 'info', tabs: [], activeTab: '' }
+function defaultUi() {
+  return { mode: DEFAULT_MODE, split: {}, win: null, leftTab: 'info', tabs: [], activeTab: '' }
 }
 
 export function uiOf(pid) {
   const raw = store.ui[pid] || {}
-  const def = defaultUi(pid)
-  const layout = LAYOUT_IDS.includes(raw.layout) ? raw.layout : def.layout
+  const def = defaultUi()
+  /* 旧版存的是 layout 预设置；没有 mode 时按「全屏」迁移，保持原有观感 */
+  const mode = MODE_IDS.includes(raw.mode) ? raw.mode : (raw.layout ? 'dock' : def.mode)
   return {
-    layout,
+    mode,
     split: raw.split && typeof raw.split === 'object' ? raw.split : {},
+    win: raw.win && typeof raw.win === 'object' ? clampWin(raw.win) : { ...DEFAULT_WIN },
     leftTab: raw.leftTab === 'files' ? 'files' : 'info',
     tabs: Array.isArray(raw.tabs) ? raw.tabs : [],
     activeTab: typeof raw.activeTab === 'string' ? raw.activeTab : '',
@@ -479,7 +497,7 @@ function persistProjects(projects) {
   emit({ projects })
 }
 
-export function addProject({ name, path, emoji, layout, sessionId, note }) {
+export function addProject({ name, path, emoji, mode, sessionId, note }) {
   const cleanName = String(name || '').trim()
   if (!cleanName) { toast('请填写项目名称', 'warn'); return '' }
   const pid = 'p-' + Date.now().toString(36)
@@ -495,7 +513,7 @@ export function addProject({ name, path, emoji, layout, sessionId, note }) {
   })
   const projects = store.projects.concat([rec])
   persistProjects(projects)
-  patchUi(pid, { layout: LAYOUT_IDS.includes(layout) ? layout : DEFAULT_LAYOUT })
+  patchUi(pid, { mode: MODE_IDS.includes(mode) ? mode : DEFAULT_MODE })
   toast('已创建项目 ' + cleanName, 'ok')
   return pid
 }
@@ -544,7 +562,6 @@ export function bindSession(pid, sid) {
   if (!p) return
   const next = p.sessions.includes(sid) ? p.sessions : p.sessions.concat([sid])
   updateProject(pid, { sessions: next })
-  emit({ modal: null })
   if (store.activeId === pid) loadTranscript(next[0] || '')
   const s = sessionById(sid)
   toast('已绑定对话：' + (s ? s.title : sid), 'ok')
@@ -557,6 +574,16 @@ export function unbindSession(pid, sid) {
   updateProject(pid, { sessions: next })
   if (store.activeId === pid) loadTranscript(next[0] || '')
   toast('已解除绑定', 'info')
+}
+
+/** 把某个已绑定对话提为「主对话」：状态灯与右侧预览以主对话为准 */
+export function setPrimarySession(pid, sid) {
+  const p = projectOf(pid)
+  if (!p || !p.sessions.includes(sid)) return
+  const next = [sid].concat(p.sessions.filter((x) => x !== sid))
+  updateProject(pid, { sessions: next })
+  if (store.activeId === pid) loadTranscript(sid)
+  toast('已设为主对话', 'ok')
 }
 
 export function createFromSession(session) {
@@ -583,11 +610,20 @@ export function cycleStatus(pid) {
   writeLS(LS.status, status)
 }
 
-export function setLayout(pid, layout) {
-  if (!LAYOUT_IDS.includes(layout)) return
-  patchUi(pid, { layout, split: {} })
+export function setMode(pid, mode) {
+  if (!MODE_IDS.includes(mode)) return
+  patchUi(pid, { mode })
   emit({ menu: null })
-  toast('界面布局：' + layoutDef(layout).label, 'ok')
+  toast('工作区模式：' + modeDef(mode).label, 'ok')
+}
+
+/** 浮动窗口几何：x/y 是窗口中心，w/h 是占中间栏的比例 */
+export function setWinRect(pid, rect, persist = false) {
+  patchUi(pid, { win: clampWin(rect) }, persist)
+}
+
+export function resetWinRect(pid) {
+  patchUi(pid, { win: { ...DEFAULT_WIN } }, true)
 }
 
 export function setSplit(pid, key, px, persist = false) {

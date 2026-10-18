@@ -2,11 +2,11 @@
  * client bundle 离线冒烟：桩掉 React / document / localStorage / fetch / slots，
  * 加载 ModuleLoader 产物并真实渲染 + 点按钮，验证：
  *   - 两个座位注册、样式只注入一次
- *   - 侧边栏：状态栏 / 项目列表 / 宿主会话
- *   - 右击菜单：布局切换并落 localStorage
- *   - 项目工作区：三分式分栏、左栏「项目/文件」切换、标签页、编辑器、终端、对话预览
- *   - 布局预设切换后分栏数量随之变化
- *   - 新建项目小窗
+ *   - 侧边栏：状态栏 / 项目列表（不再单列宿主会话）
+ *   - 右击菜单：模式切换 + 单一「绑定对话」入口
+ *   - 项目工作区：左栏/中栏/对话栏恒在，窗口模式有浮动视窗，全屏模式铺满
+ *   - 两种模式共用标签页 / 编辑器 / 终端 / 浏览器 / 对话预览
+ *   - 新建项目小窗、对话绑定小窗
  */
 import { readFileSync } from 'node:fs'
 
@@ -25,6 +25,8 @@ globalThis.document = {
 globalThis.window = globalThis.window || {}
 globalThis.window.innerWidth = 1440
 globalThis.window.innerHeight = 900
+globalThis.window.addEventListener = () => {}
+globalThis.window.removeEventListener = () => {}
 
 const ls = new Map()
 globalThis.localStorage = {
@@ -184,7 +186,6 @@ function collect(node, out = []) {
 }
 const textOf = (node) => collect(node).filter((n) => n.text != null).map((n) => n.text).join(' ')
 const allByClass = (node, re) => collect(node).filter((n) => n.props && typeof n.props.className === 'string' && re.test(n.props.className))
-const findText = (node, label) => allByClass(node, /./).find((n) => textOf(n).trim() === label) || null
 function clickByLabel(root, label) {
   const cands = collect(root).filter((n) => n.props && typeof n.props.onClick === 'function' && textOf(n).includes(label))
   cands.sort((a, b) => textOf(a).length - textOf(b).length)
@@ -218,7 +219,9 @@ const sideText = textOf(sidebar)
 check('侧边栏有标题「工作台」', sideText.includes('工作台'))
 check('侧边栏列出项目', sideText.includes('智能小车固件') && sideText.includes('上位机面板'))
 check('状态栏显示进行中计数', /进行中/.test(sideText) && /2/.test(sideText), sideText.slice(0, 60))
-check('侧边栏列出宿主会话', sideText.includes('app-alpha 会话'))
+check('侧边栏不再单列宿主会话', allByClass(sidebar, /(^|\s)slist(\s|$)/).length === 0 && allByClass(sidebar, /(^|\s)srow(\s|$)/).length === 0)
+check('宿主对话不再出现在侧边栏', !sideText.includes('app-alpha 会话'), sideText.slice(0, 120))
+check('状态栏改为「未绑定」计数', sideText.includes('未绑定') && sideText.includes('宿主对话') === false, sideText.slice(0, 80))
 check('绑定项目带 🔗 标记', allByClass(sidebar, /pi-bind/).length === 1, allByClass(sidebar, /pi-bind/).length)
 check('项目状态灯数量 = 项目数', allByClass(sidebar, /(^|\s)light(\s|$)/).length >= 2, allByClass(sidebar, /(^|\s)light(\s|$)/).length)
 
@@ -227,12 +230,14 @@ rightClickByText(sidebar, '智能小车固件')
 let withMenu = render(sidebarComp)
 let ctxMenu = allByClass(withMenu, /ctx-menu/)[0]
 check('右击项目弹出上下文菜单', !!ctxMenu)
-check('菜单含四种布局预设', ['三分式', '两分', '单栏', '对话主导'].every((l) => textOf(ctxMenu).includes(l)), textOf(ctxMenu).replace(/\s+/g, ' ').slice(0, 90))
-check('菜单含编辑/绑定/删除', ['编辑项目信息', '对话绑定', '删除项目'].every((l) => textOf(ctxMenu).includes(l)))
+check('菜单含两种工作区模式', ['全屏', '窗口'].every((l) => textOf(ctxMenu).includes(l)), textOf(ctxMenu).replace(/\s+/g, ' ').slice(0, 90))
+check('菜单不再有四种布局预设', !['三分式', '两分', '单栏', '对话主导'].some((l) => textOf(ctxMenu).includes(l)))
+check('菜单含编辑/绑定/删除', ['编辑项目信息', '绑定对话', '删除项目'].every((l) => textOf(ctxMenu).includes(l)))
+check('绑定只有一个入口（不再有解除项）', !textOf(ctxMenu).includes('解除') && (textOf(ctxMenu).match(/绑定对话/g) || []).length === 1, textOf(ctxMenu).replace(/\s+/g, ' ').slice(0, 120))
 
-clickByLabel(ctxMenu, '两分')
-const afterLayout = JSON.parse(ls.get('wt.ui.v2') || '{}')
-check('切换布局写入 wt.ui.v2', afterLayout['custom-1'] && afterLayout['custom-1'].layout === 'l2', JSON.stringify(afterLayout['custom-1']))
+clickByLabel(ctxMenu, '窗口')
+const afterMode = JSON.parse(ls.get('wt.ui.v2') || '{}')
+check('切换模式写入 wt.ui.v2', afterMode['custom-1'] && afterMode['custom-1'].mode === 'float', JSON.stringify(afterMode['custom-1']))
 
 /* ---------- 主区：未打开时不渲染 ---------- */
 check('主区默认不渲染（占位空）', render(overlayComp) === null)
@@ -250,25 +255,31 @@ check('主区根节点带 wt-overlay', !!(overlay && /wt-overlay/.test(overlay.p
 const mainText = textOf(overlay)
 check('顶栏显示项目名', mainText.includes('智能小车固件'))
 check('顶栏有「全部项目 / 新建项目 / 关闭」', ['全部项目', '新建项目', '✕'].every((t) => mainText.includes(t)), mainText.slice(0, 80))
-check('布局切换条存在且当前为「两分」', allByClass(overlay, /(^|\s)seg(\s|$)/).length === 1)
+check('模式切换条存在', allByClass(overlay, /(^|\s)seg(\s|$)/).length === 1)
+check('左栏与对话栏恒在', allByClass(overlay, /pane-left/).length === 1 && allByClass(overlay, /pane-chat/).length === 1)
+check('中间栏与两侧各有一个分割条', allByClass(overlay, /split-handle/).length === 2)
 
-const ws = allByClass(overlay, /(^|\s)ws(\s|$)/)[0]
-check('工作区分栏存在', !!ws)
-check('两分布局：没有左栏', allByClass(overlay, /pane-left/).length === 0)
-check('两分布局：有主区与对话', allByClass(overlay, /pane-main/).length === 1 && allByClass(overlay, /pane-chat/).length === 1)
-check('两分布局：只有一个分割条', allByClass(overlay, /split-handle/).length === 1)
+/* 窗口模式 */
+check('窗口模式：中间栏是画布', allByClass(overlay, /pane-canvas/).length === 1, allByClass(overlay, /pane-canvas/).length)
+const floatWin = allByClass(overlay, /float-win/)[0]
+check('窗口模式：视窗存在', !!floatWin)
+check('视窗按比例定位在对话栏旁', !!floatWin && /%$/.test(String(floatWin.props.style.left)) && /%$/.test(String(floatWin.props.style.width)), floatWin && JSON.stringify(floatWin.props.style))
+check('视窗有标题栏与缩放角', allByClass(overlay, /float-bar/).length === 1 && allByClass(overlay, /float-grip/).length === 1)
+check('视窗有复位 / 全屏按钮', allByClass(overlay, /fb-tools/).length === 1 && ['复位', '全屏'].every((t) => textOf(floatWin).includes(t)))
+check('视窗内工作区与全屏同源（pane-nest）', allByClass(overlay, /pane-nest/).length === 1)
 
 /* 对话预览 */
 check('对话预览渲染用户消息', mainText.includes('把构建脚本整理一下'), mainText.slice(0, 120))
 check('对话预览渲染助手消息', mainText.includes('好的，先看 package.json。'))
 check('对话区标注只读', mainText.includes('只读预览'))
 
-/* 切到三分式 */
-clickByLabel(overlay, '三分式')
+/* 切到全屏模式 */
+clickByLabel(overlay, '全屏')
 overlay = render(overlayComp)
-check('三分式：出现左栏', allByClass(overlay, /pane-left/).length === 1)
-check('三分式：两个分割条', allByClass(overlay, /split-handle/).length === 2)
-check('左栏有「项目 / 文件」切换', textOf(overlay).includes('项目') && textOf(overlay).includes('文件'))
+check('全屏模式：没有浮动视窗', allByClass(overlay, /float-win/).length === 0 && allByClass(overlay, /pane-canvas/).length === 0)
+check('全屏模式：中间栏铺满', allByClass(overlay, /pane-main/).length === 1 && allByClass(overlay, /pane-nest/).length === 0)
+check('全屏模式：左栏/对话栏仍在', allByClass(overlay, /pane-left/).length === 1 && allByClass(overlay, /pane-chat/).length === 1)
+check('全屏模式不会把左栏或对话栏藏起来', textOf(overlay).includes('项目') && textOf(overlay).includes('对话'))
 
 /* 左栏信息 */
 check('项目信息显示绑定对话数', /绑定对话/.test(textOf(overlay)))
@@ -304,6 +315,14 @@ overlay = render(overlayComp)
 const frame = allByClass(overlay, /web-frame/)[0]
 check('浏览器窗格渲染 iframe', !!frame || textOf(overlay).includes('浏览器窗格'), textOf(overlay).slice(0, 60))
 
+/* 切回窗口模式，标签页应保留（两种模式功能一致） */
+clickByLabel(overlay, '窗口')
+overlay = render(overlayComp)
+check('窗口模式保留全部标签页', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 3, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
+check('窗口模式仍渲染当前窗格内容', !!allByClass(overlay, /web-frame/)[0] || textOf(overlay).includes('浏览器窗格'))
+clickByLabel(overlay, '全屏')
+overlay = render(overlayComp)
+
 /* 关闭当前标签 */
 overlay = render(overlayComp)
 const closeX = collect(overlay).find((n) => n.props && /tab-x/.test(String(n.props.className || '')) && typeof n.props.onClick === 'function')
@@ -320,13 +339,35 @@ check('网格渲染两张项目卡', allByClass(overlay, /project-card/).length 
 check('网格有新建卡片', allByClass(overlay, /add-card/).length === 1)
 check('卡片状态用中文标签', /进行中|待处理|已完成|待命/.test(gridText))
 
+/* 卡片上的绑定按钮 → 单一绑定入口 */
+clickByLabel(overlay, '1 个对话')
+overlay = render(overlayComp)
+const bindText = textOf(overlay)
+check('卡片按钮打开对话绑定小窗', bindText.includes('对话绑定') && bindText.includes('app-alpha 会话'), bindText.slice(0, 100))
+check('绑定小窗列出已绑定对话', allByClass(overlay, /bound-chip/).length === 1, allByClass(overlay, /bound-chip/).length)
+check('绑定小窗提供设为主对话', allByClass(overlay, /session-row/).length === 3, allByClass(overlay, /session-row/).length)
+
+const gammaRow = allByClass(overlay, /session-row/).find((n) => textOf(n).includes('gamma'))
+clickByLabel(gammaRow, 'gamma')
+await new Promise((r) => setTimeout(r, 20))
+const boundNow = JSON.parse(ls.get('wt.projects') || '[]').find((p) => p.id === 'custom-1')
+check('点会话行即完成绑定（同一入口绑定/解绑）', boundNow && boundNow.sessions.includes('s-gamma'), JSON.stringify(boundNow && boundNow.sessions))
+
+const chips = allByClass(render(overlayComp), /bound-chip/)
+check('绑定后主对话仍是原首个', chips.length === 2, chips.length)
+
+/* 关闭小窗 */
+clickByLabel(render(overlayComp), '关闭')
+overlay = render(overlayComp)
+check('关闭绑定小窗', !textOf(overlay).includes('对话绑定'))
+
 /* 新建项目小窗 */
 clickByLabel(overlay, '新建项目')
 overlay = render(overlayComp)
 const modalText = textOf(overlay)
 check('打开新建项目小窗', modalText.includes('项目名称') && modalText.includes('项目目录'))
 check('小窗有默认工作区按钮', modalText.includes('默认工作区'))
-check('小窗有四种布局草图', allByClass(overlay, /layout-card/).length === 4, allByClass(overlay, /layout-card/).length)
+check('小窗有两种模式草图', allByClass(overlay, /layout-card/).length === 2, allByClass(overlay, /layout-card/).length)
 check('小窗有绑定对话下拉', allByClass(overlay, /wt-select/).length === 1)
 check('小窗提示只写 localStorage', modalText.includes('localStorage'))
 

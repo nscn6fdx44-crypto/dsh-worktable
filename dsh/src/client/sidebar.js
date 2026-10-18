@@ -1,12 +1,13 @@
 /**
- * 侧边栏：整条工作台常驻（状态栏 / 项目列表 / 会话列表）。
+ * 侧边栏：整条工作台常驻（状态栏 / 项目列表）。
+ * 宿主会话不再单列一节 —— 项目列表已经承载了同样的信息，点项目即进工作区。
  * 右击菜单、小窗、toast 都挂在这里 —— 侧边栏不随主区开合消失。
  */
 import { el, Icon, Light, ContextMenu, Toasts } from './ui.js'
 import {
-  store, useStore, STATES, normState, relTime, shortPath, projEmoji,
+  store, useStore, relTime, projEmoji,
   loadSessions, loadDefaults, openGrid, enterProject, openMenu, openModal,
-  createFromSession, stateOf, sessionsOf, toggleHidden,
+  stateOf, sessionsOf, toggleHidden,
 } from './core.js'
 import { ModalHost } from './modals.js'
 
@@ -15,7 +16,7 @@ export function WorktableSidebar() {
   const all = store.projects
   const visible = all.filter((p) => !p.hidden)
   const counts = store.sessions.counts || { running: 0, waiting: 0, done: 0, idle: 0, total: 0 }
-  const sessions = store.sessions.rows
+  const unbound = visible.filter((p) => !sessionsOf(p).length).length
 
   const groups = new Map()
   for (const p of visible) {
@@ -32,7 +33,7 @@ export function WorktableSidebar() {
         el('div', { className: 'brand-sub' }, 'Worktable'),
       ),
       el('div', { className: 'brand-tools' },
-        el('button', { type: 'button', title: '刷新宿主会话', 'aria-label': '刷新宿主会话', onClick: () => loadSessions() }, el(Icon, { name: 'refresh' })),
+        el('button', { type: 'button', title: '刷新宿主会话状态', 'aria-label': '刷新宿主会话状态', onClick: () => loadSessions() }, el(Icon, { name: 'refresh' })),
         el('button', { type: 'button', title: '新建项目', 'aria-label': '新建项目', onClick: () => openModal('add') }, el(Icon, { name: 'plus' })),
       ),
     ),
@@ -41,10 +42,8 @@ export function WorktableSidebar() {
       el('div', { className: 'fb-row' }, el('span', null, '进行中'), el('b', null, String(counts.running || 0))),
       el('div', { className: 'fb-row' }, el('span', null, '待处理'), el('b', null, String(counts.waiting || 0))),
       el('div', { className: 'fb-row' }, el('span', null, '项目'), el('b', null, String(visible.length) + (all.length !== visible.length ? ' / ' + String(all.length) : ''))),
-      el('div', { className: 'fb-row' }, el('span', null, '宿主对话'), el('b', null,
-        store.sessions.state === 'ok'
-          ? String(counts.total || 0)
-          : (store.sessions.state === 'pending' ? '…' : '不可用'),
+      el('div', { className: 'fb-row' }, el('span', null, '未绑定'), el('b', null,
+        store.sessions.state === 'pending' ? '…' : String(unbound),
       )),
     ),
 
@@ -86,36 +85,7 @@ export function WorktableSidebar() {
       ),
     ),
 
-    el('div', { className: 'side-sessions' },
-      el('div', { className: 'nav-label' },
-        el('span', null, '宿主会话'),
-        el('span', { className: 'mono' }, String(sessions.length)),
-      ),
-      el('div', { className: 'slist' },
-        sessions.length
-          ? sessions.slice(0, 30).map((s) => {
-            const owner = all.find((p) => p.sessions.includes(s.id))
-            return el('div', {
-              key: s.id,
-              className: 'srow' + (owner ? ' bound' : ''),
-              role: 'button',
-              tabIndex: 0,
-              title: (s.cwd || '') + '\n' + (owner ? '已属于项目：' + (owner.alias || owner.name) : '点击建成项目'),
-              onClick: () => createFromSession(s),
-            },
-              el('span', { className: 'light ' + normState(s.state), 'aria-hidden': 'true' }),
-              el('span', { className: 'srow-main' },
-                el('span', { className: 'srow-title' }, s.title || s.id),
-                el('span', { className: 'srow-sub' }, shortPath(s.cwd || '', 26)),
-              ),
-              el('span', { className: 'srow-add', 'aria-hidden': 'true' }, owner ? '›' : '＋'),
-            )
-          })
-          : el('p', { className: 'wt-mute' }, store.sessions.state === 'pending' ? '正在读取会话…' : (store.sessions.error || '宿主暂无会话')),
-      ),
-    ),
-
-    el('p', { className: 'side-tip' }, '右击项目：布局 · 编辑 · 绑定 · 删除'),
+    el('p', { className: 'side-tip' }, '右击项目：模式 · 编辑 · 对话绑定 · 删除'),
 
     /* 主区没开时由侧边栏承载菜单/小窗/toast；主区一开就交给它，避免重复挂载 */
     store.open ? null : el('div', { className: 'wt-hosts' }, el(ContextMenu), el(ModalHost), el(Toasts)),

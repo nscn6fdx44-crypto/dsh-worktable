@@ -6,8 +6,7 @@
 import { createElement, useEffect, useRef } from 'react'
 import {
   STATES, stateOf, stateSource, cycleStatus, store, useStore,
-  closeMenu, layoutDef, LAYOUTS, setLayout, openModal, unbindSession, removeProject,
-  closeModal,
+  closeMenu, MODES, setMode, openModal, removeProject, uiOf, closeModal,
 } from './core.js'
 
 /** createElement 包装：过滤 null/false、扁平化数组 */
@@ -139,8 +138,8 @@ export function ContextMenu() {
 
   const win = typeof window !== 'undefined' ? window : { innerWidth: 1200, innerHeight: 800 }
   const x = Math.max(8, Math.min(menu.x, win.innerWidth - 250))
-  const y = Math.max(8, Math.min(menu.y, win.innerHeight - 420))
-  const layout = layoutDef(store.ui?.[menu.pid]?.layout).id
+  const y = Math.max(8, Math.min(menu.y, win.innerHeight - 360))
+  const ui = uiOf(menu.pid)
   const bound = Array.isArray(project.sessions) ? project.sessions.length : 0
 
   const node = el('div', {
@@ -151,24 +150,26 @@ export function ContextMenu() {
     onContextMenu: (e) => e.preventDefault(),
   },
     el('div', { className: 'ctx-head', title: project.path }, project.alias || project.name),
-    el('div', { className: 'ctx-label' }, '界面布局'),
-    LAYOUTS.map((l) => el('button', {
-      key: l.id,
+    el('div', { className: 'ctx-label' }, '工作区模式'),
+    MODES.map((m) => el('button', {
+      key: m.id,
       type: 'button',
-      className: 'ctx-item' + (l.id === layout ? ' on' : ''),
-      onClick: () => setLayout(menu.pid, l.id),
+      className: 'ctx-item' + (m.id === ui.mode ? ' on' : ''),
+      onClick: () => setMode(menu.pid, m.id),
     },
-      el('span', { className: 'ctx-name' }, l.label),
-      el('small', null, l.hint),
-      l.id === layout ? el('b', { className: 'ctx-check' }, '✓') : null,
+      el('span', { className: 'ctx-name' }, m.icon + ' ' + m.label),
+      el('small', null, m.hint),
+      m.id === ui.mode ? el('b', { className: 'ctx-check' }, '✓') : null,
     )),
     el('div', { className: 'ctx-sep' }),
     el('button', { type: 'button', className: 'ctx-item', onClick: () => openModal('edit', menu.pid) }, '编辑项目信息'),
-    el('button', { type: 'button', className: 'ctx-item', onClick: () => openModal('bind', menu.pid) }, bound ? '管理对话绑定' : '绑定 DSH 对话'),
-    bound ? el('button', {
+    el('button', {
       type: 'button', className: 'ctx-item',
-      onClick: () => { unbindSession(menu.pid, project.sessions[0]); closeMenu() },
-    }, '解除主对话绑定') : null,
+      onClick: () => openModal('bind', menu.pid),
+    },
+      el('span', { className: 'ctx-name' }, '绑定对话'),
+      el('small', null, bound ? bound + ' 个' : '未绑定'),
+    ),
     el('div', { className: 'ctx-sep' }),
     el('button', {
       type: 'button', className: 'ctx-item danger',
@@ -199,12 +200,13 @@ export function Modal({ title, subtitle, wide, children, foot }) {
   )
 }
 
-/* ============================ 布局草图 ============================ */
+/* ============================ 模式草图 ============================ */
 
-export function LayoutSketch({ layout }) {
-  const def = layoutDef(layout)
-  const parts = def.parts
-  return el('span', { className: 'sketch', 'data-layout': layout, 'aria-hidden': 'true' },
-    parts.map((p, i) => el('i', { key: i, 'data-part': p })),
+/** 两种模式共用「左栏 / 中间 / 对话」三格，只有中间那一格的形态不同 */
+export function ModeSketch({ mode }) {
+  return el('span', { className: 'sketch', 'data-mode': mode, 'aria-hidden': 'true' },
+    el('i', { 'data-part': 'left' }),
+    el('i', { 'data-part': 'main' }, mode === 'float' ? el('b', { className: 'sk-win' }) : null),
+    el('i', { 'data-part': 'chat' }),
   )
 }

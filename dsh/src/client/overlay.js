@@ -1,15 +1,21 @@
 /**
- * 主区：顶栏 + 控制室 + 卡片网格 + 项目工作区（可拖拽分栏）。
- * 分栏由布局预设的 parts 决定，宽度存 ui.split，拖一次立刻生效、松手才落 localStorage。
+ * 主区：顶栏 + 控制室 + 卡片网格 + 项目工作区。
+ *
+ * 工作区恒为三栏：左（项目/文件）· 中（工作区）· 右（对话），两侧永远不隐藏。
+ * 中间栏有两种模式（ui.mode）：
+ *   dock  全屏 —— 铺满中间区域，分割条调宽
+ *   float 窗口 —— 一个贴着对话栏的浮动视窗，可拖动、可缩放；与全屏共用同一套窗格
+ * 分割条的宽度对两种模式同时生效（同一份 ui.split）。
  */
-import { el, Icon, Light, Splitter, ContextMenu, Toasts } from './ui.js'
+import { useRef } from 'react'
+import { el, Light, Splitter, ContextMenu, Toasts } from './ui.js'
 import { ModalHost } from './modals.js'
 import {
-  store, useStore, STATES, normState, LAYOUTS, layoutDef, PANE_TABS, fmtDuration, relTime,
-  shortPath, projEmoji, openGrid, enterProject, closeOverlay, openModal, openMenu,
-  removeProject, setLayout, setSplit, setLeftTab, openTab, closeTab, setActiveTab,
-  loadSessions, loadTranscript, loadTree, loadGit, stateOf, sessionsOf, primarySession,
-  uiOf, projectOf, setWebUrl, siteUrlOf, updateProject, flushUi,
+  store, useStore, STATES, normState, MODES, modeDef, PANE_TABS, DEFAULT_SPLIT,
+  fmtDuration, relTime, shortPath, projEmoji, openGrid, enterProject, closeOverlay,
+  openModal, openMenu, setMode, setSplit, setLeftTab, openTab, closeTab, setActiveTab,
+  loadSessions, stateOf, sessionsOf, primarySession,
+  uiOf, flushUi, setWinRect, resetWinRect,
 } from './core.js'
 import { InfoPane, FilesPane, EditorPane, TermPane, WebPane, CustomPane, ChatPane } from './panes.js'
 
@@ -44,7 +50,7 @@ export function MainView() {
 function Topbar({ active }) {
   const counts = store.sessions.counts || {}
   const sub = active
-    ? ((active.path || '未设置目录') + ' · ' + layoutDef(uiOf(active.id).layout).label + ' · ' + (active.sessions || []).length + ' 个对话')
+    ? ((active.path || '未设置目录') + ' · ' + modeDef(uiOf(active.id).mode).label + '模式 · ' + (active.sessions || []).length + ' 个对话')
     : ('项目 ' + store.projects.length + ' 个 · 宿主会话 ' + (counts.total || 0) + ' 个 · 快照 ' + (store.sessions.at ? relTime(store.sessions.at) : '—'))
 
   return el('header', { className: 'topbar' },
@@ -143,10 +149,10 @@ function ProjectCard({ project }) {
     ),
     el('div', { className: 'c-preview' }, project.note || shortPath(project.path || '未设置目录', 46)),
     el('div', { className: 'c-actions' },
-      el('span', { className: 'c-layout' }, layoutDef(uiOf(project.id).layout).label),
+      el('span', { className: 'c-layout' }, modeDef(uiOf(project.id).mode).label),
       el('button', {
         type: 'button', className: 'mini-btn' + (bound.length ? ' on' : ''),
-        title: '管理对话绑定',
+        title: '绑定 / 解绑对话',
         onClick: (e) => { e.stopPropagation(); openModal('bind', project.id) },
       }, bound.length ? (bound.length + ' 个对话') : '绑定对话'),
     ),
@@ -168,34 +174,20 @@ function AddCard() {
 function ProjectView({ project }) {
   useStore()
   const ui = uiOf(project.id)
-  const def = layoutDef(ui.layout)
-  const parts = def.parts
-  const hasLeft = parts.includes('left')
-  const hasChat = parts.includes('chat')
+  const mode = ui.mode
 
-  const leftW = ui.split.left || def.split.left || 250
-  const chatW = ui.split.chat || def.split.chat || 380
+  const leftW = ui.split.left || DEFAULT_SPLIT.left
+  const chatW = ui.split.chat || DEFAULT_SPLIT.chat
 
   const onLeft = (next, persist) => {
-    if (next === 0) { setSplit(project.id, 'left', def.split.left || 250, true); return }
+    if (next === 0) { setSplit(project.id, 'left', DEFAULT_SPLIT.left, true); return }
     if (next == null) { flushUi(); return }
     setSplit(project.id, 'left', next, persist)
   }
   const onChat = (next, persist) => {
-    if (next === 0) { setSplit(project.id, 'chat', def.split.chat || 380, true); return }
+    if (next === 0) { setSplit(project.id, 'chat', DEFAULT_SPLIT.chat, true); return }
     if (next == null) { flushUi(); return }
     setSplit(project.id, 'chat', next, persist)
-  }
-
-  const children = []
-  if (hasLeft) {
-    children.push(el(LeftPane, { key: 'left', project, width: leftW, tab: ui.leftTab }))
-    children.push(el(Splitter, { key: 's1', pid: project.id, side: 'left', width: leftW, min: 180, max: 460, onResize: onLeft }))
-  }
-  children.push(el(MainPane, { key: 'main', project, ui }))
-  if (hasChat) {
-    children.push(el(Splitter, { key: 's2', pid: project.id, side: 'right', width: chatW, min: 260, max: 900, onResize: onChat }))
-    children.push(el(ChatColumn, { key: 'chat', project, width: chatW }))
   }
 
   return el('section', { className: 'view active view-workspace' },
@@ -203,17 +195,115 @@ function ProjectView({ project }) {
       el('div', { className: 'detail-crumb' },
         el('span', { className: 'c-ico', 'aria-hidden': 'true', style: { fontSize: '17px' } }, projEmoji(project)),
         el('b', null, project.alias || project.name),
-        el('span', { className: 'p mono', title: project.path }, shortPath(project.path || '未设置目录', 44)),
+        el('span', { className: 'p mono', title: project.path }, shortPath(project.path || '未设置目录', 40)),
         el('span', { className: 'tag gold' }, STATES[stateOf(project.id)].label),
       ),
-      el('div', { className: 'seg', title: '界面布局（也可右击项目切换）' },
-        LAYOUTS.map((l) => el('button', {
-          key: l.id, type: 'button', className: l.id === ui.layout ? 'on' : '', title: l.hint,
-          onClick: () => setLayout(project.id, l.id),
-        }, l.label)),
+      el('div', { className: 'seg', title: '工作区模式（也可右击项目切换）' },
+        MODES.map((m) => el('button', {
+          key: m.id, type: 'button', className: m.id === mode ? 'on' : '', title: m.hint,
+          onClick: () => setMode(project.id, m.id),
+        }, m.icon + ' ' + m.label)),
       ),
+      el('span', { className: 'detail-hint' }, mode === 'float'
+        ? '拖动标题栏移动 · 右下角缩放 · 双击标题栏复位'
+        : '拖动分割条调宽度 · 双击复位'),
     ),
-    el('div', { className: 'ws', 'data-layout': ui.layout }, children),
+    el('div', { className: 'ws', 'data-mode': mode }, [
+      el(LeftPane, { key: 'left', project, width: leftW, tab: ui.leftTab }),
+      el(Splitter, { key: 's1', pid: project.id, side: 'left', width: leftW, min: 168, max: 420, onResize: onLeft }),
+      mode === 'float'
+        ? el(FloatWindow, { key: 'main', project, ui })
+        : el(MainPane, { key: 'main', project, ui }),
+      el(Splitter, { key: 's2', pid: project.id, side: 'right', width: chatW, min: 240, max: 860, onResize: onChat }),
+      el(ChatColumn, { key: 'chat', project, width: chatW }),
+    ]),
+  )
+}
+
+/**
+ * 窗口模式：视窗浮在中间栏里、贴着对话栏。
+ * 几何存 ui.win（比例），拖动标题栏移动、右下角缩放，双击标题栏复位；
+ * 与全屏模式共用同一个 MainPane，所以标签页 / 终端 / 浏览器等功能完全一致。
+ */
+function FloatWindow({ project, ui }) {
+  const rect = ui.win
+  const box = useRef(null)
+  const drag = useRef(null)
+
+  const begin = (kind) => (e) => {
+    if (!e || !Number.isFinite(e.clientX)) return
+    const hit = e.target && typeof e.target.closest === 'function' ? e.target.closest('button') : null
+    if (hit) return
+    const holder = box.current && box.current.parentElement
+    if (!holder || typeof holder.getBoundingClientRect !== 'function') return
+    const view = holder.getBoundingClientRect()
+    if (!view.width || !view.height) return
+    if (typeof e.preventDefault === 'function') e.preventDefault()
+    drag.current = { kind, sx: e.clientX, sy: e.clientY, vw: view.width, vh: view.height, rect, frame: 0, last: null }
+    const apply = (pt) => {
+      const d = drag.current
+      if (!d) return
+      const dx = (pt.x - d.sx) / d.vw
+      const dy = (pt.y - d.sy) / d.vh
+      if (d.kind === 'move') setWinRect(project.id, { ...d.rect, x: d.rect.x + dx, y: d.rect.y + dy })
+      else setWinRect(project.id, { ...d.rect, w: d.rect.w + dx * 2, h: d.rect.h + dy * 2 })
+    }
+    const move = (ev) => {
+      const d = drag.current
+      if (!d) return
+      d.last = { x: ev.clientX, y: ev.clientY }
+      /* 拖动时按帧合并，避免每个 pointermove 都重建整棵树 */
+      if (d.frame) return
+      const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null
+      if (!raf) { apply(d.last); return }
+      d.frame = raf(() => {
+        const inst = drag.current
+        if (!inst) return
+        inst.frame = 0
+        if (inst.last) apply(inst.last)
+      })
+    }
+    const up = () => {
+      const d = drag.current
+      if (d && d.frame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(d.frame)
+      drag.current = null
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      if (document.body && document.body.classList) document.body.classList.remove('wt-dragging')
+      flushUi()
+    }
+    if (document.body && document.body.classList) document.body.classList.add('wt-dragging')
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
+  const style = {
+    left: ((rect.x - rect.w / 2) * 100).toFixed(3) + '%',
+    top: ((rect.y - rect.h / 2) * 100).toFixed(3) + '%',
+    width: (rect.w * 100).toFixed(3) + '%',
+    height: (rect.h * 100).toFixed(3) + '%',
+  }
+
+  return el('div', { className: 'pane pane-canvas', 'data-mode': 'float' },
+    el('div', { className: 'float-win', style, ref: box },
+      el('div', {
+        className: 'float-bar',
+        title: '拖动移动窗口 · 双击复位',
+        onPointerDown: begin('move'),
+        onDoubleClick: () => resetWinRect(project.id),
+      },
+        el('span', { className: 'fb-dots', 'aria-hidden': 'true' }, el('i'), el('i'), el('i')),
+        el('span', { className: 'fb-title' }, project.alias || project.name),
+        el('span', { className: 'fb-sub mono' }, (ui.tabs || []).length + ' 个窗口'),
+        el('span', { className: 'fb-tools' },
+          el('button', { type: 'button', title: '回到默认位置与大小', onClick: () => resetWinRect(project.id) }, '复位'),
+          el('button', { type: 'button', title: '切换为全屏模式', onClick: () => setMode(project.id, 'dock') }, '全屏'),
+        ),
+      ),
+      el('div', { className: 'float-body' }, el(MainPane, { project, ui, nest: true })),
+      el('span', { className: 'float-grip', title: '拖动缩放', onPointerDown: begin('resize') }),
+    ),
+    el('p', { className: 'canvas-hint' }, '窗口模式 · 拖动标题栏移动，右下角缩放'),
   )
 }
 
@@ -231,14 +321,14 @@ function LeftPane({ project, width, tab }) {
   )
 }
 
-function MainPane({ project, ui }) {
+function MainPane({ project, ui, nest }) {
   const tabs = ui.tabs
   const activeKey = ui.activeTab || (tabs[0] ? tabs[0].key : '')
   const active = tabs.find((t) => t.key === activeKey) || null
 
   const titleOf = (t) => (t.kind === 'editor' ? (store.editor.name || '编辑器') : t.title)
 
-  return el('main', { className: 'pane pane-main' },
+  return el('div', { className: 'pane pane-main' + (nest ? ' pane-nest' : '') },
     el('div', { className: 'pane-head tabhead' },
       el('div', { className: 'tabs' },
         tabs.length
