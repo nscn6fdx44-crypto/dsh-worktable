@@ -206,7 +206,11 @@ export const store = {
   tree: { state: 'idle', pid: '', path: '', name: '', parent: '', writable: true, entries: [], total: 0, truncated: false, error: '', at: 0 },
   /* 文件管理器的视图偏好（排序 / 过滤 / 选中项），纯前端 */
   fs: { sort: 'name', dir: 1, query: '', sel: '', busy: '', menu: null },
-  editor: { state: 'idle', path: '', name: '', text: '', saved: '', error: '', truncated: false, binary: false, size: 0, saving: false },
+  editor: {
+    state: 'idle', path: '', name: '', text: '', saved: '', error: '', truncated: false,
+    /* partial = 只读了文件的一段（大文件只读预览）；这种状态**禁止保存**，否则会把文件截断写回 */
+    partial: false, tail: false, binary: false, errorCode: 0, size: 0, limit: 0, previewBytes: 0, saving: false,
+  },
   terms: {},                    // { [pid]: { id, cwd, busy, lines: [] } }
   git: { state: 'idle', repo: false, branch: '', changes: [], counts: null, error: '', log: [], branches: [] },
   web: { url: '', state: 'idle' },
@@ -410,7 +414,13 @@ async function request(method, path, body, { timeout = 20_000, signal } = {}) {
     if (timer) clearTimeout(timer)
   }
   const data = await res.json().catch(() => null)
-  if (!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status))
+  if (!res.ok) {
+    const err = new Error((data && data.error) || ('HTTP ' + res.status))
+    /* 状态码要留给界面判断：413 = 文件过大（给只读预览出口），415 = 二进制（给系统程序出口） */
+    err.status = res.status
+    err.data = data || null
+    throw err
+  }
   return data
 }
 
@@ -972,18 +982,53 @@ export function fsReveal(dir, name) {
 }
 
 
+/**
+ * 用操作系统的**默认程序**打开（等同于在资源管理器里双击）。
+ * 这是大文件、二进制、日志的正确出路：编辑器只是 textarea，装不下几 MB 的东西。
+ */
+export async function openExternal(path, opts = {}) {
+  const target = String(path || '').trim()
+  if (!target) { toast('没有可打开的文件', 'warn'); return false }
+  try {
+    const data = await apiPost('/fs/open', { path: target }, { timeout: 10_000 })
+    if (data && data.ok === false) throw new Error(data.error || '打开失败')
+    if (opts.quiet !== true) toast('已用系统默认程序打开：' + baseName(target), 'ok')
+    return true
+  } catch (err) {
+    toast('没能用系统程序打开：' + String(err?.message ?? err), 'warn')
+    return false
+  }
+}
+
 /* ============================ 编辑器 ============================ */
 
 let fileToken = 0
 
-export async function openFile(path, pid) {
+/**
+ * 打开文件。
+ * @param {string} path
+ * @param {string} [pid] 项目 id（有就把编辑器标签页切过去）
+ * @param {{mode?:'auto'|'head'|'tail'|'full', bytes?:number}} [opts]
+ *   auto（默认）＝小的整份读、大的自动降级成只读预览；
+ *   head / tail ＝ 明确只看开头 / 结尾（大日志就用这个）；
+ *   full ＝ 我就要整份，超上限就报 413。
+ */
+export async function openFile(path, pid, opts = {}) {
   const target = String(path || '')
   if (!target) return
   const token = ++fileToken
-  emit({ editor: { ...store.editor, state: 'loading', path: target, name: baseName(target), error: '', binary: false } })
+  emit({
+    editor: {
+      ...store.editor, state: 'loading', path: target, name: baseName(target),
+      error: '', errorCode: 0, binary: false, partial: false,
+    },
+  })
   if (pid) openTab(pid, 'editor')
   try {
-    const data = await apiPost('/fs/read', { path: target }, { timeout: 20_000 })
+    const body = { path: target }
+    if (opts.mode) body.mode = opts.mode
+    if (opts.bytes) body.bytes = opts.bytes
+    const data = await apiPost('/fs/read', body, { timeout: 30_000 })
     if (token !== fileToken) return
     emit({
       editor: {
@@ -993,9 +1038,15 @@ export async function openFile(path, pid) {
         text: String(data.text ?? ''),
         saved: String(data.text ?? ''),
         error: '',
+        errorCode: 0,
+        /* partial 与 truncated 都意味着「你看到的不是完整文件」→ 一律只读 */
+        partial: !!data.partial,
         truncated: !!data.truncated,
+        tail: data.mode === 'tail',
         binary: !!data.binary,
         size: Number(data.size) || 0,
+        limit: Number(data.limit) || 0,
+        previewBytes: Number(data.previewBytes) || 0,
       },
     })
     if (pid) {
@@ -1005,7 +1056,21 @@ export async function openFile(path, pid) {
     }
   } catch (err) {
     if (token !== fileToken) return
-    emit({ editor: { ...store.editor, state: 'error', path: target, name: baseName(target), error: String(err?.message ?? err) } })
+    const info = err?.data || {}
+    emit({
+      editor: {
+        ...store.editor,
+        state: 'error',
+        path: target,
+        name: baseName(target),
+        error: String(err?.message ?? err),
+        errorCode: Number(err?.status) || 0,
+        size: Number(info.size) || 0,
+        limit: Number(info.limit) || 0,
+        previewBytes: Number(info.previewBytes) || 0,
+        binary: info.code === 'binary',
+      },
+    })
   }
 }
 
@@ -1016,6 +1081,11 @@ export function editText(text) {
 export async function saveFile() {
   const ed = store.editor
   if (!ed.path || ed.state !== 'ok') return
+  /* 只读预览绝不能写回：写回去就是「用一个片段覆盖整个文件」，等于把文件毁了 */
+  if (ed.partial || ed.truncated) {
+    toast('这是只读预览（文件太大，只读了一段），不能在编辑器里保存', 'warn')
+    return
+  }
   if (ed.text === ed.saved) { toast('没有改动需要保存', 'info'); return }
   emit({ editor: { ...ed, saving: true } })
   try {

@@ -590,6 +590,17 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
   white-space: pre; overflow: auto; tab-size: 2;
 }
 .wt-scope .ed-area:focus { border-color: rgba(240,180,41,.42); }
+.wt-scope .ed-area[readonly] { color: var(--txt-dim); background: rgba(0,0,0,.24); }
+
+/* 大文件只读预览的提示条 + 出口按钮 */
+.wt-scope .ed-note {
+  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 9px;
+  border: 1px solid rgba(240,180,41,.28); background: rgba(240,180,41,.07);
+}
+.wt-scope .ed-note-txt { flex: 1; min-width: 200px; font-size: 11px; line-height: 1.55; color: #e6c98a; }
+.wt-scope .ed-note-acts { display: flex; flex-wrap: wrap; gap: 6px; flex: none; }
+.wt-scope .tag.warn { color: #e9c778; background: rgba(240,180,41,.1); border-color: rgba(240,180,41,.28); }
 
 /* 终端 */
 .wt-scope .term-body { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; overflow: hidden; }

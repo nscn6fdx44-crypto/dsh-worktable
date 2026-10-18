@@ -249,6 +249,15 @@ check('fs/reveal 拒绝相对路径', revRel.status === 400, revRel.body.slice(0
 const revOut = await call(BASE + '/fs/reveal', { path: (process.env.SystemRoot || 'C:////Windows') + '\\System32' })
 check('fs/reveal 白名单外也能打开（只读出口）', revOut.status === 200, revOut.status + ' ' + revOut.body.slice(0, 70))
 
+/* 系统默认程序（大文件 / 二进制 / 日志的出路） */
+const opn = await call(BASE + '/fs/open', { path: join(tmp, 'note.md') })
+const opj = JSON.parse(opn.body)
+check('fs/open 200 + dryRun', opn.status === 200 && opj.dryRun === true && opj.ok === true, opn.body.slice(0, 80))
+const opnMissing = await call(BASE + '/fs/open', { path: join(tmp, 'nope.txt') })
+check('fs/open 不存在 → 404', opnMissing.status === 404, opnMissing.body.slice(0, 60))
+const opnRel = await call(BASE + '/fs/open', { path: 'rel/file.txt' })
+check('fs/open 拒绝相对路径', opnRel.status === 400, opnRel.body.slice(0, 60))
+
 const ssh = await call(BASE + '/fs/list', { path: join(homedir(), '.ssh') })
 check('fs/list 拒绝凭证目录', ssh.status === 403, ssh.body.slice(0, 80))
 
@@ -257,6 +266,29 @@ check('fs/read 不存在 → 404', noFile.status === 404, noFile.body.slice(0, 6
 
 const dirAsFile = await call(BASE + '/fs/read', { path: tmp })
 check('fs/read 目录 → 400', dirAsFile.status === 400, dirAsFile.body.slice(0, 60))
+
+/* 大文件：auto 不再一上来就 413，而是降级成「只读预览」；full 才报 413；tail 给结尾 */
+const big = join(tmp, 'big.log')
+writeFileSync(big, 'HEAD-MARK\n' + 'y'.repeat(5 * 1024 * 1024) + '\nTAIL-MARK\n', 'utf8')
+const bigAuto = await call(BASE + '/fs/read', { path: big })
+const baj = JSON.parse(bigAuto.body)
+check('大文件 auto 降级为只读预览（不再 413）', bigAuto.status === 200 && baj.partial === true, bigAuto.status + ' ' + bigAuto.body.slice(0, 60))
+check('大文件 auto 只读开头 256 KB', baj.window.bytes === 256 * 1024 && baj.window.offset === 0 && baj.size > 4 * 1024 * 1024, JSON.stringify(baj.window))
+check('大文件预览内容从文件开头开始', String(baj.text).startsWith('HEAD-MARK'), String(baj.text).slice(0, 20))
+check('大文件预览带上限字段', baj.limit === 4 * 1024 * 1024 && baj.previewBytes === 256 * 1024, baj.limit + '/' + baj.previewBytes)
+
+const bigFull = await call(BASE + '/fs/read', { path: big, mode: 'full' })
+const bfj = JSON.parse(bigFull.body)
+check('大文件 full → 413 + too-large', bigFull.status === 413 && bfj.code === 'too-large', bigFull.body.slice(0, 90))
+check('413 里带 size / limit 供界面提示', bfj.size > 4 * 1024 * 1024 && bfj.limit === 4 * 1024 * 1024)
+
+const bigTail = await call(BASE + '/fs/read', { path: big, mode: 'tail' })
+const btj = JSON.parse(bigTail.body)
+check('tail 读文件结尾', bigTail.status === 200 && btj.mode === 'tail' && String(btj.text).trimEnd().endsWith('TAIL-MARK'), String(btj.text).slice(-30))
+check('tail 窗口偏移在文件末尾', btj.window.offset > 4 * 1024 * 1024 && btj.partial === true, JSON.stringify(btj.window))
+
+const smallTail = await call(BASE + '/fs/read', { path: join(tmp, 'note.md'), mode: 'tail' })
+check('小文件 tail 不标记 partial', smallTail.status === 200 && JSON.parse(smallTail.body).partial === false)
 
 /* ============================ git ============================ */
 

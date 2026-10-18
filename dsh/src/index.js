@@ -10,6 +10,7 @@
  *   只读宿主状态   GET  /health      GET /sessions      GET /defaults      POST /transcript
  *   文件系统       POST /fs/list     POST /fs/read      POST /fs/write
  *                  POST /fs/mkdir    POST /fs/rename    POST /fs/stat
+ *                  POST /fs/reveal（系统文件管理器）      POST /fs/open（系统默认程序）
  *   命令           POST /term/exec（NDJSON 流）          POST /term/kill
  *   版本控制       POST /git（只读：status / log / branches）
  *   项目静态托管   POST /project/register               GET  /site/<id>/<rel...>（prefix）
@@ -24,7 +25,7 @@
  *   4. 先 realpath 解析符号链接再判根，避免 ../ 与 symlink 逃逸。
  *   5. 不把任意请求体写进包目录（上游 /ping 就这么干过）。
  */
-import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync, appendFileSync } from 'node:fs'
+import { closeSync, createReadStream, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync, appendFileSync } from 'node:fs'
 import { spawn, execFile } from 'node:child_process'
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
@@ -42,7 +43,10 @@ export const TRANSCRIPT_PATH = BASE + '/transcript'
 
 /* ---------- 上限 ---------- */
 const MAX_DIR_ENTRIES = 800
+/* 编辑器「整份打开」的上限：再大就不是 textarea 能承受的了（也不是它该干的事） */
 const MAX_FILE_BYTES = 4 * 1024 * 1024
+/* 超过上限时只读预览的窗口大小（前 N 字节 / 后 N 字节） */
+const MAX_PREVIEW_BYTES = 256 * 1024
 const MAX_WRITE_BYTES = 4 * 1024 * 1024
 const MAX_PREVIEW_CHARS = 400_000
 const MAX_SESSIONS = 200
@@ -179,25 +183,69 @@ export function apply(ctx) {
     if (body === undefined) return
     const target = await assertExisting(body?.path, 'file')
     const st = statSync(target)
-    if (st.size > MAX_FILE_BYTES) {
-      return sendJson(res, 413, { error: '文件过大（' + fmtBytes(st.size) + '），上限 ' + fmtBytes(MAX_FILE_BYTES) })
+    const mode = ['auto', 'head', 'tail', 'full'].includes(body?.mode) ? body.mode : 'auto'
+    const wantBytes = body?.bytes ? Math.max(1024, Math.min(MAX_PREVIEW_BYTES, Number(body.bytes) || 0)) : MAX_PREVIEW_BYTES
+
+    /* full = 「我就要整份」，超过上限直接说清楚为什么不行（附 code，前端好给替代入口） */
+    if (mode === 'full' && st.size > MAX_FILE_BYTES) {
+      return sendJson(res, 413, {
+        error: '文件过大（' + fmtBytes(st.size) + '），编辑器上限 ' + fmtBytes(MAX_FILE_BYTES),
+        code: 'too-large', size: st.size, limit: MAX_FILE_BYTES, previewBytes: MAX_PREVIEW_BYTES,
+      })
     }
-    const raw = readFileSync(target)
-    if (raw.subarray(0, 8192).includes(0)) {
-      return sendJson(res, 415, { error: '二进制文件，无法以文本打开', binary: true, size: st.size })
+
+    /* auto：小的整份读；大的自动降级成「只读预览开头」，不再一上来就 413 */
+    const whole = mode === 'auto' && st.size <= MAX_FILE_BYTES
+    const win = whole
+      ? { raw: readFileSync(target), offset: 0, partial: false }
+      : readWindow(target, st.size, mode === 'auto' ? 'head' : mode, mode === 'auto' ? MAX_PREVIEW_BYTES : wantBytes)
+
+    if (win.raw.subarray(0, 8192).includes(0)) {
+      return sendJson(res, 415, {
+        error: '二进制文件，编辑器打不开', code: 'binary', binary: true, size: st.size,
+        previewBytes: MAX_PREVIEW_BYTES,
+      })
     }
-    let text = raw.toString('utf8')
-    const truncated = text.length > MAX_PREVIEW_CHARS
-    if (truncated) text = text.slice(0, MAX_PREVIEW_CHARS)
+
+    let text = win.raw.toString('utf8')
+    /* 从中间切进去的第一个字符可能只剩半个字节序列，丢掉这个残字 */
+    if (win.offset > 0) text = text.replace(/^\uFFFD+/, '')
+    const charCut = text.length > MAX_PREVIEW_CHARS
+    if (charCut) text = text.slice(0, MAX_PREVIEW_CHARS)
+
     sendJson(res, 200, {
       path: target,
       name: basename(target),
       size: st.size,
       mtime: st.mtimeMs,
       text,
-      truncated,
+      mode: whole ? 'full' : (mode === 'auto' ? 'head' : mode),
+      /* partial = 只读了文件的一段（大文件预览）；truncated = 字符数被截了 */
+      partial: win.partial || charCut,
+      window: { offset: win.offset, bytes: win.raw.length },
+      truncated: charCut,
+      limit: MAX_FILE_BYTES,
+      previewBytes: MAX_PREVIEW_BYTES,
       eol: text.includes('\r\n') ? 'crlf' : 'lf',
     })
+  })})
+
+  /* 用操作系统的默认程序打开（大文件 / 二进制 / 日志的正当出路） */
+  register({ kind: 'exact', path: BASE + '/fs/open', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const target = await assertExisting(body?.path, 'any')
+    const dryRun = process.env.WORKTABLE_OPEN_DRYRUN === '1'
+    if (dryRun) return sendJson(res, 200, { ok: true, path: target, dryRun: true, cmd: '' })
+    /* 系统默认程序：和「在资源管理器里双击」完全同一条链路（explorer / open / xdg-open） */
+    const r = await openInSystem(target, false)
+    logReveal(target, false, { ...r, marker: 'open' })
+    if (!r.ok) {
+      console.warn('[worktable] 用系统程序打开失败', r.cmd, msg(r.error))
+      return sendJson(res, 500, { error: '没能用系统程序打开：' + msg(r.error), path: target, cmd: r.cmd })
+    }
+    sendJson(res, 200, { ok: true, path: target, dryRun: false, cmd: r.cmd })
   })})
 
   register({ kind: 'exact', path: BASE + '/fs/write', handler: guard(async (req, res) => {
@@ -857,6 +905,10 @@ function moveToTrash(target) {
  */
 const REVEAL_LOG_MAX = 128 * 1024
 
+/**
+ * 每次「打开」记一行到 ~/.dsh/worktable-reveal.log。
+ * marker：'open' = 用系统默认程序打开；不带 = 打开系统文件管理器（/ 在其中选中）。
+ */
 function logReveal(target, select, r) {
   try {
     const home = process.env.DSH_HOME || join(homedir(), '.dsh')
@@ -865,6 +917,7 @@ function logReveal(target, select, r) {
     const parts = [
       new Date().toISOString(),
       r.ok ? 'ok' : 'fail',
+      r.marker || 'reveal',
       'select=' + (select ? 1 : 0),
       r.cmd || '-',
       target,
@@ -942,6 +995,28 @@ function openInSystem(target, select) {
     setTimeout(() => done({ ok: true, code: null, cmd }), 1500)
     try { child.unref() } catch { /* 已经退出 */ }
   })
+}
+
+/**
+ * 只读预览：从文件里切一段（'head' 从头，'tail' 从尾）。
+ * 大文件不该整份读进内存 —— 编辑器要的只是「能看见的那一屏」。
+ */
+function readWindow(target, size, mode, bytes) {
+  const len = Math.max(0, Math.min(bytes, size))
+  const offset = mode === 'tail' ? Math.max(0, size - len) : 0
+  const fd = openSync(target, 'r')
+  try {
+    const buf = Buffer.alloc(len)
+    let got = 0
+    while (got < len) {
+      const n = readSync(fd, buf, got, len - got, offset + got)
+      if (n <= 0) break
+      got += n
+    }
+    return { raw: buf.subarray(0, got), offset, partial: size > got }
+  } finally {
+    closeSync(fd)
+  }
 }
 
 /* ============================ git ============================ */

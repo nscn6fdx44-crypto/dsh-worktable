@@ -69,6 +69,10 @@ let listCalls = 0
 let deletableBlock = ''
 const reveals = []
 const deletes = []
+const opens = []
+const writes = []
+/* 'big' 时把 /fs/read 变成「8 MB 大文件」：不带 mode → 413，带 mode → 只读预览 */
+let readCase = ''
 globalThis.fetch = async (url, opts) => {
   const u = String(url)
   if (u.endsWith('/fs/list')) {
@@ -80,6 +84,26 @@ globalThis.fetch = async (url, opts) => {
   }
   if (u.endsWith('/fs/delete')) {
     try { deletes.push(JSON.parse(String(opts?.body || '{}'))) } catch { /* ignore */ }
+  }
+  if (u.endsWith('/fs/open')) {
+    try { opens.push(JSON.parse(String(opts?.body || '{}'))) } catch { /* ignore */ }
+    return { ok: true, status: 200, json: async () => ({ ok: true, path: 'x' }), text: async () => '{}' }
+  }
+  if (u.endsWith('/fs/write')) {
+    try { writes.push(JSON.parse(String(opts?.body || '{}'))) } catch { /* ignore */ }
+  }
+  if (u.endsWith('/fs/read') && readCase === 'big') {
+    let req = {}
+    try { req = JSON.parse(String(opts?.body || '{}')) } catch { /* ignore */ }
+    if (!req.mode) {
+      const bad = { error: '文件过大（8.0 MB），编辑器上限 4.0 MB', code: 'too-large', size: 8 * 1024 * 1024, limit: 4 * 1024 * 1024, previewBytes: 262144 }
+      return { ok: false, status: 413, json: async () => bad, text: async () => JSON.stringify(bad) }
+    }
+    const part = {
+      path: req.path, name: 'README.md', size: 8 * 1024 * 1024, text: '# 前 256 KB\n', truncated: false,
+      partial: true, mode: req.mode, limit: 4 * 1024 * 1024, previewBytes: 262144, window: { offset: 0, bytes: 262144 },
+    }
+    return { ok: true, status: 200, json: async () => part, text: async () => JSON.stringify(part) }
   }
   const body = u.endsWith('/sessions') ? fakeSessions
     : u.endsWith('/defaults') ? fakeDefaults
@@ -450,6 +474,38 @@ await new Promise((r) => setTimeout(r, 40))
 overlay = render(overlayComp)
 check('双击文件切到编辑器标签页', textOf(overlay).includes('README.md') && allByClass(overlay, /ed-area|editor-body/).length >= 1, textOf(overlay).slice(0, 140))
 check('编辑器正文载入文件内容', JSON.stringify(overlay).includes('固件说明') || textOf(overlay).includes('18 B'), textOf(overlay).slice(0, 120))
+
+/* 大文件：413 不再是一堵墙 —— 给「只读预览」和「用系统程序打开」两条出路 */
+readCase = 'big'
+clickByLabel(overlay, '文件管理器')
+overlay = render(overlayComp)
+allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('README.md')).props.onDoubleClick()
+await new Promise((r) => setTimeout(r, 40))
+overlay = render(overlayComp)
+check('大文件报错时点明原因', textOf(overlay).includes('文件过大'), textOf(overlay).slice(0, 140))
+check('大文件报错给出系统程序出口', textOf(overlay).includes('用系统默认程序打开'), textOf(overlay).slice(-140))
+check('大文件报错给出只读预览出口', textOf(overlay).includes('只读预览前'), textOf(overlay).slice(-140))
+
+const opensBefore = opens.length
+clickByLabel(overlay, '用系统默认程序打开')
+await new Promise((r) => setTimeout(r, 20))
+check('点「用系统默认程序打开」会调 /fs/open', opens.length === opensBefore + 1, opens.length - opensBefore)
+
+clickByLabel(overlay, '只读预览前')
+await new Promise((r) => setTimeout(r, 40))
+overlay = render(overlayComp)
+const roArea = allByClass(overlay, /ed-area/)[0]
+check('只读预览能显示开头内容', !!roArea && String(roArea.props.value).includes('前 256 KB'), roArea && String(roArea.props.value).slice(0, 30))
+check('只读预览有提示条与三个出口', allByClass(overlay, /ed-note/).length >= 1 && ['看开头', '看结尾', '用系统程序打开'].every((t) => textOf(overlay).includes(t)), textOf(overlay).slice(0, 160))
+check('只读预览的 textarea 是 readOnly', !!roArea && roArea.props.readOnly === true)
+const saveBtn = collect(overlay).find((n) => n.props && typeof n.props.onClick === 'function' && textOf(n).trim() === '保存')
+check('只读预览时保存按钮置灰', saveBtn && saveBtn.props.disabled === true, saveBtn && saveBtn.props.disabled)
+const writesBefore = writes.length
+if (saveBtn) saveBtn.props.onClick()
+await new Promise((r) => setTimeout(r, 20))
+check('只读预览点了保存也不写盘（不会把文件截断写回）', writes.length === writesBefore, writes.length - writesBefore)
+readCase = ''
+overlay = render(overlayComp)
 
 /* 打开终端标签页 */
 clickByLabel(overlay, '终端')

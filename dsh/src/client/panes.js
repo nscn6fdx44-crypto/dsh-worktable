@@ -8,7 +8,7 @@ import { el, Icon, Light } from './ui.js'
 import {
   store, useStore, STATES, normState, fmtSize, fmtDuration, relTime, shortPath, projEmoji,
   loadTree, openFile, editText, saveFile, termExec, termKill, termClear, loadGit,
-  workspaceDirOf, revealPath,
+  workspaceDirOf, revealPath, openExternal,
   visibleEntries, setFsSort, setFsQuery, selectEntry, fsMkdir, fsRename, fsDelete, fsReveal,
   openFsMenu, closeFsMenu,
   joinPath, crumbsOf,
@@ -316,6 +316,9 @@ export function FilesPane({ project }) {
           menu.isDir
             ? el('button', { type: 'button', onClick: () => { const m = menu; closeFsMenu(); go(joinPath(m.dir, m.name)) } }, '📂 进入目录')
             : el('button', { type: 'button', onClick: () => { const m = menu; closeFsMenu(); openFile(joinPath(m.dir, m.name), project.id) } }, '◆ 在编辑器中打开'),
+          menu.isDir
+            ? null
+            : el('button', { type: 'button', onClick: () => { const m = menu; closeFsMenu(); openExternal(joinPath(m.dir, m.name)) } }, '🚀 用系统程序打开'),
           el('button', { type: 'button', onClick: () => { const m = menu; closeFsMenu(); fsReveal(m.dir, m.name) } }, '⧉ 在系统窗口中显示'),
           el('button', {
             type: 'button', disabled: tree.writable === false,
@@ -355,7 +358,9 @@ function fileEmoji(name) {
 export function EditorPane({ project }) {
   useStore()
   const ed = store.editor
-  const dirty = ed.state === 'ok' && ed.text !== ed.saved
+  /* partial / truncated 都代表「你看到的不是完整文件」—— 一律只读，绝不写回 */
+  const readonly = ed.state === 'ok' && (ed.partial || ed.truncated)
+  const dirty = ed.state === 'ok' && !readonly && ed.text !== ed.saved
   const area = useRef(null)
   const [openPath, setOpenPath] = useState('')
   const doOpen = () => {
@@ -376,6 +381,11 @@ export function EditorPane({ project }) {
     return () => document.removeEventListener('keydown', onKey, true)
   }, [dirty])
 
+  /* 看结尾（大日志）时直接滚到最底 */
+  useEffect(() => {
+    if (ed.tail && area.current) area.current.scrollTop = area.current.scrollHeight
+  }, [ed.tail, ed.path, ed.state])
+
   if (ed.state === 'idle') {
     return el('div', { className: 'pane-body' },
       el('div', { className: 'pane-empty' },
@@ -395,30 +405,69 @@ export function EditorPane({ project }) {
     )
   }
 
+  const previewSize = ed.previewBytes ? fmtSize(ed.previewBytes) : ''
+  const limitSize = ed.limit ? fmtSize(ed.limit) : '4.0 MB'
+
   return el('div', { className: 'pane-body editor-body' },
     el('div', { className: 'ed-bar' },
       el('span', { className: 'ed-name mono', title: ed.path }, ed.name + (dirty ? ' ●' : '')),
       ed.size ? el('span', { className: 'ed-meta mono' }, fmtSize(ed.size)) : null,
-      ed.truncated ? el('span', { className: 'tag' }, '已截断') : null,
+      readonly
+        ? el('span', { className: 'tag warn', title: '只读预览：文件太大，编辑器只读了一段' }, ed.tail ? '只读 · 结尾' : '只读 · 开头')
+        : ed.truncated ? el('span', { className: 'tag' }, '已截断') : null,
       ed.state === 'ok'
         ? el('button', {
           type: 'button', className: 'mini-btn' + (dirty ? ' on' : ''),
-          title: '保存到磁盘 (Ctrl+S)', onClick: () => saveFile(),
+          disabled: readonly,
+          title: readonly ? '只读预览不能保存（会把文件截断写回）' : '保存到磁盘 (Ctrl+S)',
+          onClick: () => saveFile(),
         }, ed.saving ? '保存中…' : '保存')
         : null,
       el('button', { type: 'button', className: 'mini-btn', title: '重新载入', onClick: () => openFile(ed.path, project?.id) }, '重载'),
     ),
+
+    /* 大文件：说清楚「你只看到一段」，并给出三条正当出路 */
+    readonly
+      ? el('div', { className: 'ed-note' },
+        el('span', { className: 'ed-note-txt' },
+          '文件 ' + fmtSize(ed.size) + '，超过编辑器上限 ' + limitSize + '，'
+          + (ed.tail ? '这里只显示结尾 ' : '这里只显示开头 ') + (previewSize || '一段')
+          + '（只读，改了也不会写回）。看全文请用系统程序。'),
+        el('div', { className: 'ed-note-acts' },
+          el('button', { type: 'button', className: 'mini-btn', onClick: () => openFile(ed.path, project?.id, { mode: 'head' }) }, '看开头'),
+          el('button', { type: 'button', className: 'mini-btn', onClick: () => openFile(ed.path, project?.id, { mode: 'tail' }) }, '看结尾'),
+          el('button', { type: 'button', className: 'mini-btn on', onClick: () => openExternal(ed.path) }, '🚀 用系统程序打开'),
+        ),
+      )
+      : null,
+
     ed.state === 'loading'
       ? el('p', { className: 'wt-mute' }, '读取中…')
       : ed.state === 'error'
         ? el('div', { className: 'pane-error' },
           el('p', null, ed.error),
-          el('button', { type: 'button', className: 'btn small', onClick: () => openFile(ed.path, project?.id) }, '重试'),
+          el('p', { className: 'hint' }, ed.errorCode === 413
+            ? '编辑器只处理 ' + limitSize + ' 以内的文本；再大就该交给系统程序，或者只看开头 / 结尾。'
+            : (ed.errorCode === 415 || ed.binary)
+              ? '二进制文件没法当文本编辑 —— 用系统默认程序打开才看得到内容。'
+              : '路径或权限可能不对；也可以直接用系统程序打开它。'),
+          el('div', { className: 'ed-note-acts' },
+            ed.errorCode === 413 || ed.errorCode === 415
+              ? el('button', {
+                type: 'button', className: 'mini-btn',
+                onClick: () => openFile(ed.path, project?.id, { mode: 'head', bytes: ed.previewBytes || 262144 }),
+              }, '只读预览前 ' + (previewSize || '256 KB'))
+              : null,
+            el('button', { type: 'button', className: 'mini-btn on', onClick: () => openExternal(ed.path) }, '🚀 用系统默认程序打开'),
+            el('button', { type: 'button', className: 'mini-btn', onClick: () => revealPath(ed.path, { select: true }) }, '⧉ 在文件管理器中显示'),
+            el('button', { type: 'button', className: 'btn small', onClick: () => openFile(ed.path, project?.id) }, '重试'),
+          ),
         )
         : el('textarea', {
           ref: area,
           className: 'ed-area mono',
           spellCheck: false,
+          readOnly: readonly,
           value: ed.text,
           onChange: (e) => editText(e.target.value),
           onKeyDown: (e) => {
