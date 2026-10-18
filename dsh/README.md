@@ -1,193 +1,212 @@
-# trae-usage-worktable（DSH 插件 · MVP）
+# trae-usage-worktable（DSH 插件 · 0.5.0）
 
-> DeepSeek Harness 侧边栏的完整工作台 UI。本目录是 `nscn6fdx44-crypto/trae-usage`
-> 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的复刻，
-> 采用同款 Cordis 插件协议（host 半侧 + client 半侧双 bundle）。
-> 视觉基准 = 仓库根 `workbench/index.html`（单文件网页版），配色/布局/字体 1:1 移植。
+> DeepSeek Harness 侧边栏的完整工作台。本目录是 `nscn6fdx44-crypto/trae-usage`
+> 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的**独立实现**：
+> 同款 Cordis 双 bundle 协议、同款交互模型，代码自己写、路由前缀自带
+> （`/api/trae-worktable/*`），不与上游抢路径。
 
-## 当前进度：P0 ✅ / P1 ✅ / **MVP ✅（0.4.0，2026-10-17）**
+## 能力（0.5.0）
 
-| 半侧 | 文件 | 状态 |
+| 半侧 | 文件 | 内容 |
 |---|---|---|
-| host（Node，跑在 DSH 进程内） | `src/index.js` → `lib/index.js` | **MVP：`/api/worktable/{health,sessions}`** + P1 `{tree,file}` 只读工作区 |
-| client（浏览器，ModuleLoader 握手） | `src/client/index.js` → `lib/client.js` | **MVP：侧边栏整条工作台 + 主区两视图** |
+| host | `src/index.js` → `lib/index.js` | 会话快照 / 文件读写 / 命令执行 / git 只读 / 项目静态托管 |
+| client | `src/client/*` → `lib/client.js` | 侧边栏工作台 + 控制室 + 卡片网格 + 可拖拽分栏工作区 |
 
-### MVP 能力（本期范围）
+### 侧边栏（`sidebar.footer.action`，常驻）
 
-- **侧边栏**（`sidebar.footer.action`）：**琥珀金底**（暖色渐变压深底），信息顺序对齐 dsh-worktable ——
-  1. 顶部标题（🧰 工作台 / Workbench + 刷新 / 新建），交互键带**呼吸灯**（`wtKeyBreathe`）；
-  2. **顶部状态栏**：进行中 x/y · 待处理 n · 会话快照时间 · DSH 对话总数；
-  3. **临时项目列表**：列表本身就是导航，可上下滚动，点一行进入该项目内部；每行一个小圆点，
-     颜色 = 工作状态（**跟随已绑定对话的运行状态**，手工点过则以手工为准）；
-  4. **工作区会话**：直接列出宿主会话，点一行就**建成一个已绑定该对话的临时项目**并进入
-     （已绑过的会话标 › 并跳到对应项目）；
-  5. 底部一行右击提示（控制室已按需求移除）。
-- **右击项目框**（`contextmenu`，卡片与侧边栏都支持）：界面布局（三分式 / 两分 / 单栏）·
-  绑定 / 改绑 / 解除 DSH 对话 · 删除项目。
-- **项目内部 = 分栏工作区**（`shell.overlay` 里承载，不再是全屏单页）：
-  - **三分式**（默认）：左「项目信息」+ 中「主界面（留空）」+ 右「绑定对话」；
-  - **两分**：主界面 + 右侧对话；**单栏**：只有主界面；
-  - 对话区是**只读预览**：`/api/worktable/transcript` 读绑定会话的最近消息（user / assistant 文本气泡，
-    过滤 reasoning 与工具入参），并在标题栏给「打开」回宿主对话。
-- **新建临时项目 = 小窗**（挂在侧边栏、不强制铺开主区）：
-  - 目录默认写好 **DSH 默认工作区**（host 端取最近活跃会话的 cwd），可点「默认工作区」复位；
-  - **项目图标**：14 个 emoji + 「自动」（按目录名/分类推），存在 `wt.projects[].icon`；
-  - **界面布局**：三张**预览草图**（三分式 / 两分 / 单栏），选完即写入 `wt.layouts`；
-  - **绑定 DSH 对话**：下拉直接选一条宿主对话，创建时即建立绑定；
-  - 语言标签已按需求移除（卡片/内部只显示图标、路径、状态、布局）。
-- **临时项目**：只存在于本机 localStorage（不落盘、不进 git、删了不动磁盘文件），可绑定一个 **DSH 对话**。
-- **会话统计**：`/api/worktable/sessions` 读宿主 `sessionQuery` / `sessions` 服务快照，**不调模型**、
-  不写宿主数据；取不到服务时 200 降级，不拖挂页面。
-- **四态状态光**：待命 / 进行中 / 待处理 / 已完成，卡片同步霓虹光效
-  （完成=绿边光晕 / 待处理=橙边光晕 / 进行中=琥珀金彗星环）。
+1. 标题（🧰 工作台）+ 刷新 / 新建；
+2. 状态栏：进行中 · 待处理 · 项目数 · 宿主对话数；
+3. **项目列表**：按「分组」归组，点一行进入工作区；每行状态灯跟随绑定对话，也可点击手工覆盖；
+4. **宿主会话列表**：点一行把该会话一键建成已绑定项目（已绑定则跳过去）；
+5. 右击项目：布局 / 编辑 / 绑定 / 删除。
 
-### 明确不做（P2 范围）
+### 控制室 + 卡片网格（`shell.overlay`）
 
-主界面里的文件树 / 终端 / 浏览器、可发送的对话窗（当前只读）、拖拽调宽、端口与磁盘扫描。
-MVP 只跑通「侧边栏状态栏 + 项目列表导航 + 右击菜单 + 分栏布局 + 只读对话预览 + 小窗新建」。
+- **控制室**：宿主四态计数、快照时间与来源、前 6 个进行中会话及其实时计时（每秒刷新，纯本地推算）；
+- **项目卡片**：图标 / 名称 / 状态 / 主对话标题 / 备注 / 布局标签 / 绑定数；
+  状态有霓虹光效（进行中=彗星环，待处理=橙边，已完成=绿边）。
 
-## 数据与存储
+### 项目工作区（可拖拽分栏）
 
-- localStorage（统一 `wt.` 前缀）：`wt.view`（projects / project）/ `wt.projects`（临时项目）/
-  `wt.bindings`（项目 → DSH 会话）/ `wt.status`（手工状态覆盖）/ `wt.layouts`（项目 → l3 / l2 / full）
-- host 路由：
-  - `GET /api/worktable/health` → 版本 + 会话服务可用性
-  - `GET /api/worktable/sessions` → `{ ok, at, source, counts:{running,waiting,done,idle,total}, sessions:[{id,title,cwd,state,live,updatedAt}] }`
-  - `GET /api/worktable/defaults` → `{ workspace, home, platform }`（新建小窗的默认目录）
-  - `POST /api/worktable/transcript` → `{ sessionId, limit }` → `{ ok, title, messages:[{id,role,text,time}], truncated }`
-  - P1 只读工作区仍在 `/api/trae-worktable/{tree,file}`（POST，参数走 body）；旧前缀 `{health,sessions}` 保留为别名
-### 会话四态判定（只读事件日志）
+布局是**数据驱动**的（`core.js` 的 `LAYOUTS`，新增预设只要加一行）：
+
+| 预设 | 分栏 |
+|---|---|
+| 三分式（默认） | 左：项目/文件 · 中：工作区 · 右：对话 |
+| 两分 | 工作区 + 对话 |
+| 单栏 | 只有工作区 |
+| 对话主导 | 窄工作区 + 宽对话 |
+
+- **分割条可拖拽调宽**，松手落 `localStorage`，双击复位；宽度按「项目 × 分栏」记；
+- **左栏**两个页签：`项目`（信息 / 绑定会话 / git 状态与最近提交）· `文件`（目录浏览 + 路径跳转）；
+- **中栏是标签页工作区**，可同时开多个：`编辑器` / `终端` / `浏览器` / `自定义`；
+  - **编辑器**：读文件、改、`Ctrl+S` 保存回磁盘（原子写：临时文件 + rename）；
+  - **终端**：把命令交给宿主所在机器执行，NDJSON 流式回显；`cd` 由 host 接管并保持；
+    `↑↓` 翻历史、`Ctrl+L` 清屏、可中断、120s 超时、512KB 输出上限；
+  - **浏览器**：iframe + 地址栏；默认打项目的静态托管地址，也可填 `localhost` 开发服务器；
+  - **自定义**：左边写 HTML、右边实时预览（iframe sandbox）。
+- **右栏对话**：读绑定会话最近消息（只读预览，过滤 reasoning 与工具入参），
+  「在宿主打开 / 刷新 / 管理绑定」。
+
+## host 路由
+
+统一前缀 `/api/trae-worktable`：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/health` | 版本 / 平台 / 服务可用性 / 上限常量 |
+| GET | `/sessions` | `{ ok, at, source, counts:{running,waiting,done,idle,total}, sessions:[{id,title,cwd,state,live,updatedAt,turns}] }` |
+| GET | `/defaults` | `{ workspace, home, platform, shell }`（新建项目的默认目录） |
+| POST | `/transcript` | `{ sessionId, limit }` → `{ ok, title, cwd, messages:[{id,role,text,time}], truncated }` |
+| POST | `/fs/list` | `{ path }` → `{ path, name, parent, entries:[{name,dir,link,size,mtime}], total, truncated }` |
+| POST | `/fs/read` | `{ path }` → `{ path, name, size, mtime, text, truncated, eol }`，二进制 / 超 4MB 拒绝 |
+| POST | `/fs/write` | `{ path, text }` → 原子写（`path.wt-tmp-<pid>` + rename） |
+| POST | `/fs/mkdir` | `{ path }` → 递归建目录 |
+| POST | `/fs/rename` | `{ from, to }` → 移动 / 改名，目标已存在则 409 |
+| POST | `/fs/stat` | `{ path }` → `{ dir, size, mtime }` |
+| POST | `/term/exec` | `{ id, cmd, cwd }` → `application/x-ndjson` 流：`{t:'out'|'err'|'sys'|'cwd'|'clear'|'end'}` |
+| POST | `/term/kill` | `{ id }` → 终止当前命令 |
+| POST | `/git` | `{ path, op:'status'|'log'|'branches' }` → **只读**，`status` 解析 `-z` porcelain |
+| POST | `/project/register` | `{ id, root }` → 登记项目根，供静态托管与路径白名单使用 |
+| GET | `/site/<项目id>/<相对路径>` | 前缀路由，托管项目目录；目录回退 `index.html`，拦截路径穿越 |
+
+### 会话四态判定（只读事件日志，不调模型）
 
 | 状态 | 判定 |
 |---|---|
 | `running` 进行中 | 在活会话，日志里 `turn/start` 之后没有 `turn/end` |
 | `waiting` 待处理 | 同上，且最后一条 `approval/asked` 没有对应的 `approval/decided` |
-| `done` 已完成 | 日志里出现过 `turn/end`，当前没有未闭合 turn |
-| `idle` 待命 | 还没有跑过任何 turn 的会话 |
+| `done` 已完成 | 出现过 `turn/end`，当前没有未闭合 turn |
+| `idle` 待命 | 还没跑过任何 turn |
+
+> 注意：host 输出的是上游命名（running / waiting），UI 的四态是 working / needs-you。
+> 换算只发生在 `core.js` 的 `normState()` 一处 —— 这是 0.4.0 的 bug 根源（状态灯全灰）。
+
+## 数据与存储
+
+localStorage（统一 `wt.` 前缀）：
+
+| key | 内容 |
+|---|---|
+| `wt.projects` | 项目：`{id,name,alias,icon,path,note,folder,order,hidden,sessions[],created,updated}` |
+| `wt.ui.v2` | 每个项目的工作区状态：`{ layout, split:{left,chat}, leftTab, tabs[], activeTab }` |
+| `wt.status` | 手工状态覆盖（点了状态灯才写） |
+| `wt.view` | `grid` / `project` |
+| `wt.termHistory` | 终端命令历史（最近 80 条） |
+| `wt.bindings`、`wt.layouts` | 0.4.0 旧格式，**首次加载自动迁移**进 `wt.projects[].sessions` 与 `wt.ui.v2` |
+
+项目元数据只在浏览器里，删项目不动磁盘。**唯一的磁盘写入**是编辑器保存与 `mkdir/rename`。
+
+## 安全边界（与上游有意不同）
+
+1. 所有路径必须落在白名单根内：进程 cwd、用户 home、`DSH_HOME`、已登记的项目根；
+2. 先 `realpath` 解析符号链接再判根（逐级回退到第一个存在的祖先），挡 `../` 与 symlink 逃逸；
+3. `.ssh` / `.aws` / `.gnupg` / `.kube` / `.password-store` 一律拒绝；
+4. 不再把任意请求体写进插件目录（上游 `/ping` 就这么干过，本版已删除该路由）；
+5. 命令用 `spawn(file, args)` 而非 `exec`，不拼 shell 字符串；`git` 用 `execFile` 且只暴露只读 op。
+
+已知取舍：终端是「每条命令一个进程 + host 记 cwd」，不是常驻交互式 PTY。
+因此 `cd` 生效、环境变量继承、单条命令可中断，但不支持 `top`/`vim` 这类全屏交互程序。
 
 ## 目录结构
 
 ```
 dsh/
 ├── package.json        # main=host 入口，exports["./client"]=客户端包，dsh 配置块
-├── dsh.plugin.json     # 插件元数据（版本须与 package.json 一致）
+├── dsh.plugin.json     # 插件元数据（版本须与 package.json 一致，build 会校验）
 ├── cordis.patch.yml    # insert 挂进 Cordis
 ├── build.mjs           # esbuild 双 bundle + 版本注入
 ├── src/
-│   ├── index.js        # host 半侧：/api/worktable/* + P1 只读工作区 + 探针
+│   ├── index.js        # host：路由表 / 路径沙箱 / 终端 / git / 静态托管
 │   └── client/
-│       └── index.js    # client 半侧：侧边栏工作台 + 主区两视图 + 弹窗 + 全套 CSS
+│       ├── index.js    # 入口：座位注册 + 错误边界 + 心跳/轮询
+│       ├── core.js     # 状态 / 存储迁移 / host API / 布局预设 / 全部动作
+│       ├── ui.js       # el / 图标 / 状态灯 / 分割条 / 右击菜单 / 弹窗外壳
+│       ├── sidebar.js  # 侧边栏工作台
+│       ├── overlay.js  # 顶栏 / 控制室 / 卡片网格 / 分栏工作区
+│       ├── panes.js    # 项目 / 文件 / 编辑器 / 终端 / 浏览器 / 自定义 / 对话
+│       ├── modals.js   # 新建 / 编辑 / 绑定
+│       └── theme.css   # 全套样式（收在 .wt-scope 下）
 ├── test/
-│   ├── host-routes.mjs # 31 项：health / sessions 四态 / defaults / transcript / tree / file
-│   └── client-smoke.mjs# 67 项：两座位注册 / 侧边栏 / 右击菜单 / 分栏布局 / 小窗
+│   ├── host-routes.mjs # 54 项：路由 / 沙箱 / 文件 / git / 托管 / 终端
+│   └── client-smoke.mjs# 57 项：座位 / 侧边栏 / 菜单 / 分栏 / 标签页 / 小窗
 └── lib/                # 构建产物（安装前必须 build）
 ```
 
-## 从源码构建
+## 构建与自测
 
 ```sh
 cd dsh
-npm install        # 仅 esbuild 一个 devDependency（仓库根 node_modules 已有时可跳过）
 npm run build      # 产出 lib/index.js + lib/client.js
-npm test           # 离线自测（stub 掉宿主，不需启动 DSH）
+npm test           # 离线自测：stub 掉宿主，不需启动 DSH
 ```
 
 ## 安装
 
-### 开发态：link 本地源码（改代码即时生效）
+### 开发态：link 本地源码
 
 ```powershell
 & "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:<本仓库绝对路径>\dsh"
 ```
 
-pnpm 11.7 一般会创建 junction；若没建（README 旧版记录的坑），手工补：
+本机已 link：`~/.dsh/profiles/desktop/node_modules/trae-usage-worktable` → 本目录。
+改完 `src/` 执行 `npm run build` 并**重启 DSH**（client bundle 按 rev 缓存，不重启不生效）。
 
-```powershell
-node -e "require('fs').symlinkSync('<本仓库绝对路径>\dsh','C:\Users\<用户>\.dsh\profiles\desktop\node_modules\trae-usage-worktable','junction')"
-```
-
-改完 `src/` 记得 `npm run build` 并**重启 DSH**（client bundle 按 rev 缓存，不重启不生效）。
-
-### 发布态：tgz 走官方安装流程
+### 发布态：tgz
 
 ```sh
-cd dsh && npm install && npm run build && npm pack
+npm run build && npm pack
 ```
 
 ```powershell
-& "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<本仓库绝对路径>\dsh\trae-usage-worktable-0.4.0.tgz"
+& "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<本仓库绝对路径>\dsh\trae-usage-worktable-0.5.0.tgz"
 ```
 
-两种方式都**必须**确认 `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` 里有
-`"trae-usage-worktable"` —— `plugin add` 只写 dependencies，写不进 bundles 就完全不加载且无报错。
+## 验收清单（重启 DSH 后）
 
-## 验收标准（重启 DSH 后）
-
-1. 侧边栏出现「工作台」区块：标题 → **顶部状态栏（进行中 / 待处理 / 会话快照 / DSH 对话）** → 临时项目列表
-   → 底部右击提示；**没有控制室入口**；
-2. 每个项目行右侧有一个小圆点：绑定对话在跑 = 琥珀金（进行中）、等审批 = 橙（待处理）、
-   跑完 = 绿（已完成）、否则灰（待命）；
-3. 侧边栏「工作区会话」里点一条会话 → 直接出现一个已绑定该对话的临时项目并进入它；
-4. 点任意项目行 → 主区进入**三分式**：左项目信息、中「主界面先留空」、右对话（能读到该对话最近消息）；
-5. 右击项目行（或卡片）→ 菜单：切换三分式 / 两分 / 单栏，绑定 / 改绑 / 解除对话，删除项目；
-   切完立刻生效，布局记在 `wt.layouts`；
-6. 「＋ 新建临时项目」→ 弹出小窗（不铺全屏）：路径已填 **DSH 默认工作区**，可选 emoji 图标、
-   三张布局草图、直接绑定一条对话；创建后卡片与侧边栏列表同时出现。
-
-命令行复核（`dsh web` 启动日志里有带 token 的 URL）：
-
-```bash
-# PowerShell
-curl.exe -s "http://127.0.0.1:19387/api/worktable/health"
-curl.exe -s "http://127.0.0.1:19387/api/worktable/sessions"
-curl.exe -s "http://127.0.0.1:19387/api/trae-worktable/pings"   # 前端执行轨迹探针
-```
+1. 侧边栏出现「工作台」，状态栏数字与 DSH 里实际在跑的会话一致；
+2. 点项目 → 主区铺开，默认三分式，**拖动两条分割条**能改宽，刷新后宽度还在；
+3. 左栏「文件」→ 列目录 → 点 `package.json` → 中栏开编辑器 → 改一行 → `Ctrl+S` → 磁盘内容确实变了；
+4. 打开「终端」→ `git status` 有输出 → `cd ..` 后再 `pwd` 路径确实变了；
+5. 「浏览器」默认打开项目静态页（256 行 HTML 能渲染）；
+6. 右栏显示绑定对话的最近消息，点「在宿主打开」能跳回宿主会话；
+7. 右击项目切换四种布局，分栏数量随之变化，且刷新后保持。
 
 ## 已知坑（真机踩过，逐条可复现）
 
-1. **`dsh plugin add` 只写 dependencies，不写 `dsh.profile.bundles`**；而任何插件安装/升级操作都会重写
-   bundles 数组。表现：依赖、node_modules、lib 全在，但页面里没有它、host 路由 404 —— 完全不加载且无报错。
-   **每次装完都要复核 bundles**。
-2. **上游 `dsh-worktable@0.4.0` 与本机 DSH 0.2.0-rc.2 不兼容**：其 client entry 激活失败 →
-   `web boot: 1 entry did not activate` → **整个应用打不开**。而且它占用 `/api/worktable/*`，与本插件正面冲突。
-   0.4.0 起本插件接管 `/api/worktable/*`，**不要与上游同时启用**（本机已移除上游包）。
-3. P1 的只读工作区路由留在 `/api/trae-worktable/*`，避免与上游/MVP 前缀互撞。
-4. **serve 层按请求时的文件内容实时算 rev**：`lib/client.js` 一改，旧 `&rev=` URL 立即 404；必须重启。
-5. Electron 应用在带 `ELECTRON_RUN_AS_NODE=1` 的环境里启动会退化成纯 Node 进程（不起窗口、不开端口）。
-6. 用 PowerShell `Set-Content -Encoding UTF8` 改 `package.json` 会写入 BOM，导致 `build.mjs` 的
-   `JSON.parse` 直接失败 —— 要写就得用 `UTF8Encoding($false)`。
-7. **侧边栏容器上别用 `backdrop-filter` 或 `overflow:hidden`**：二者都会给 `position:fixed` 的后代创建
-   containing block 并裁剪，右击菜单/小窗会被侧边栏矩形切掉一半。现在 `.wt-side` 两者都不用，列表自带滚动。
-8. 右击菜单、两个小窗、toast 都挂在**侧边栏**（常驻挂载），不放主区：主区关着时也得能弹；
-   `store.modal` 不再顺带 `open: true`，否则点「新建」会先把整块主区铺开。
+1. **路由冲突**：上游 dsh-worktable 占 `/api/worktable/*`，DSH 的 exact 路由先注册者胜出 →
+   本插件永久让出该前缀，全部走 `/api/trae-worktable/*`。
+2. **侧边栏不能有 `backdrop-filter` / `overflow:hidden`**：会给 `position:fixed` 后代创建
+   包含块并裁剪，右击菜单会被切掉。
+3. **`ctx.slots.inject` 里 `renderSlot` 必须传自己的座位名**，空参调用抛 `SlotOwnershipError`，
+   会被 React 错误边界吞成空白。
+4. **Register 成功 ≠ 渲染成功**，两侧都要错误边界。
+5. **会话服务可选**，必须 `ctx.inject(['sessions'], cb)` 延迟接入。
+6. **`webServer.register` 返回 disposer 且重复注册抛错**，必须接住并在 `ctx.effect` 里释放，
+   否则插件重载会撞 duplicate route。
+7. **前缀路由**：`kind:'prefix'` 匹配 `path` 或 `path/...`，最长前缀优先。
+8. **client bundle 按 rev 缓存**：改完不重启 DSH 不生效。
 
 ## 关键契约（改代码前必读）
 
-- `props.renderSlot` **不是**通用子座位渲染器，而是绑定到本 entry 自身 children 声明的渲染绑定；
-  空参调用抛 `SlotOwnershipError`，会被错误边界吞成空白。**注册成功 ≠ 渲染成功**，渲染期异常必须
-  由 `SidebarBoundary` / `OverlayBoundary` 兜住并显示可见错误，而不是白屏。
-- 会话服务**可选**：`sessions` 走 `ctx.inject(['sessions'], cb)` 延迟接入；写进 `export const inject`
-  会让插件在无会话服务的 profile 里永不启动。
-- client 侧 react / `@deepseek-ai/*` 全部 external，由宿主模块系统提供；只用 `createElement`（`.js` 无 JSX）。
-- 所有 CSS 收在 `.wt-scope` 下：宿主 DSH 自身也用 `.card` / `.btn` / `.grid` 这类通用类名，不隔离必撞。
+- 四态换算只在 `normState()`；不要在组件里再判 `'running'`。
+- 所有 host 调用走 `apiGet/apiPost`；`loadTranscript` 有竞态令牌，别绕过它直接 fetch。
+- 布局由 `LAYOUTS[].parts` 决定，渲染在 `overlay.js` 的 `ProjectView`，
+  不要在任何地方硬编码「三分式」= 三栏。
+- 分割条：拖动中 `persist=false`（只 emit），松手必须 `flushUi()` 落盘 ——
+  不能拿闭包里的旧宽度回写。
+- 选择器一律收进 `.wt-scope`，避免污染宿主的 `.card` / `.btn` / `.grid`。
 
-## 兼容声明（可证伪）
+## 与上游的差异（有意为之）
 
-- 仅在 **DSH 0.2.0-rc.2 + Windows** 上验证（`dsh.compatibility.dsh` 只声明这一个版本）；
-- 座位：`sidebar.footer.action`（侧边栏区块）+ `shell.overlay`（主区浮层），与上游 v0.4.0 的注入形态一致；
-- 会话跳转依赖宿主暴露 `uiWorkspace.openSession` 或 `sessions.open`，都没有时降级为提示文案。
-
-## 与另外三个形态的关系
-
-本仓库同一设计有四个形态，互不替代：
-
-| 形态 | 位置 | 定位 |
+| 项 | 上游 0.4.0 | 本插件 0.5.0 |
 |---|---|---|
-| DSH 插件（本目录） | `dsh/` | 主力形态，host 有完整 Node 权限 |
-| TraeCode 扩展 | `src/` | VS Code / TraeCode 插件（`.vsix`），测试版 |
-| 单文件网页 | `workbench/` | 零服务公开页（GitHub Pages），扫本机项目 |
-| TraeWork Skill | `traework/` | Skill 宿主适配形态 |
+| 右侧对话 | 宿主会话视图让位（margin + CSS 变量），可真实输入 | 只读预览 + 一键跳回宿主 |
+| 终端 | node-pty + WebSocket，真 PTY | 每命令一进程 + NDJSON 流，无原生依赖 |
+| 文件安全 | 任意绝对路径 | 根白名单 + realpath + 凭证目录拒绝 |
+| 窗口模型 | 窗格内多标签、跨格拖拽 | 单工作区多标签页 |
+| 路由前缀 | `/api/worktable` | `/api/trae-worktable`（不抢注） |
 
 ## License
 
-MIT（同仓库根 LICENSE）。
+MIT（与上游一致）。

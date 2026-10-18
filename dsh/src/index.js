@@ -1,251 +1,413 @@
 /**
- * trae-usage-worktable · host 侧 Cordis 插件（MVP）
+ * trae-usage-worktable · host 侧 Cordis 插件
  *
- * 运行在 DSH 宿主进程内，有完整 Node 权限（fs / child_process / 进程环境）。
+ * 运行在 DSH 宿主进程内（Node 权限：fs / child_process）。
  *
- * 路由：
- *   MVP（本期主链路）
- *     GET  /api/trae-worktable/health   插件版本 + 会话服务可用性探针
- *     GET  /api/trae-worktable/sessions 宿主机会话快照（运行中 / 待处理 / 已完成）—— 不调模型
- *   P1 只读工作区（保留，P2 分栏/终端直接复用）
- *     POST /api/trae-worktable/tree
- *     POST /api/trae-worktable/file
- *   排障探针（P2 稳定后移除）
- *     /api/trae-worktable/{health,ping,pings}
+ * 路由前缀统一 `/api/trae-worktable/*`：上游 dsh-worktable 占用 `/api/worktable/*`，
+ * DSH 的 exact 路由是先注册者胜出，抢同名路径会让上游健康检查读到本插件响应。
  *
- * 路由前缀的由来（真机踩过两次）：
- *   上游 dsh-worktable@0.4.0 占用 /api/worktable/*。DSH 的 exact 路由是「先注册者胜出」，
- *   本插件若注册同名路径，上游的健康检查就会读到本插件的响应（实测复现过）。
- *   因此本插件所有路由统一 /api/trae-worktable/*，永不碰上游前缀。
+ * 契约分层
+ *   只读宿主状态   GET  /health      GET /sessions      GET /defaults      POST /transcript
+ *   文件系统       POST /fs/list     POST /fs/read      POST /fs/write
+ *                  POST /fs/mkdir    POST /fs/rename    POST /fs/stat
+ *   命令           POST /term/exec（NDJSON 流）          POST /term/kill
+ *   版本控制       POST /git（只读：status / log / branches）
+ *   项目静态托管   POST /project/register               GET  /site/<id>/<rel...>（prefix）
  *
- * 会话状态的读取边界（重要）：
- *   只用 Cordis 的 sessions / sessionQuery 服务读宿主已有快照与事件日志，
- *   不发任何模型请求，也不写宿主数据。取不到服务时降级为 200 + degraded 标记，
- *   绝不因为统计失败把宿主页面拖挂。
+ * 安全边界（与上游有意不同）
+ *   1. 所有路径必须落在白名单根内：进程 cwd、用户 home、DSH_HOME、已注册项目根。
+ *   2. 先 realpath 解析符号链接再判根，避免 ../ 与 symlink 逃逸。
+ *   3. 凭证目录（.ssh / .aws / .gnupg / .kube）直接拒绝。
+ *   4. 不把任意请求体写进包目录（上游 /ping 就这么干过）。
  */
-import { appendFileSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { basename, dirname, extname, isAbsolute } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { spawn, execFile } from 'node:child_process'
+import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
+import { homedir } from 'node:os'
 
 export const name = 'trae-usage-worktable'
 export const inject = ['webServer']
 
-/** 构建期由 esbuild define 注入；未构建时兜底 dev */
-const PLUGIN_VERSION = typeof __WT_VERSION__ === 'undefined' ? 'dev' : __WT_VERSION__
+const VERSION = typeof __WT_VERSION__ === 'undefined' ? 'dev' : __WT_VERSION__
+const BASE = '/api/trae-worktable'
 
-/**
- * 路由前缀：全部走 `/api/trae-worktable/*`，与上游 dsh-worktable 的
- * `/api/worktable/*` 彻底隔离。
- *
- * 曾短暂「接管」过上游前缀（上游缺席时），现上游已装回并启用 ——
- * DSH 的 exact 路由是「先注册者胜出」，同名路径会让上游的健康检查读到本插件的响应。
- * 因此本插件永久让出 `/api/worktable/*`，client 的 API 常量同步指向本前缀。
- */
-export const HEALTH_PATH = '/api/trae-worktable/health'
-export const SESSIONS_PATH = '/api/trae-worktable/sessions'
-export const DEFAULTS_PATH = '/api/trae-worktable/defaults'
-export const TRANSCRIPT_PATH = '/api/trae-worktable/transcript'
+export const HEALTH_PATH = BASE + '/health'
+export const SESSIONS_PATH = BASE + '/sessions'
+export const DEFAULTS_PATH = BASE + '/defaults'
+export const TRANSCRIPT_PATH = BASE + '/transcript'
 
-const PING_PATH = '/api/trae-worktable/ping'
-const PINGS_PATH = '/api/trae-worktable/pings'
-const TREE_PATH = '/api/trae-worktable/tree'
-const FILE_PATH = '/api/trae-worktable/file'
-
-/** 探针日志落在插件包根目录（与 lib/ 同级），便于安装后定位 */
-const PING_LOG = fileURLToPath(new URL('../.tmp-pings.jsonl', import.meta.url))
-
-/* 上限：目录条目数 / 文件字节 / 预览字符数 / 会话条数 / 会话事件扫描深度 */
-const MAX_DIR_ENTRIES = 500
-const MAX_FILE_BYTES = 2 * 1024 * 1024
-const MAX_PREVIEW_CHARS = 200_000
+/* ---------- 上限 ---------- */
+const MAX_DIR_ENTRIES = 800
+const MAX_FILE_BYTES = 4 * 1024 * 1024
+const MAX_WRITE_BYTES = 4 * 1024 * 1024
+const MAX_PREVIEW_CHARS = 400_000
 const MAX_SESSIONS = 200
 const MAX_EVENT_SCAN = 400
+const MAX_BODY_JSON = 64 * 1024
+const MAX_TERM_OUTPUT = 512 * 1024
+const TERM_TIMEOUT_MS = 120_000
+const GIT_TIMEOUT_MS = 10_000
 
-/* 文本白名单（无扩展名的常见文本文件单独列出） */
-const TEXT_EXT = new Set([
-  '.txt', '.md', '.markdown', '.json', '.jsonc', '.json5', '.yml', '.yaml', '.toml', '.ini', '.cfg', '.conf',
-  '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts', '.cts', '.css', '.scss', '.less', '.html', '.htm',
-  '.py', '.rb', '.go', '.rs', '.java', '.kt', '.c', '.h', '.cc', '.cpp', '.hpp', '.cs', '.php', '.lua',
-  '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd', '.sql', '.graphql', '.vue', '.svelte', '.astro',
-  '.xml', '.csv', '.tsv', '.log', '.env', '.gitignore', '.gitattributes', '.editorconfig', '.npmrc',
-])
-const TEXT_NAME = new Set(['LICENSE', 'NOTICE', 'README', 'Makefile', 'Dockerfile', 'Procfile', '.gitignore'])
+/* 凭证目录：即便在 home 内也不允许读写 */
+const DENY_SEGMENTS = new Set(['.ssh', '.aws', '.gnupg', '.kube', '.password-store', '.docker/config.json'])
+
+/* 已注册的项目根：/site 托管与文件读写白名单都靠它 */
+const PROJECT_ROOTS = new Map()
+
+/* 终端会话：id → { cwd, child, startedAt, overflow } */
+const TERM_SESSIONS = new Map()
 
 export function apply(ctx) {
   const webServer = ctx.webServer
   if (!webServer) {
-    // headless profile（无 web 服务）时静默降级，不影响宿主其他插件
     ctx.logger?.warn?.('[worktable] ctx.webServer 不可用，跳过服务端路由注册')
     return
   }
 
-  const route = (path, handler) => webServer.register({ kind: 'exact', path, handler })
+  const disposers = []
+  const register = (route) => {
+    const dispose = webServer.register(route)
+    if (typeof dispose === 'function') disposers.push(dispose)
+  }
 
-  /* ---------- MVP ---------- */
+  /* ---------- 宿主状态（只读） ---------- */
 
-  route(HEALTH_PATH, (_req, res) => {
-    const services = {
-      sessions: hasService(ctx, 'sessions'),
-      sessionQuery: hasService(ctx, 'sessionQuery'),
-    }
-    json(res, 200, {
-      plugin: 'trae-usage-worktable',
-      version: PLUGIN_VERSION,
-      ok: true,
-      node: process.version,
-      platform: process.platform,
-      services,
-    })
+  register({
+    kind: 'exact',
+    path: HEALTH_PATH,
+    handler: (req, res) => {
+      if (!allowMethod(req, res, 'GET')) return
+      sendJson(res, 200, {
+        plugin: 'trae-usage-worktable',
+        version: VERSION,
+        ok: true,
+        node: process.version,
+        platform: process.platform,
+        pid: process.pid,
+        services: {
+          sessions: !!service(ctx, 'sessions'),
+          sessionQuery: !!service(ctx, 'sessionQuery'),
+        },
+        limits: { fileBytes: MAX_FILE_BYTES, dirEntries: MAX_DIR_ENTRIES, termOutput: MAX_TERM_OUTPUT },
+      })
+    },
   })
 
-  route(SESSIONS_PATH, (req, res) => {
-    collectSessions(ctx)
-      .then((payload) => json(res, 200, payload))
-      .catch((err) => json(res, 200, {
-        ok: false,
-        at: Date.now(),
-        degraded: true,
-        error: String(err?.message ?? err),
-        counts: { running: 0, waiting: 0, done: 0, idle: 0, total: 0 },
-        sessions: [],
-      }))
+  register({
+    kind: 'exact',
+    path: SESSIONS_PATH,
+    handler: (req, res) => {
+      if (!allowMethod(req, res, 'GET')) return
+      collectSessions(ctx).then(
+        (payload) => sendJson(res, 200, payload),
+        (err) => sendJson(res, 200, degradedSessions(err)),
+      )
+    },
   })
 
-  /* ---------- 默认路径 / 绑定对话只读预览 ---------- */
-
-  route(DEFAULTS_PATH, (_req, res) => {
-    collectDefaults(ctx)
-      .then((payload) => json(res, 200, payload))
-      .catch((err) => json(res, 200, { ok: false, error: msg(err), workspace: '', home: '' }))
+  register({
+    kind: 'exact',
+    path: DEFAULTS_PATH,
+    handler: (req, res) => {
+      if (!allowMethod(req, res, 'GET')) return
+      collectDefaults(ctx).then(
+        (payload) => sendJson(res, 200, payload),
+        (err) => sendJson(res, 200, { ok: false, error: msg(err), workspace: '', home: '' }),
+      )
+    },
   })
 
-  route(TRANSCRIPT_PATH, (req, res) => {
-    readBody(req, 16 * 1024, (err, body) => {
-      if (err) return json(res, 400, { error: err })
-      let payload
-      try { payload = JSON.parse(body || '{}') } catch { return json(res, 400, { error: 'invalid json' }) }
+  register({
+    kind: 'exact',
+    path: TRANSCRIPT_PATH,
+    handler: async (req, res) => {
+      if (!allowMethod(req, res, 'POST')) return
+      const payload = await readJson(req, res, MAX_BODY_JSON)
+      if (payload === undefined) return
       const sessionId = String(payload?.sessionId || '')
-      if (!sessionId) return json(res, 400, { error: 'sessionId required' })
-      const limit = Math.min(100, Math.max(1, Number(payload?.limit) || 40))
-      readTranscript(ctx, sessionId, limit)
-        .then((data) => json(res, 200, data))
-        .catch((e) => json(res, 200, { ok: false, sessionId, messages: [], error: msg(e) }))
-    })
-  })
-
-  /* ---------- P1 只读工作区 ---------- */
-
-  route(PING_PATH, (req, res) => {
-    readBody(req, 16 * 1024, (err, body) => {
-      if (!err && body && PING_LOG) {
-        try { appendFileSync(PING_LOG, body.trim() + '\n') } catch { /* 磁盘不可写时静默 */ }
+      if (!sessionId) return sendJson(res, 400, { error: 'sessionId required' })
+      const limit = clampInt(payload?.limit, 1, 120, 40)
+      try {
+        sendJson(res, 200, await readTranscript(ctx, sessionId, limit))
+      } catch (err) {
+        sendJson(res, 200, { ok: false, sessionId, messages: [], error: msg(err) })
       }
-      json(res, 200, { ok: true })
-    })
+    },
   })
 
-  route(PINGS_PATH, (_req, res) => {
-    let text = ''
-    try { text = readFileSync(PING_LOG, 'utf8') } catch { /* 无记录时返回空 */ }
+  /* ---------- 文件系统 ---------- */
+
+  register({ kind: 'exact', path: BASE + '/fs/list', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const target = await assertExisting(body?.path, 'dir')
+    const dirents = readdirSync(target, { withFileTypes: true })
+    const rows = []
+    for (const ent of dirents) {
+      let size = 0
+      let mtime = 0
+      try {
+        const st = statSync(join(target, ent.name))
+        size = st.size
+        mtime = st.mtimeMs
+      } catch { /* 权限不足/损坏链接：保留条目但无 stat */ }
+      const dir = ent.isDirectory() || (ent.isSymbolicLink() && isDirQuiet(join(target, ent.name)))
+      rows.push({ name: ent.name, dir, link: ent.isSymbolicLink(), size, mtime })
+    }
+    rows.sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1))
+    const parent = dirname(target)
+    sendJson(res, 200, {
+      path: target,
+      name: basename(target),
+      parent: parent === target ? '' : parent,
+      entries: rows.slice(0, MAX_DIR_ENTRIES),
+      total: rows.length,
+      truncated: rows.length > MAX_DIR_ENTRIES,
+    })
+  })})
+
+  register({ kind: 'exact', path: BASE + '/fs/read', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const target = await assertExisting(body?.path, 'file')
+    const st = statSync(target)
+    if (st.size > MAX_FILE_BYTES) {
+      return sendJson(res, 413, { error: '文件过大（' + fmtBytes(st.size) + '），上限 ' + fmtBytes(MAX_FILE_BYTES) })
+    }
+    const raw = readFileSync(target)
+    if (raw.subarray(0, 8192).includes(0)) {
+      return sendJson(res, 415, { error: '二进制文件，无法以文本打开', binary: true, size: st.size })
+    }
+    let text = raw.toString('utf8')
+    const truncated = text.length > MAX_PREVIEW_CHARS
+    if (truncated) text = text.slice(0, MAX_PREVIEW_CHARS)
+    sendJson(res, 200, {
+      path: target,
+      name: basename(target),
+      size: st.size,
+      mtime: st.mtimeMs,
+      text,
+      truncated,
+      eol: text.includes('\r\n') ? 'crlf' : 'lf',
+    })
+  })})
+
+  register({ kind: 'exact', path: BASE + '/fs/write', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_WRITE_BYTES + MAX_BODY_JSON)
+    if (body === undefined) return
+    if (typeof body?.text !== 'string') return sendJson(res, 400, { error: 'text 必须是字符串' })
+    if (Buffer.byteLength(body.text, 'utf8') > MAX_WRITE_BYTES) return sendJson(res, 413, { error: '内容过大' })
+    const target = await assertWritable(body?.path)
+    mkdirSync(dirname(target), { recursive: true })
+    const tmp = target + '.wt-tmp-' + process.pid
+    writeFileSync(tmp, body.text, 'utf8')
+    renameSync(tmp, target)
+    sendJson(res, 200, { ok: true, path: target, size: Buffer.byteLength(body.text, 'utf8'), at: Date.now() })
+  })})
+
+  register({ kind: 'exact', path: BASE + '/fs/mkdir', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const target = await assertWritable(body?.path)
+    mkdirSync(target, { recursive: true })
+    sendJson(res, 200, { ok: true, path: target })
+  })})
+
+  register({ kind: 'exact', path: BASE + '/fs/rename', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const from = await assertExisting(body?.from, 'any')
+    const to = await assertWritable(body?.to)
+    if (existsSync(to)) return sendJson(res, 409, { error: '目标已存在' })
+    mkdirSync(dirname(to), { recursive: true })
+    renameSync(from, to)
+    sendJson(res, 200, { ok: true, from, to })
+  })})
+
+  register({ kind: 'exact', path: BASE + '/fs/stat', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const target = await assertExisting(body?.path, 'any')
+    const st = statSync(target)
+    sendJson(res, 200, { path: target, dir: st.isDirectory(), size: st.size, mtime: st.mtimeMs })
+  })})
+
+  /* ---------- 终端（NDJSON 流） ---------- */
+
+  register({ kind: 'exact', path: BASE + '/term/exec', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const id = String(body?.id || '').slice(0, 64) || 'default'
+    const cmd = String(body?.cmd ?? '')
+    if (!cmd.trim()) return sendJson(res, 400, { error: 'cmd required' })
+    if (cmd.length > 16_000) return sendJson(res, 400, { error: 'cmd 过长' })
+
+    const term = ensureTerm(id, body?.cwd)
     res.writeHead(200, {
-      'content-type': 'text/plain; charset=utf-8',
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-accel-buffering': 'no',
+      connection: 'keep-alive',
+    })
+    const send = (obj) => { try { res.write(JSON.stringify(obj) + '\n') } catch { /* 客户端已断开 */ } }
+    const finish = () => { try { res.end() } catch { /* 已结束 */ } }
+
+    const builtin = handleBuiltin(term, cmd)
+    if (builtin) {
+      if (builtin.clear) send({ t: 'clear' })
+      if (builtin.note) send({ t: 'sys', d: builtin.note })
+      send({ t: 'cwd', d: term.cwd })
+      send({ t: 'end', code: builtin.code ?? 0 })
+      return finish()
+    }
+
+    const { file, args } = shellCommand(cmd)
+    let sent = 0
+    let killed = false
+    let child
+    try {
+      child = spawn(file, args, { cwd: term.cwd, windowsHide: true, env: shellEnv() })
+    } catch (err) {
+      send({ t: 'err', d: '无法启动 shell：' + msg(err) })
+      send({ t: 'end', code: -1 })
+      return finish()
+    }
+    term.child = child
+
+    const push = (stream, chunk) => {
+      if (killed) return
+      const text = sanitize(chunk.toString('utf8'))
+      if (!text) return
+      sent += text.length
+      if (sent > MAX_TERM_OUTPUT) {
+        killed = true
+        send({ t: 'err', d: '\n[worktable] 输出超过 ' + fmtBytes(MAX_TERM_OUTPUT) + '，已终止' })
+        killTree(child)
+        return
+      }
+      send({ t: stream, d: text })
+    }
+
+    child.stdout?.on('data', (c) => push('out', c))
+    child.stderr?.on('data', (c) => push('err', c))
+
+    const timer = setTimeout(() => {
+      if (killed) return
+      killed = true
+      send({ t: 'err', d: '\n[worktable] 超过 ' + Math.round(TERM_TIMEOUT_MS / 1000) + 's 未结束，已终止' })
+      killTree(child)
+    }, TERM_TIMEOUT_MS)
+
+    const done = (code, signal) => {
+      clearTimeout(timer)
+      if (term.child === child) term.child = null
+      if (!killed) {
+        send({ t: 'cwd', d: term.cwd })
+        send({ t: 'end', code: code ?? (signal ? -1 : 0), signal: signal || undefined })
+      } else {
+        send({ t: 'end', code: -1, aborted: true })
+      }
+      finish()
+    }
+    child.on('error', (err) => { send({ t: 'err', d: msg(err) }); done(-1, null) })
+    child.on('close', (code, signal) => done(code, signal))
+    req.on('aborted', () => { killTree(child) })
+  })})
+
+  register({ kind: 'exact', path: BASE + '/term/kill', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const term = TERM_SESSIONS.get(String(body?.id || 'default'))
+    if (term?.child) killTree(term.child)
+    sendJson(res, 200, { ok: true })
+  })})
+
+  /* ---------- git（只读） ---------- */
+
+  register({ kind: 'exact', path: BASE + '/git', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const cwd = await assertExisting(body?.path, 'dir')
+    const op = String(body?.op || 'status')
+    if (op === 'status') return sendJson(res, 200, await gitStatus(cwd))
+    if (op === 'log') return sendJson(res, 200, await gitLog(cwd, clampInt(body?.limit, 1, 50, 15)))
+    if (op === 'branches') return sendJson(res, 200, await gitBranches(cwd))
+    return sendJson(res, 400, { error: '未知 op：' + op })
+  })})
+
+  /* ---------- 项目静态托管 ---------- */
+
+  register({ kind: 'exact', path: BASE + '/project/register', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const id = String(body?.id || '')
+    if (!id) return sendJson(res, 400, { error: 'id required' })
+    let root = ''
+    try { root = realpathSync(resolve(String(body?.root || ''))) } catch { /* 目录不存在：保持空，前端会提示 */ }
+    if (root && !isDirQuiet(root)) root = ''
+    if (root) PROJECT_ROOTS.set(id, root)
+    else PROJECT_ROOTS.delete(id)
+    sendJson(res, 200, { ok: !!root, id, root })
+  })})
+
+  register({ kind: 'prefix', path: BASE + '/site', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'GET')) return
+    const url = new URL(req.url ?? '/', 'http://x')
+    const rest = url.pathname.slice((BASE + '/site').length).replace(/^\/+/, '')
+    const slash = rest.indexOf('/')
+    const id = decodeURIComponent(slash === -1 ? rest : rest.slice(0, slash))
+    const rel = slash === -1 ? '' : decodeURIComponent(rest.slice(slash + 1))
+    const root = PROJECT_ROOTS.get(id)
+    if (!root) return sendJson(res, 404, { error: '项目未注册静态托管：' + id })
+
+    const target = safeJoin(root, rel || 'index.html')
+    if (!target) return sendJson(res, 403, { error: '路径越界' })
+    let file = target
+    try {
+      if (isDirQuiet(file)) file = join(file, 'index.html')
+    } catch { /* 交给下面的 stat 报错 */ }
+    let st
+    try { st = statSync(file) } catch {
+      return sendJson(res, 404, { error: '文件不存在：' + (rel || 'index.html') })
+    }
+    if (!st.isFile()) return sendJson(res, 404, { error: '不是文件' })
+    res.writeHead(200, {
+      'content-type': mimeOf(file),
+      'content-length': st.size,
       'cache-control': 'no-store',
     })
-    res.end(text)
-  })
+    createReadStream(file).on('error', () => { try { res.destroy() } catch { /* 已关闭 */ } }).pipe(res)
+  })})
 
-  route(TREE_PATH, (req, res) => {
-    readBody(req, 8 * 1024, (err, body) => {
-      if (err) return json(res, 400, { error: err })
-      let payload
-      try { payload = JSON.parse(body || '{}') } catch { return json(res, 400, { error: 'invalid json' }) }
-      try {
-        const target = requireAbsoluteDir(payload?.path)
-        const dirs = []
-        const files = []
-        const dirents = readdirSync(target, { withFileTypes: true })
-        for (const d of dirents) {
-          if (d.isSymbolicLink()) continue
-          const row = { name: d.name, dir: d.isDirectory() }
-          if (row.dir) dirs.push(row)
-          else if (d.isFile()) files.push(row)
-        }
-        const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
-        dirs.sort(byName)
-        files.sort(byName)
-        const all = dirs.concat(files)
-        const parent = dirname(target)
-        json(res, 200, {
-          path: target,
-          name: basename(target),
-          parent: parent === target ? '' : parent,
-          entries: all.slice(0, MAX_DIR_ENTRIES),
-          truncated: all.length > MAX_DIR_ENTRIES,
-          total: all.length,
-        })
-      } catch (e) {
-        json(res, 400, { error: String(e?.message ?? e) })
-      }
-    })
-  })
+  if (typeof ctx.effect === 'function') {
+    ctx.effect(() => () => {
+      for (const dispose of disposers) { try { dispose() } catch { /* 已移除 */ } }
+      for (const term of TERM_SESSIONS.values()) if (term.child) killTree(term.child)
+      TERM_SESSIONS.clear()
+      PROJECT_ROOTS.clear()
+    }, 'trae-usage-worktable: routes')
+  }
 
-  route(FILE_PATH, (req, res) => {
-    readBody(req, 8 * 1024, (err, body) => {
-      if (err) return json(res, 400, { error: err })
-      let payload
-      try { payload = JSON.parse(body || '{}') } catch { return json(res, 400, { error: 'invalid json' }) }
-      try {
-        const target = requireAbsoluteFile(payload?.path)
-        const st = statSync(target)
-        if (st.size > MAX_FILE_BYTES) return json(res, 413, { error: 'file too large (' + st.size + ' bytes)' })
-        const ext = extname(target).toLowerCase()
-        if (!TEXT_EXT.has(ext) && !TEXT_NAME.has(basename(target))) {
-          return json(res, 415, { error: 'not a text file type (' + (ext || 'no ext') + ')' })
-        }
-        const raw = readFileSync(target)
-        // 二进制探测：前 8KB 出现 NUL 即拒绝
-        const probe = raw.subarray(0, 8192)
-        if (probe.includes(0)) return json(res, 415, { error: 'binary file' })
-        let text = raw.toString('utf8')
-        const truncated = text.length > MAX_PREVIEW_CHARS
-        if (truncated) text = text.slice(0, MAX_PREVIEW_CHARS)
-        json(res, 200, {
-          path: target,
-          name: basename(target),
-          size: st.size,
-          text,
-          truncated,
-        })
-      } catch (e) {
-        json(res, 400, { error: String(e?.message ?? e) })
-      }
-    })
-  })
-
-  ctx.logger?.info?.('[worktable] host 插件已加载，health: ' + HEALTH_PATH + ' sessions: ' + SESSIONS_PATH)
+  ctx.logger?.info?.('[worktable] host 已加载 ' + VERSION + ' · ' + BASE)
 }
 
-/* ---------- 会话快照（MVP 核心） ---------- */
+/* ============================ 会话快照 ============================ */
 
-/**
- * 读取宿主会话快照并归类成控制室要的四态。
- *
- * 数据来源优先级：
- *   1. sessionQuery.listSessions() —— 持久化 + 在活的完整语料（GUI 侧边栏同源）；
- *   2. 退化为 sessions.list() —— 只含本进程在活的会话。
- *
- * 状态判定（只读事件日志，不碰模型）：
- *   running  在活会话，且日志里有未闭合的 turn（turn/start 之后没有 turn/end）
- *   waiting  在活会话，turn 未闭合，且最后一条 approval/asked 没有对应的 approval/decided
- *   done     日志里出现过 turn/end，当前没有未闭合 turn
- *   idle     还没有跑过任何 turn 的会话
- */
 async function collectSessions(ctx) {
   const at = Date.now()
-  const sessionsSvc = getService(ctx, 'sessions')
-  const querySvc = getService(ctx, 'sessionQuery')
+  const sessionsSvc = service(ctx, 'sessions')
+  const querySvc = service(ctx, 'sessionQuery')
 
-  /** @type {Array<{ header: any, live: boolean, persisted: boolean }>} */
   let rows = []
   let source = 'live'
   let note = ''
@@ -253,24 +415,20 @@ async function collectSessions(ctx) {
   if (querySvc && typeof querySvc.listSessions === 'function') {
     try {
       const list = await querySvc.listSessions()
-      if (Array.isArray(list)) {
-        rows = list
-        source = 'sessionQuery'
-      }
-    } catch (e) {
-      note = 'sessionQuery.listSessions 失败：' + msg(e)
+      if (Array.isArray(list) && list.length) { rows = list; source = 'sessionQuery' }
+    } catch (err) {
+      note = 'sessionQuery.listSessions 失败：' + msg(err)
     }
   }
-
   if (!rows.length && sessionsSvc && typeof sessionsSvc.list === 'function') {
     try {
       const list = sessionsSvc.list()
       if (Array.isArray(list)) {
-        rows = list.map((session) => ({ header: session?.header ?? { id: String(session?.id ?? '') }, live: true, persisted: false }))
+        rows = list.map((s) => ({ header: s?.header ?? { id: String(s?.id ?? '') }, live: true, persisted: false }))
         source = 'live'
       }
-    } catch (e) {
-      note = note ? note + ' / ' + msg(e) : 'sessions.list 失败：' + msg(e)
+    } catch (err) {
+      note = note ? note + ' / ' + msg(err) : 'sessions.list 失败：' + msg(err)
     }
   }
 
@@ -285,13 +443,10 @@ async function collectSessions(ctx) {
     const session = live && sessionsSvc && typeof sessionsSvc.get === 'function'
       ? safe(() => sessionsSvc.get(id))
       : null
-
     const observed = readSessionState(session)
     const state = pickState(live, observed)
-
     counts[state] = (counts[state] ?? 0) + 1
     counts.total += 1
-
     out.push({
       id,
       title: safeTitle(header, observed),
@@ -306,11 +461,10 @@ async function collectSessions(ctx) {
   }
 
   out.sort((a, b) => (b.updatedAt - a.updatedAt) || a.id.localeCompare(b.id))
-
   return {
     ok: true,
     at,
-    version: PLUGIN_VERSION,
+    version: VERSION,
     source,
     degraded: !sessionsSvc && !querySvc,
     note: note || undefined,
@@ -319,54 +473,48 @@ async function collectSessions(ctx) {
   }
 }
 
-/* ---------- 默认工作区 / 对话只读预览 ---------- */
+function degradedSessions(err) {
+  return {
+    ok: false,
+    at: Date.now(),
+    degraded: true,
+    error: msg(err),
+    counts: { running: 0, waiting: 0, done: 0, idle: 0, total: 0 },
+    sessions: [],
+  }
+}
 
-/**
- * 取 DSH 默认工作区：最近活跃会话的 cwd（宿主里最贴近“当前工作区”的事实），
- * 取不到时退回宿主进程 cwd；同时带上 DSH_HOME 供 client 展示。
- */
 async function collectDefaults(ctx) {
-  const at = Date.now()
   let workspace = ''
-  const querySvc = getService(ctx, 'sessionQuery')
-
+  const querySvc = service(ctx, 'sessionQuery')
   if (querySvc && typeof querySvc.listSessions === 'function') {
     try {
       const rows = await querySvc.listSessions()
       const cwd = Array.isArray(rows) ? rows[0]?.header?.cwd : ''
       if (typeof cwd === 'string' && cwd) workspace = cwd
-    } catch { /* 继续用下面的兜底 */ }
+    } catch { /* 落到下面的兜底 */ }
   }
-
   if (!workspace) {
-    const sessionsSvc = getService(ctx, 'sessions')
+    const sessionsSvc = service(ctx, 'sessions')
     const list = safe(() => sessionsSvc?.list?.()) || []
-    for (const session of list) {
-      const cwd = session?.header?.cwd
-      if (typeof cwd === 'string' && cwd) { workspace = cwd; break }
+    for (const s of list) {
+      if (typeof s?.header?.cwd === 'string' && s.header.cwd) { workspace = s.header.cwd; break }
     }
   }
-
   if (!workspace) workspace = process.cwd()
-
   return {
     ok: true,
-    at,
+    at: Date.now(),
     workspace,
     home: String(safe(() => process.env.DSH_HOME) || ''),
     platform: process.platform,
+    shell: shellLabel(),
   }
 }
 
-/**
- * 读一个会话的最近消息（只读：扫事件日志，不调模型、不写会话）。
- * user/message → 用户气泡；assistant/message → 助手气泡（无文本时标注工具调用次数）。
- * 不含 reasoning / 工具入参，避免把大块内部状态塞进前端。
- */
 async function readTranscript(ctx, sessionId, limit) {
-  const querySvc = getService(ctx, 'sessionQuery')
-  const sessionsSvc = getService(ctx, 'sessions')
-
+  const querySvc = service(ctx, 'sessionQuery')
+  const sessionsSvc = service(ctx, 'sessions')
   let header = null
   let events = null
   let live = false
@@ -377,7 +525,6 @@ async function readTranscript(ctx, sessionId, limit) {
     header = liveSession.header || null
     events = Array.isArray(liveSession.log) ? liveSession.log : null
   }
-
   if (!events && querySvc && typeof querySvc.load === 'function') {
     const loaded = await querySvc.load(sessionId).catch(() => null)
     if (loaded) {
@@ -385,10 +532,7 @@ async function readTranscript(ctx, sessionId, limit) {
       events = Array.isArray(loaded.events) ? loaded.events : null
     }
   }
-
-  if (!events) {
-    return { ok: false, sessionId, live, messages: [], total: 0, truncated: false, error: 'session not found' }
-  }
+  if (!events) return { ok: false, sessionId, live, messages: [], total: 0, truncated: false, error: 'session not found' }
 
   const { messages, total } = messagesOf(events, limit)
   return {
@@ -396,25 +540,23 @@ async function readTranscript(ctx, sessionId, limit) {
     sessionId,
     live,
     title: transcriptTitle(header, events),
+    cwd: typeof header?.cwd === 'string' ? header.cwd : '',
     messages,
     total,
     truncated: total > messages.length,
   }
 }
 
-/** 从事件日志里抽 user / assistant 气泡（只扫尾部，避免长会话全量遍历） */
 function messagesOf(events, limit) {
   const tail = events.slice(Math.max(0, events.length - 800))
   const out = []
-
   for (const ev of tail) {
     if (!ev || typeof ev !== 'object') continue
     const time = Number(ev.time) || 0
     const id = String(ev.seq ?? out.length)
-
     if (ev.type === 'user/message') {
       const kind = ev?.data?.source?.kind
-      if (kind && kind !== 'user') continue // 审批/系统注入的消息不当成用户发言
+      if (kind && kind !== 'user') continue
       const text = textOfContent(ev?.data?.content)
       if (text) out.push({ id, role: 'user', text: clip(text), time })
     } else if (ev.type === 'assistant/message') {
@@ -422,20 +564,13 @@ function messagesOf(events, limit) {
       const text = textOfContent(parts)
       const tools = Array.isArray(parts) ? parts.filter((p) => p && p.type === 'tool-call').length : 0
       if (text || tools) {
-        out.push({
-          id,
-          role: 'assistant',
-          text: text ? clip(text) : '（调用工具 ' + tools + ' 次）',
-          time,
-        })
+        out.push({ id, role: 'assistant', text: text ? clip(text) : '（调用工具 ' + tools + ' 次）', time })
       }
     }
   }
-
   return { messages: out.slice(-limit), total: out.length }
 }
 
-/** 消息内容里的文本片段（忽略 reasoning / tool-call / 图片等） */
 function textOfContent(content) {
   if (typeof content === 'string') return content.trim()
   if (!Array.isArray(content)) return ''
@@ -451,7 +586,6 @@ function clip(text, max = 4000) {
   return s.length > max ? s.slice(0, max) + '\n…（已截断）' : s
 }
 
-/** 标题：日志里最新的 session/title → 目录名 → 短 id */
 function transcriptTitle(header, events) {
   let title = ''
   for (let i = events.length - 1; i >= 0 && i >= events.length - 400; i -= 1) {
@@ -462,30 +596,18 @@ function transcriptTitle(header, events) {
     }
   }
   if (title) return title
-  const cwd = header && typeof header.cwd === 'string' ? header.cwd : ''
-  if (cwd) {
-    const parts = cwd.split(/[\\/]+/).filter(Boolean)
-    if (parts.length) return parts[parts.length - 1]
-  }
-  const id = header && header.id ? String(header.id) : ''
-  return id ? id.slice(0, 18) : '未命名会话'
+  return safeTitle(header || {}, { title: '' })
 }
 
-/** 四态判定：只有在活会话才可能是 running / waiting */
 function pickState(live, observed) {
   if (live && observed.openTurn) return observed.pendingApproval ? 'waiting' : 'running'
   if (observed.turns > 0) return 'done'
   return 'idle'
 }
 
-/**
- * 扫描一个在活会话的事件日志尾部。
- * @returns {{ openTurn: boolean, pendingApproval: boolean, turns: number, updatedAt: number, title: string }}
- */
 function readSessionState(session) {
   const result = { openTurn: false, pendingApproval: false, turns: 0, updatedAt: 0, title: '' }
   if (!session) return result
-
   const log = Array.isArray(session.log) ? session.log : null
   const seq = log ? log.length : Number(safe(() => session.seq)) || 0
   if (!seq) return result
@@ -504,11 +626,9 @@ function readSessionState(session) {
     const type = String(ev.type ?? '')
     const time = Number(ev.time) || 0
     if (time > lastTime) lastTime = time
-
     if (type === 'turn/start') {
       lastTurnStart = i
       result.turns += 1
-      // 新的 turn 开始时旧的审批状态作废
       askedAfter = -1
       decidedAfter = -1
     } else if (type === 'turn/end') {
@@ -521,7 +641,7 @@ function readSessionState(session) {
       const t = ev?.data?.title
       if (typeof t === 'string' && t.trim()) title = t.trim()
     } else if (!title && type === 'user/message') {
-      const text = firstText(ev?.data?.content)
+      const text = textOfContent(ev?.data?.content)
       if (text) title = text.slice(0, 60)
     }
   }
@@ -533,84 +653,387 @@ function readSessionState(session) {
   return result
 }
 
-/** 会话标题：日志里最新的标题 / 首条用户消息 / 目录名 / 短 id */
 function safeTitle(header, observed) {
-  if (observed.title) return observed.title
-  const cwd = typeof header.cwd === 'string' ? header.cwd : ''
+  if (observed?.title) return observed.title
+  const cwd = typeof header?.cwd === 'string' ? header.cwd : ''
   if (cwd) {
     const parts = cwd.split(/[\\/]+/).filter(Boolean)
     if (parts.length) return parts[parts.length - 1]
   }
-  const id = String(header.id ?? '')
+  const id = String(header?.id ?? '')
   return id ? id.slice(0, 18) : '未命名会话'
 }
 
-function firstText(content) {
-  if (typeof content === 'string') return content.trim()
-  if (!Array.isArray(content)) return ''
-  for (const part of content) {
-    if (part && part.type === 'text' && typeof part.text === 'string' && part.text.trim()) return part.text.trim()
-  }
-  return ''
-}
+/* ============================ git ============================ */
 
-function getService(ctx, serviceName) {
-  const direct = safe(() => ctx?.[serviceName])
-  if (direct) return direct
-  return safe(() => (typeof ctx?.get === 'function' ? ctx.get(serviceName) : null)) || null
-}
-
-function hasService(ctx, serviceName) {
-  return !!getService(ctx, serviceName)
-}
-
-function safe(fn) {
-  try { return fn() } catch { return undefined }
-}
-
-function msg(e) {
-  return String(e?.message ?? e)
-}
-
-/* ---------- 工具 ---------- */
-
-function readBody(req, limit, done) {
-  let body = ''
-  let settled = false
-  req.on('data', (chunk) => {
-    if (settled) return
-    body += chunk
-    if (body.length > limit) {
-      settled = true
-      done('payload too large')
-    }
+function runGit(cwd, args) {
+  return new Promise((resolveP) => {
+    execFile('git', args, { cwd, timeout: GIT_TIMEOUT_MS, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+      (err, stdout, stderr) => resolveP({
+        ok: !err,
+        code: typeof err?.code === 'number' ? err.code : (err ? -1 : 0),
+        out: String(stdout || ''),
+        err: String(stderr || (err && !stdout ? msg(err) : '')),
+      }))
   })
-  req.on('end', () => { if (!settled) { settled = true; done(null, body) } })
-  req.on('error', (e) => { if (!settled) { settled = true; done(String(e?.message ?? e)) } })
 }
 
-function requireAbsoluteDir(p) {
-  if (typeof p !== 'string' || !p.trim()) throw new Error('path required')
-  if (!isAbsolute(p)) throw new Error('path must be absolute')
-  if (p.includes('\0')) throw new Error('invalid path')
-  const st = statSync(p)
-  if (!st.isDirectory()) throw new Error('not a directory')
-  return p
+async function gitStatus(cwd) {
+  const inside = await runGit(cwd, ['rev-parse', '--is-inside-work-tree'])
+  if (!inside.ok || !inside.out.includes('true')) {
+    return { ok: false, repo: false, error: inside.err || '不是 git 仓库' }
+  }
+  const [branch, porcelain] = await Promise.all([
+    runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']),
+    runGit(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
+  ])
+  const changes = []
+  const parts = porcelain.out.split('\0')
+  for (let i = 0; i < parts.length; i += 1) {
+    const row = parts[i]
+    if (!row || row.length < 3) continue
+    const code = row.slice(0, 2)
+    const file = row.slice(3)
+    if (code[0] === 'R' || code[0] === 'C') {
+      // -z 模式下重命名是「新路径\0旧路径」，旧路径在下一段
+      const from = parts[i + 1] || ''
+      i += 1
+      changes.push({ code, file, from })
+    } else {
+      changes.push({ code, file })
+    }
+  }
+  const staged = changes.filter((c) => c.code[0] !== ' ' && c.code[0] !== '?').length
+  const unstaged = changes.filter((c) => c.code[1] !== ' ' && c.code[0] !== '?').length
+  const untracked = changes.filter((c) => c.code === '??').length
+  return {
+    ok: true,
+    repo: true,
+    branch: branch.out.trim() || '(detached)',
+    ahead: 0,
+    changes,
+    counts: { staged, unstaged, untracked, total: changes.length },
+    at: Date.now(),
+  }
 }
 
-function requireAbsoluteFile(p) {
-  if (typeof p !== 'string' || !p.trim()) throw new Error('path required')
-  if (!isAbsolute(p)) throw new Error('path must be absolute')
-  if (p.includes('\0')) throw new Error('invalid path')
-  const st = statSync(p)
-  if (!st.isFile()) throw new Error('not a file')
-  return p
+async function gitLog(cwd, limit) {
+  const res = await runGit(cwd, ['log', '-n', String(limit), '--date=short', '--pretty=format:%h%x1f%ad%x1f%s%x1f%an'])
+  if (!res.ok) return { ok: false, commits: [], error: res.err }
+  const commits = res.out.split('\n').filter(Boolean).map((line) => {
+    const [hash, date, subject, author] = line.split('\x1f')
+    return { hash, date, subject, author }
+  })
+  return { ok: true, commits }
 }
 
-function json(res, status, body) {
+async function gitBranches(cwd) {
+  const res = await runGit(cwd, ['branch', '--format=%(refname:short)'])
+  if (!res.ok) return { ok: false, branches: [], error: res.err }
+  return { ok: true, branches: res.out.split('\n').filter(Boolean) }
+}
+
+/* ============================ 终端 ============================ */
+
+function ensureTerm(id, cwd) {
+  let term = TERM_SESSIONS.get(id)
+  if (!term) {
+    let dir = process.cwd()
+    if (typeof cwd === 'string' && cwd) {
+      try {
+        const real = realpathSync(resolve(cwd))
+        if (isDirQuiet(real)) dir = real
+      } catch { /* 用默认目录 */ }
+    }
+    term = { id, cwd: dir, child: null, startedAt: Date.now() }
+    TERM_SESSIONS.set(id, term)
+    if (TERM_SESSIONS.size > 12) {
+      const oldest = [...TERM_SESSIONS.values()].sort((a, b) => a.startedAt - b.startedAt)[0]
+      if (oldest && oldest.id !== id) {
+        if (oldest.child) killTree(oldest.child)
+        TERM_SESSIONS.delete(oldest.id)
+      }
+    }
+  } else if (typeof cwd === 'string' && cwd) {
+    try {
+      const real = realpathSync(resolve(cwd))
+      if (isDirQuiet(real) && real !== term.cwd) term.cwd = real
+    } catch { /* 保持原 cwd */ }
+  }
+  return term
+}
+
+/** cd / clear / pwd / exit 这类改自身状态的命令在 host 侧处理，不启进程 */
+function handleBuiltin(term, raw) {
+  const cmd = raw.trim()
+  if (/^(clear|cls)$/i.test(cmd)) return { clear: true, code: 0 }
+  if (/^pwd$/i.test(cmd) || /^cd$/i.test(cmd) && process.platform !== 'win32') {
+    return { note: term.cwd, code: 0 }
+  }
+  const m = /^cd\s+(.+)$/i.exec(cmd)
+  if (!m) return null
+  let target = m[1].trim().replace(/^["']|["']$/g, '')
+  if (!target || target === '~') target = homedir()
+  else if (target === '-') return { note: '（不支持返回上一个目录）', code: 0 }
+  const abs = isAbsolute(target) ? target : resolve(term.cwd, target)
+  try {
+    const real = realpathSync(abs)
+    if (!isDirQuiet(real)) return { note: '不是目录：' + abs, code: 1 }
+    term.cwd = real
+    return { note: real, code: 0 }
+  } catch {
+    return { note: '目录不存在：' + abs, code: 1 }
+  }
+}
+
+function shellLabel() {
+  if (process.platform !== 'win32') return process.env.SHELL || '/bin/sh'
+  return powershellPath() ? 'powershell' : (process.env.COMSPEC || 'cmd.exe')
+}
+
+let _psPath
+function powershellPath() {
+  if (_psPath !== undefined) return _psPath
+  const root = process.env.SystemRoot || 'C:\\Windows'
+  const p = join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  _psPath = existsSync(p) ? p : ''
+  return _psPath
+}
+
+function shellCommand(cmd) {
+  if (process.platform !== 'win32') {
+    return { file: process.env.SHELL || '/bin/sh', args: ['-c', cmd] }
+  }
+  const ps = powershellPath()
+  if (ps) {
+    const prelude = '[Console]::OutputEncoding=[Text.Encoding]::UTF8;$ProgressPreference="SilentlyContinue";'
+    return { file: ps, args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', prelude + cmd] }
+  }
+  return { file: process.env.COMSPEC || 'cmd.exe', args: ['/d', '/s', '/c', cmd] }
+}
+
+function shellEnv() {
+  return { ...process.env, PYTHONIOENCODING: 'utf-8', NO_COLOR: '1', TERM: 'dumb', FORCE_COLOR: '0' }
+}
+
+function killTree(child) {
+  if (!child || child.killed) return
+  try {
+    if (process.platform === 'win32' && child.pid) {
+      spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' })
+      return
+    }
+    child.kill('SIGTERM')
+    setTimeout(() => { try { child.kill('SIGKILL') } catch { /* 已退出 */ } }, 1200)
+  } catch { /* 进程已消失 */ }
+}
+
+/** 去掉 ANSI 转义与 \r，前端只按纯文本渲染 */
+function sanitize(text) {
+  return String(text)
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\u001b\][^\u0007]*\u0007/g, '')
+    .replace(/\u001b[@-Z\\-_]/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+}
+
+/* ============================ 路径沙箱 ============================ */
+
+function canonicalRoots() {
+  const list = [process.cwd(), homedir(), process.env.DSH_HOME, ...PROJECT_ROOTS.values()]
+  const out = []
+  for (const item of list) {
+    if (typeof item !== 'string' || !item) continue
+    try { out.push(realpathSync(item)) } catch { /* 不存在就跳过 */ }
+  }
+  return out
+}
+
+/** 逐级向上找第一个存在的祖先，realpath 后拼回剩余部分 */
+function canonicalize(target) {
+  const abs = resolve(target)
+  let probe = abs
+  const rest = []
+  for (let depth = 0; depth < 64; depth += 1) {
+    try {
+      return join(realpathSync(probe), ...rest.reverse())
+    } catch {
+      const parent = dirname(probe)
+      if (parent === probe) return abs
+      rest.push(basename(probe))
+      probe = parent
+    }
+  }
+  return abs
+}
+
+function insideRoot(target, roots) {
+  const norm = process.platform === 'win32' ? target.toLowerCase() : target
+  for (const root of roots) {
+    const r = process.platform === 'win32' ? root.toLowerCase() : root
+    if (norm === r) return true
+    if (norm.startsWith(r.endsWith(sep) ? r : r + sep)) return true
+  }
+  return false
+}
+
+function hasDeniedSegment(target) {
+  const parts = target.split(/[\\/]+/).map((p) => p.toLowerCase())
+  for (const bad of DENY_SEGMENTS) if (parts.includes(bad.toLowerCase())) return true
+  return false
+}
+
+function assertSandbox(target) {
+  if (typeof target !== 'string' || !target.trim()) throw httpError(400, 'path required')
+  if (target.includes('\0')) throw httpError(400, 'invalid path')
+  if (!isAbsolute(target)) throw httpError(400, 'path must be absolute')
+  const canonical = canonicalize(target)
+  if (hasDeniedSegment(canonical)) throw httpError(403, '该目录受保护：' + canonical)
+  if (!insideRoot(canonical, canonicalRoots())) {
+    throw httpError(403, '路径不在允许范围（工作目录 / 用户目录 / 已注册项目）内：' + canonical)
+  }
+  return canonical
+}
+
+async function assertExisting(target, kind) {
+  const real = assertSandbox(target)
+  let st
+  try {
+    st = statSync(real)
+  } catch {
+    throw httpError(404, '路径不存在：' + real)
+  }
+  if (kind === 'dir' && !st.isDirectory()) throw httpError(400, '不是目录：' + real)
+  if (kind === 'file' && !st.isFile()) throw httpError(400, '不是文件：' + real)
+  return real
+}
+
+async function assertWritable(target) {
+  return assertSandbox(target)
+}
+
+function safeJoin(root, rel) {
+  const clean = String(rel || '').replace(/\\/g, '/')
+  if (clean.split('/').some((p) => p === '..')) return ''
+  const target = resolve(root, clean)
+  const norm = process.platform === 'win32' ? target.toLowerCase() : target
+  const r = process.platform === 'win32' ? root.toLowerCase() : root
+  if (norm !== r && !norm.startsWith(r.endsWith(sep) ? r : r + sep)) return ''
+  return target
+}
+
+function isDirQuiet(p) {
+  try { return statSync(p).isDirectory() } catch { return false }
+}
+
+/* ============================ 工具 ============================ */
+
+function service(ctx, name_) {
+  const direct = safe(() => ctx?.[name_])
+  if (direct) return direct
+  return safe(() => (typeof ctx?.get === 'function' ? ctx.get(name_) : null)) || null
+}
+
+function safe(fn) { try { return fn() } catch { return undefined } }
+function msg(e) { return String(e?.message ?? e) }
+function clampInt(v, min, max, fallback) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(max, Math.max(min, Math.round(n)))
+}
+function fmtBytes(n) {
+  if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB'
+  if (n >= 1024) return (n / 1024).toFixed(0) + ' KB'
+  return n + ' B'
+}
+function httpError(status, message) {
+  const err = new Error(message)
+  err.status = status
+  return err
+}
+
+function allowMethod(req, res, method) {
+  const actual = String(req?.method || 'GET').toUpperCase()
+  if (actual === method || (method === 'GET' && actual === 'HEAD')) return true
+  sendJson(res, 405, { error: '仅支持 ' + method })
+  return false
+}
+
+function sendJson(res, status, body) {
+  if (res.writableEnded) return
+  const text = JSON.stringify(body)
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(text),
     'cache-control': 'no-store',
   })
-  res.end(JSON.stringify(body))
+  res.end(text)
+}
+
+function readJson(req, res, limit) {
+  return new Promise((resolveP) => {
+    let body = ''
+    let settled = false
+    const fail = (status, message) => {
+      if (settled) return
+      settled = true
+      sendJson(res, status, { error: message })
+      resolveP(undefined)
+    }
+    req.on('data', (chunk) => {
+      if (settled) return
+      body += chunk
+      if (body.length > limit) fail(413, '请求体过大')
+    })
+    req.on('end', () => {
+      if (settled) return
+      settled = true
+      if (!body.trim()) return resolveP({})
+      try {
+        resolveP(JSON.parse(body))
+      } catch {
+        sendJson(res, 400, { error: 'invalid json' })
+        resolveP(undefined)
+      }
+    })
+    req.on('error', (err) => fail(400, msg(err)))
+  })
+}
+
+function guard(handler) {
+  return async (req, res) => {
+    try {
+      await handler(req, res)
+    } catch (err) {
+      const status = Number(err?.status) || 500
+      if (status >= 500) console.warn('[worktable]', msg(err))
+      if (!res.writableEnded) sendJson(res, status, { error: msg(err) })
+    }
+  }
+}
+
+function mimeOf(file) {
+  const ext = extname(file).toLowerCase()
+  const map = {
+    '.html': 'text/html; charset=utf-8',
+    '.htm': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.ico': 'image/x-icon',
+    '.woff2': 'font/woff2',
+    '.woff': 'font/woff',
+    '.txt': 'text/plain; charset=utf-8',
+    '.md': 'text/markdown; charset=utf-8',
+    '.map': 'application/json; charset=utf-8',
+  }
+  return map[ext] || 'application/octet-stream'
 }

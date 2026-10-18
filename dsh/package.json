@@ -1,7 +1,7 @@
 {
   "name": "trae-usage-worktable",
-  "description": "工作台 Worktable：DeepSeek Harness 侧边栏的完整工作台 UI（项目列表 / 卡片网格 / 控制室会话统计，trae-usage 复刻版 MVP）",
-  "version": "0.4.0",
+  "description": "工作台 Worktable：DSH 侧边栏 + 可拖拽分栏工作区（文件浏览 / 编辑器 / 终端 / 浏览器 / 自定义窗口 / git 只读），trae-usage 复刻版",
+  "version": "0.5.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/nscn6fdx44-crypto/trae-usage.git",
