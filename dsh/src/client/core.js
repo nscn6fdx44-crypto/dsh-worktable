@@ -42,14 +42,15 @@ export function normState(raw) {
 }
 
 /**
- * 工作区模式：左栏（项目/文件）与对话栏恒在两侧，只有中间工作区的形态变化。
- *   dock  全屏 —— 工作区铺满中间区域
- *   float 窗口 —— 工作区是浮在对话栏旁的视窗，可拖动、可缩放
+ * 工作区模式。右侧永远是 **DSH 自己的会话区**（我们把宿主会话区右推，左侧让给工作台），
+ * 两种模式只差工作台怎么摆：
+ *   dock  全屏 —— 工作台铺满左侧让位区域
+ *   float 窗口 —— 工作台是浮在左侧、紧贴对话的一方小窗，可拖动、可缩放
  * 两种模式共用同一套标签页与窗格组件，功能完全一致。
  */
 export const MODES = [
-  { id: 'dock', label: '全屏', icon: '⛶', hint: '工作区铺满中间区域' },
-  { id: 'float', label: '窗口', icon: '▣', hint: '浮在对话栏旁的视窗' },
+  { id: 'dock', label: '全屏', icon: '⛶', hint: '工作台铺满对话左侧' },
+  { id: 'float', label: '窗口', icon: '▣', hint: '小窗浮在对话旁边' },
 ]
 export const MODE_IDS = MODES.map((m) => m.id)
 export const DEFAULT_MODE = 'float'
@@ -58,11 +59,11 @@ export function modeDef(id) {
   return MODES.find((m) => m.id === id) || MODES[1]
 }
 
-/** 中间栏与两侧的默认宽度：中间尽量大，两侧只留够用 */
-export const DEFAULT_SPLIT = { left: 208, chat: 318 }
+/** 工作台内部左栏（项目 / 文件）默认宽度 */
+export const DEFAULT_SPLIT = { left: 208 }
 
-/** 浮动窗口默认位置：偏右、贴着对话栏，四周留出可拖动的背景 */
-export const DEFAULT_WIN = { x: 0.54, y: 0.5, w: 0.9, h: 0.9 }
+/** 浮动小窗默认几何：居中偏满，四周留一点背景方便拖动 */
+export const DEFAULT_WIN = { x: 0.5, y: 0.5, w: 0.88, h: 0.86 }
 
 export function clampWin(raw) {
   const src = raw && typeof raw === 'object' ? raw : {}
@@ -173,7 +174,6 @@ export const store = {
   status: {},                   // 手工覆盖态（跟绑定会话冲突时以手工为准）
   defaults: { workspace: '', home: '', shell: '', loaded: false },
   sessions: { state: 'pending', counts: null, rows: [], at: 0, error: '', source: '' },
-  transcript: { sid: '', state: 'idle', messages: [], title: '', error: '', truncated: false },
   tree: { state: 'idle', root: '', path: '', entries: [], error: '' },
   editor: { state: 'idle', path: '', name: '', text: '', saved: '', error: '', truncated: false, binary: false, size: 0, saving: false },
   terms: {},                    // { [pid]: { id, cwd, busy, lines: [] } }
@@ -260,7 +260,7 @@ export function hydrate() {
 /* ============================ ui 片段读写 ============================ */
 
 function defaultUi() {
-  return { mode: DEFAULT_MODE, split: {}, win: null, leftTab: 'info', tabs: [], activeTab: '' }
+  return { mode: DEFAULT_MODE, split: {}, dock: 0, win: null, leftTab: 'info', leftHidden: false, tabs: [], activeTab: '' }
 }
 
 export function uiOf(pid) {
@@ -268,11 +268,16 @@ export function uiOf(pid) {
   const def = defaultUi()
   /* 旧版存的是 layout 预设置；没有 mode 时按「全屏」迁移，保持原有观感 */
   const mode = MODE_IDS.includes(raw.mode) ? raw.mode : (raw.layout ? 'dock' : def.mode)
+  const dock = Number(raw.dock)
   return {
     mode,
     split: raw.split && typeof raw.split === 'object' ? raw.split : {},
+    /* 0 = 自动（按宿主轨道比例算），>0 = 用户拖过的像素宽 */
+    dock: Number.isFinite(dock) && dock > 0 ? Math.round(dock) : 0,
     win: raw.win && typeof raw.win === 'object' ? clampWin(raw.win) : { ...DEFAULT_WIN },
     leftTab: raw.leftTab === 'files' ? 'files' : 'info',
+    /* 左栏可收起：让位区本来就窄，收起后工作区能占满整块 */
+    leftHidden: raw.leftHidden === true,
     tabs: Array.isArray(raw.tabs) ? raw.tabs : [],
     activeTab: typeof raw.activeTab === 'string' ? raw.activeTab : '',
   }
@@ -368,17 +373,32 @@ export function toast(text, kind) {
 /* ============================ 宿主会话服务 ============================ */
 
 let hostCtx = null
-export function setHost(ctx) { hostCtx = ctx }
+let workspaceUi = null
+
+export function setHost(ctx) {
+  hostCtx = ctx
+  try {
+    const ui = ctx && typeof ctx.get === 'function' ? ctx.get('uiWorkspace') : null
+    if (ui) workspaceUi = ui
+  } catch { /* 服务未注册 */ }
+}
+
+/** 延迟注入的 uiWorkspace（会话切换入口），缺席时退到 sessions.open */
+export function setWorkspace(ui) {
+  if (ui) workspaceUi = ui
+}
 
 export function jumpToSession(sessionId) {
   const id = String(sessionId || '')
   if (!id) return false
+  const cands = [workspaceUi, hostCtx && hostCtx.uiWorkspace]
+  for (const ui of cands) {
+    if (ui && typeof ui.openSession === 'function') {
+      try { ui.openSession(id); return true } catch { /* 换下一个入口 */ }
+    }
+  }
   try {
-    const ui = hostCtx && typeof hostCtx.get === 'function' ? hostCtx.get('uiWorkspace') : null
-    if (ui && typeof ui.openSession === 'function') { ui.openSession(id); return true }
-  } catch { /* 试下一种入口 */ }
-  try {
-    const sessions = hostCtx?.sessions
+    const sessions = hostCtx && hostCtx.sessions
     if (sessions && typeof sessions.open === 'function') { sessions.open(id); return true }
   } catch { /* 无入口 */ }
   return false
@@ -418,38 +438,6 @@ export async function loadDefaults() {
   }
 }
 
-/* ---------- 对话预览（带竞态令牌） ---------- */
-
-let transcriptToken = 0
-
-export async function loadTranscript(sid) {
-  const id = String(sid || '')
-  const token = ++transcriptToken
-  if (!id) {
-    emit({ transcript: { sid: '', state: 'idle', messages: [], title: '', error: '', truncated: false } })
-    return
-  }
-  emit({ transcript: { sid: id, state: 'loading', messages: [], title: '', error: '', truncated: false } })
-  try {
-    const data = await apiPost('/transcript', { sessionId: id, limit: 60 }, { timeout: 15_000 })
-    if (token !== transcriptToken) return      // 切项目后旧请求晚到，直接丢弃
-    if (!data || data.ok === false) throw new Error((data && data.error) || '读取失败')
-    emit({
-      transcript: {
-        sid: id,
-        state: 'ok',
-        messages: Array.isArray(data.messages) ? data.messages : [],
-        title: String(data.title || ''),
-        error: '',
-        truncated: !!data.truncated,
-      },
-    })
-  } catch (err) {
-    if (token !== transcriptToken) return
-    emit({ transcript: { sid: id, state: 'error', messages: [], title: '', error: String(err?.message ?? err), truncated: false } })
-  }
-}
-
 /* ============================ 视图切换 ============================ */
 
 export function openGrid() {
@@ -464,8 +452,10 @@ export function enterProject(pid) {
   if (!project) return
   emit({ open: true, view: 'project', activeId: pid, modal: null, menu: null })
   writeLS(LS.view, 'project')
+  /* 右侧就是宿主对话：进项目就把宿主切到主绑定对话，所见即所聊 */
   const primary = primarySession(project)
-  loadTranscript(primary ? primary.id : '')
+  const switched = primary ? jumpToSession(primary.id) : false
+  if (primary && !switched) toast('没找到宿主打开对话的入口，右侧可能停在别的对话', 'warn')
   loadSessions()
   if (!store.defaults.loaded) loadDefaults()
   /* 先登记项目根，再读目录：host 的路径白名单靠这次登记放行（D 盘项目尤其需要） */
@@ -533,7 +523,7 @@ export function removeProject(pid) {
   emit({ status, menu: null })
   writeLS(LS.status, status)
   if (store.activeId === pid) {
-    emit({ activeId: null, view: 'grid', transcript: { sid: '', state: 'idle', messages: [], title: '', error: '', truncated: false } })
+    emit({ activeId: null, view: 'grid' })
   }
   toast('已移除项目（磁盘文件未动）', 'info')
 }
@@ -562,7 +552,7 @@ export function bindSession(pid, sid) {
   if (!p) return
   const next = p.sessions.includes(sid) ? p.sessions : p.sessions.concat([sid])
   updateProject(pid, { sessions: next })
-  if (store.activeId === pid) loadTranscript(next[0] || '')
+  if (store.activeId === pid && next[0] === sid) jumpToSession(sid)
   const s = sessionById(sid)
   toast('已绑定对话：' + (s ? s.title : sid), 'ok')
 }
@@ -572,7 +562,7 @@ export function unbindSession(pid, sid) {
   if (!p) return
   const next = p.sessions.filter((x) => x !== sid)
   updateProject(pid, { sessions: next })
-  if (store.activeId === pid) loadTranscript(next[0] || '')
+  if (store.activeId === pid && next[0]) jumpToSession(next[0])
   toast('已解除绑定', 'info')
 }
 
@@ -582,7 +572,7 @@ export function setPrimarySession(pid, sid) {
   if (!p || !p.sessions.includes(sid)) return
   const next = [sid].concat(p.sessions.filter((x) => x !== sid))
   updateProject(pid, { sessions: next })
-  if (store.activeId === pid) loadTranscript(sid)
+  if (store.activeId === pid) jumpToSession(sid)
   toast('已设为主对话', 'ok')
 }
 
@@ -626,6 +616,12 @@ export function resetWinRect(pid) {
   patchUi(pid, { win: { ...DEFAULT_WIN } }, true)
 }
 
+/** 工作台让位宽度（px）；0 = 自动（按宿主轨道比例算） */
+export function setDockPx(pid, px, persist = false) {
+  const dock = Math.max(0, Math.round(Number(px) || 0))
+  return patchUi(pid, { dock }, persist)
+}
+
 export function setSplit(pid, key, px, persist = false) {
   const ui = uiOf(pid)
   const split = { ...ui.split, [key]: Math.round(px) }
@@ -639,6 +635,11 @@ export function flushUi() {
 
 export function setLeftTab(pid, tab) {
   patchUi(pid, { leftTab: tab })
+}
+
+export function toggleLeft(pid) {
+  const ui = uiOf(pid)
+  patchUi(pid, { leftHidden: !ui.leftHidden })
 }
 
 /* ============================ 标签页 ============================ */

@@ -4,8 +4,9 @@
  *   - 两个座位注册、样式只注入一次
  *   - 侧边栏：状态栏 / 项目列表（不再单列宿主会话）
  *   - 右击菜单：模式切换 + 单一「绑定对话」入口
- *   - 项目工作区：左栏/中栏/对话栏恒在，窗口模式有浮动视窗，全屏模式铺满
- *   - 两种模式共用标签页 / 编辑器 / 终端 / 浏览器 / 对话预览
+ *   - 项目工作区：宿主会话区让位到右侧，工作台只占左边，不再自绘对话栏
+ *   - 窗口模式有浮动小窗，全屏模式铺满；两种模式共用标签页 / 编辑器 / 终端 / 浏览器
+ *   - 让位宽度换算（computeDock）
  *   - 新建项目小窗、对话绑定小窗
  */
 import { readFileSync } from 'node:fs'
@@ -47,14 +48,6 @@ const fakeSessions = {
   ],
 }
 const fakeDefaults = { ok: true, at: NOW, workspace: 'C:\\Users\\demo\\default-workspace', home: 'C:\\Users\\demo\\.dsh', platform: 'win32', shell: 'powershell' }
-const fakeTranscript = {
-  ok: true, sessionId: 's-apple', title: 'app-alpha 会话',
-  messages: [
-    { id: '1', role: 'user', text: '把构建脚本整理一下', time: NOW - 60000 },
-    { id: '2', role: 'assistant', text: '好的，先看 package.json。', time: NOW - 30000 },
-  ],
-  truncated: false,
-}
 const fakeTree = {
   path: 'C:\\projects\\smart-car', name: 'smart-car', parent: 'C:\\projects',
   entries: [
@@ -73,7 +66,6 @@ globalThis.fetch = async (url, opts) => {
   const u = String(url)
   const body = u.endsWith('/sessions') ? fakeSessions
     : u.endsWith('/defaults') ? fakeDefaults
-      : u.endsWith('/transcript') ? fakeTranscript
         : u.endsWith('/fs/list') ? fakeTree
           : u.endsWith('/fs/read') ? fakeFile
             : u.endsWith('/git') ? (String(opts?.body || '').includes('"log"') ? fakeGitLog : (String(opts?.body || '').includes('"branches"') ? fakeGitBranches : fakeGit))
@@ -99,6 +91,7 @@ const reactStub = {
     return [v, () => {}]
   },
   useEffect: () => {},
+  useLayoutEffect: () => {},
   useCallback: (fn) => fn,
   useRef: (v) => ({ current: v === undefined ? null : v }),
 }
@@ -251,13 +244,28 @@ let overlay = null
 boom = null
 try { overlay = render(overlayComp) } catch (e) { boom = e }
 check('进入项目后主区渲染不抛异常', !boom, boom && boom.message)
-check('主区根节点带 wt-overlay', !!(overlay && /wt-overlay/.test(overlay.props.className)))
+check('主区根节点带 wt-root', !!(overlay && /wt-root/.test(overlay.props.className)), overlay && overlay.props.className)
+check('主区根节点不吃事件（只有 dock 一块可交互）', !!allByClass(overlay, /wt-dock/).length)
 const mainText = textOf(overlay)
 check('顶栏显示项目名', mainText.includes('智能小车固件'))
-check('顶栏有「全部项目 / 新建项目 / 关闭」', ['全部项目', '新建项目', '✕'].every((t) => mainText.includes(t)), mainText.slice(0, 80))
-check('模式切换条存在', allByClass(overlay, /(^|\s)seg(\s|$)/).length === 1)
-check('左栏与对话栏恒在', allByClass(overlay, /pane-left/).length === 1 && allByClass(overlay, /pane-chat/).length === 1)
-check('中间栏与两侧各有一个分割条', allByClass(overlay, /split-handle/).length === 2)
+check('顶栏有「≡ 项目 / 关闭」', ['≡ 项目', '✕'].every((t) => mainText.includes(t)), mainText.slice(0, 90))
+check('模式切换条存在', allByClass(overlay, /(^|\s)seg(\s|$)|(^|\s)seg tiny(\s|$)/).length >= 1)
+check('不再自绘对话栏（右侧交给宿主）', allByClass(overlay, /pane-chat/).length === 0)
+check('左栏仍在', allByClass(overlay, /pane-left/).length === 1)
+check('分割条 = 左栏 + 让位边界', allByClass(overlay, /split-handle/).length === 2, allByClass(overlay, /split-handle/).length)
+check('让位边界是 dock-edge', allByClass(overlay, /dock-edge/).length === 1)
+
+/* 左栏可收起：让位区窄的时候工作区能占满 */
+clickByLabel(overlay, '▤ 收起')
+overlay = render(overlayComp)
+check('收起左栏：左栏与左分割条一起消失', allByClass(overlay, /pane-left/).length === 0 && allByClass(overlay, /split-handle/).length === 1)
+check('收起状态写进 wt.ui.v2', JSON.parse(ls.get('wt.ui.v2') || '{}')['custom-1'].leftHidden === true)
+clickByLabel(overlay, '▤ 展开')
+overlay = render(overlayComp)
+check('展开左栏恢复', allByClass(overlay, /pane-left/).length === 1 && allByClass(overlay, /split-handle/).length === 2)
+const chatPill = allByClass(overlay, /dh-chat/)[0]
+check('顶栏标出右侧对话（主绑定）', !!chatPill && !/off/.test(chatPill.props.className), chatPill && chatPill.props.className)
+check('对话气泡显示主对话标题', !!chatPill && textOf(chatPill).includes('app-alpha'), chatPill && textOf(chatPill))
 
 /* 窗口模式 */
 check('窗口模式：中间栏是画布', allByClass(overlay, /pane-canvas/).length === 1, allByClass(overlay, /pane-canvas/).length)
@@ -268,18 +276,56 @@ check('视窗有标题栏与缩放角', allByClass(overlay, /float-bar/).length 
 check('视窗有复位 / 全屏按钮', allByClass(overlay, /fb-tools/).length === 1 && ['复位', '全屏'].every((t) => textOf(floatWin).includes(t)))
 check('视窗内工作区与全屏同源（pane-nest）', allByClass(overlay, /pane-nest/).length === 1)
 
-/* 对话预览 */
-check('对话预览渲染用户消息', mainText.includes('把构建脚本整理一下'), mainText.slice(0, 120))
-check('对话预览渲染助手消息', mainText.includes('好的，先看 package.json。'))
-check('对话区标注只读', mainText.includes('只读预览'))
+/* 进入项目时把宿主切到主绑定对话 */
+check('进入项目即切宿主对话（主绑定）', mainText.includes('app-alpha 会话') || mainText.includes('app-alpha'), mainText.slice(0, 120))
+
+/* 让位宽度换算 */
+const { computeDock } = mod
+check('导出 computeDock 供换算', typeof computeDock === 'function')
+if (typeof computeDock === 'function') {
+  const auto = computeDock({ track: 1200, preferred: 0 })
+  check('自动宽度 = 轨道 64%', auto.width === 768, JSON.stringify(auto))
+  check('自动宽度给对话留够 380', auto.max === 820, JSON.stringify(auto))
+  check('拖过的像素宽度原样生效', computeDock({ track: 1200, preferred: 500 }).width === 500)
+  check('过宽时夹到「轨道 - 380」', computeDock({ track: 1200, preferred: 5000 }).width === 820, JSON.stringify(computeDock({ track: 1200, preferred: 5000 })))
+  check('轨道太窄时不让位', computeDock({ track: 300, preferred: 0 }).width === 0, JSON.stringify(computeDock({ track: 300, preferred: 0 })))
+}
+
+/* ---------- 让位副作用：假宿主 DOM（overlay 座位 → frame → centerCol） ---------- */
+const fakeFrame = {
+  style: {},
+  getBoundingClientRect: () => ({ left: 0, top: 0, width: 1440, height: 900 }),
+  querySelector: (sel) => (sel === '[class*="centerCol"]' ? fakeCenter : null),
+}
+const fakeLayer = { parentElement: fakeFrame, querySelector: () => null }
+const fakeRoot = { parentElement: fakeLayer }
+let marginPx = 0
+const fakeCenter = {
+  style: {
+    get marginLeft() { return marginPx ? marginPx + 'px' : '' },
+    set marginLeft(v) { marginPx = parseFloat(v) || 0 },
+  },
+  getBoundingClientRect: () => ({ left: 280 + marginPx, top: 0, width: 1160 - marginPx, height: 900 }),
+  querySelector: () => null,
+}
+
+check('认得出宿主结构（frame / centerCol）', mod.attachHost(fakeRoot) === true)
+const g0 = mod.applyDock(0)
+check('测出侧边栏右边界与轨道宽', g0.left === 280 && g0.track === 1160, JSON.stringify(g0))
+const g1 = mod.applyDock(742)
+check('让位：给宿主中心列写 marginLeft', fakeCenter.style.marginLeft === '742px', fakeCenter.style.marginLeft)
+check('让位：几何不因自身 margin 漂移', g1.left === 280 && g1.track === 1160 && g1.width === 742, JSON.stringify(g1))
+check('让位：右侧至少留 380', g1.max === 780, JSON.stringify(g1))
+mod.releaseDock()
+check('退出项目：marginLeft 还原', fakeCenter.style.marginLeft === '', JSON.stringify(fakeCenter.style.marginLeft))
 
 /* 切到全屏模式 */
 clickByLabel(overlay, '全屏')
 overlay = render(overlayComp)
 check('全屏模式：没有浮动视窗', allByClass(overlay, /float-win/).length === 0 && allByClass(overlay, /pane-canvas/).length === 0)
 check('全屏模式：中间栏铺满', allByClass(overlay, /pane-main/).length === 1 && allByClass(overlay, /pane-nest/).length === 0)
-check('全屏模式：左栏/对话栏仍在', allByClass(overlay, /pane-left/).length === 1 && allByClass(overlay, /pane-chat/).length === 1)
-check('全屏模式不会把左栏或对话栏藏起来', textOf(overlay).includes('项目') && textOf(overlay).includes('对话'))
+check('全屏模式：左栏仍在', allByClass(overlay, /pane-left/).length === 1)
+check('全屏模式：让位边界仍在', allByClass(overlay, /dock-edge/).length === 1)
 
 /* 左栏信息 */
 check('项目信息显示绑定对话数', /绑定对话/.test(textOf(overlay)))
@@ -329,7 +375,7 @@ const closeX = collect(overlay).find((n) => n.props && /tab-x/.test(String(n.pro
 check('标签页有关闭按钮', !!closeX)
 
 /* 回到全部项目 */
-clickByLabel(overlay, '全部项目')
+clickByLabel(overlay, '≡ 项目')
 overlay = render(overlayComp)
 const gridText = textOf(overlay)
 check('回到网格：显示控制室', gridText.includes('控制室'))

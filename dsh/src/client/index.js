@@ -9,14 +9,16 @@
  *   1. props.renderSlot 绑定到 entry 自己的 children；空参调用抛 SlotOwnershipError。
  *   2. Register 成功 ≠ 渲染成功：两侧都有错误边界兜底。
  *   3. 会话服务可选，ctx.inject(['sessions']) 延迟接入，缺席不影响渲染。
- *   4. 右击菜单 / 小窗 / toast 挂在侧边栏 —— 容器不能有 backdrop-filter/overflow:hidden，
- *      否则 fixed 后代被裁剪（真机踩过）。
+ *   4. 工作区不再自绘对话栏：进项目时把宿主中心列 marginLeft 右推（hostdock.js），
+ *      工作台只占左边那块，右侧是 DSH 自己的对话 —— 真能打字，不是预览。
+ *   5. 右击菜单 / 小窗 / toast 挂在主区根的直系层 —— 容器不能有 backdrop-filter /
+ *      overflow:hidden，否则 fixed 后代被裁剪（真机踩过）。
  */
 import { Component } from 'react'
 import CSS from './theme.css'
 import {
-  store, useStore, hydrate, setHost, loadSessions, loadDefaults, closeMenu, closeModal,
-  closeOverlay, startTicker, VERSION,
+  store, useStore, hydrate, setHost, setWorkspace, loadSessions, loadDefaults,
+  closeMenu, closeModal, closeOverlay, startTicker, VERSION,
 } from './core.js'
 import { el } from './ui.js'
 import { WorktableSidebar } from './sidebar.js'
@@ -27,6 +29,8 @@ const OVERLAY_ID = PANEL_ID + '-main'
 
 export const inject = ['slots']
 export { VERSION }
+/* 让位接口出口（离线自测用）：宽度换算 + 施加/还原，不参与运行时调用 */
+export { computeDock, attachHost, applyDock, releaseDock } from './hostdock.js'
 
 class SidebarBoundary extends Component {
   constructor(props) { super(props); this.state = { err: null } }
@@ -54,8 +58,8 @@ class OverlayBoundary extends Component {
   render() {
     if (this.state.err) {
       if (!store.open) return null
-      return el('div', { className: 'wt-scope wt-overlay' },
-        el('div', { className: 'wt-shell' },
+      return el('div', { className: 'wt-scope wt-root' },
+        el('div', { className: 'wt-dock is-full' },
           el('header', { className: 'topbar' },
             el('div', null, el('div', { className: 'tb-title' }, el('h1', null, '工作台'), el('span', { className: 'eyebrow' }, 'ERROR'))),
             el('div', { className: 'tb-actions' }, el('button', { type: 'button', className: 'btn', onClick: closeOverlay }, '关闭')),
@@ -121,6 +125,11 @@ export function apply(ctx) {
   try {
     ctx.inject(['sessions'], () => { loadSessions() })
   } catch { /* 无会话服务的 profile */ }
+
+  /* 宿主会话的「打开某个对话」入口（右侧对话要跟着项目走） */
+  try {
+    ctx.inject(['uiWorkspace'], (c) => { setWorkspace(c && c.uiWorkspace) })
+  } catch { /* 未提供该服务：退到 sessions.open */ }
 
   loadSessions()
   loadDefaults()

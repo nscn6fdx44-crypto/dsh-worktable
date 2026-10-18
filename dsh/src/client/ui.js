@@ -65,9 +65,10 @@ export function Light({ pid, label }) {
 
 /**
  * 竖向分割条：拖动改变相邻窗格宽度。
- * side='left' 时向右拖变宽；side='right' 时向左拖变宽（对话栏在右侧）。
+ * side='left' 时向右拖变宽；side='right' 时向左拖变宽。
+ * className 用于贴边形态（例如工作台与对话之间的 dock-edge）。
  */
-export function Splitter({ pid, side, width, min = 160, max = 900, onResize }) {
+export function Splitter({ pid, side, width, min = 160, max = 900, onResize, className }) {
   const drag = useRef(null)
 
   const down = (e) => {
@@ -96,10 +97,10 @@ export function Splitter({ pid, side, width, min = 160, max = 900, onResize }) {
   }
 
   return el('div', {
-    className: 'split-handle',
+    className: 'split-handle' + (className ? ' ' + className : ''),
     role: 'separator',
     'aria-orientation': 'vertical',
-    title: '拖动调整宽度（双击复位）',
+    title: className === 'dock-edge' ? '拖动调整工作台宽度（双击恢复自动）' : '拖动调整宽度（双击复位）',
     onPointerDown: down,
     onDoubleClick: () => onResize(0, true),
   }, el('i', null))

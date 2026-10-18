@@ -1,5 +1,6 @@
 /**
- * 窗格：项目信息 / 文件浏览 / 编辑器 / 终端 / 浏览器 / 自定义 / 对话。
+ * 窗格：项目信息 / 文件浏览 / 编辑器 / 终端 / 浏览器 / 自定义。
+ * 对话不在这里 —— 右栏就是宿主自己的会话区（见 hostdock.js）。
  * 每个窗格只读 store 的对应切片，动作全部来自 core。
  */
 import { useState, useEffect, useRef } from 'react'
@@ -7,8 +8,8 @@ import { el, Icon, Light } from './ui.js'
 import {
   store, useStore, STATES, normState, fmtSize, fmtDuration, relTime, shortPath, projEmoji,
   loadTree, openFile, editText, saveFile, termExec, termKill, termClear, loadGit,
-  setLeftTab, sessionsOf, primarySession, stateOf, loadTranscript, jumpToSession,
-  openModal, siteUrlOf, setWebUrl, setCustomHtml, cycleStatus, updateProject, projectOf,
+  setLeftTab, sessionsOf, primarySession, stateOf, jumpToSession,
+  openModal, siteUrlOf, setWebUrl, setCustomHtml, cycleStatus, updateProject, projectOf, toast,
 } from './core.js'
 
 /* ============================ 左栏：项目信息 ============================ */
@@ -39,7 +40,7 @@ export function InfoPane({ project }) {
       bound.map((s, i) => el('button', {
         key: s.id, type: 'button', className: 'mini-session',
         title: '打开宿主对话：' + (s.title || s.id),
-        onClick: () => { if (!jumpToSession(s.id)) { /* 宿主无入口时无动作 */ } },
+        onClick: () => { if (!jumpToSession(s.id)) toast('没找到宿主打开对话的入口', 'warn') },
       },
         el('span', { className: 'light ' + normState(s.state), 'aria-hidden': 'true' }),
         el('span', { className: 'ms-title' }, s.title || s.id),
@@ -378,67 +379,5 @@ export function CustomPane() {
         el('iframe', { title: '自定义预览', sandbox: 'allow-scripts allow-forms', srcDoc: applied }),
       ),
     ),
-  )
-}
-
-/* ============================ 右栏：对话 ============================ */
-
-export function ChatPane({ project }) {
-  useStore()
-  const t = store.transcript
-  const primary = primarySession(project)
-  const same = primary && t.sid === primary.id
-
-  useEffect(() => {
-    const sid = primary ? primary.id : ''
-    if (sid && t.sid !== sid) loadTranscript(sid)
-    if (!sid && t.sid) loadTranscript('')
-  }, [project.id, primary ? primary.id : ''])
-
-  return el('div', { className: 'pane-body chat-body' },
-    !primary
-      ? el('div', { className: 'chat-empty' },
-        el('p', null, '这个项目还没有绑定 DSH 对话。'),
-        el('button', { type: 'button', className: 'btn small primary', onClick: () => openModal('bind', project.id) }, '绑定对话'),
-      )
-      : null,
-
-    primary && same && t.state === 'loading'
-      ? el('div', { className: 'chat-empty' }, el('p', null, '正在读取对话…'))
-      : null,
-
-    primary && same && t.state === 'error'
-      ? el('div', { className: 'chat-empty' },
-        el('p', null, '读取失败：' + (t.error || '未知原因')),
-        el('button', { type: 'button', className: 'btn small', onClick: () => loadTranscript(primary.id) }, '重试'),
-      )
-      : null,
-
-    primary && same && t.state === 'ok'
-      ? el('div', { className: 'chat-list' },
-        t.truncated ? el('div', { className: 'chat-more' }, '仅显示最近 ' + t.messages.length + ' 条') : null,
-        t.messages.length
-          ? t.messages.map((m) => el('div', { key: m.id, className: 'msg ' + (m.role === 'user' ? 'me' : 'ai') },
-            el('div', { className: 'msg-role' },
-              m.role === 'user' ? '你' : '助手',
-              m.time ? el('span', { className: 'msg-time' }, relTime(m.time)) : null,
-            ),
-            el('div', { className: 'msg-text' }, m.text),
-          ))
-          : el('div', { className: 'chat-empty' }, el('p', null, '这段对话还没有可显示的消息')),
-      )
-      : null,
-
-    primary
-      ? el('div', { className: 'chat-foot' },
-        el('button', {
-          type: 'button', className: 'btn small primary',
-          onClick: () => { if (!jumpToSession(primary.id)) openModal('bind', project.id) },
-        }, '在宿主打开'),
-        el('button', { type: 'button', className: 'btn small', onClick: () => loadTranscript(primary.id) }, '刷新'),
-        el('button', { type: 'button', className: 'btn small', onClick: () => openModal('bind', project.id) }, '管理'),
-        el('span', { className: 'chat-note' }, '只读预览 · 发送请回宿主对话'),
-      )
-      : null,
   )
 }

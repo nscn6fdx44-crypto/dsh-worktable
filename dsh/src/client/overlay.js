@@ -1,69 +1,91 @@
 /**
- * 主区：顶栏 + 控制室 + 卡片网格 + 项目工作区。
+ * 主区：控制室 / 卡片网格 / 项目工作区。
  *
- * 工作区恒为三栏：左（项目/文件）· 中（工作区）· 右（对话），两侧永远不隐藏。
- * 中间栏有两种模式（ui.mode）：
- *   dock  全屏 —— 铺满中间区域，分割条调宽
- *   float 窗口 —— 一个贴着对话栏的浮动视窗，可拖动、可缩放；与全屏共用同一套窗格
- * 分割条的宽度对两种模式同时生效（同一份 ui.split）。
+ * 两态：
+ *   grid    整块覆盖（控制室 + 项目卡片）
+ *   project 只占对话左侧那块：宿主会话区被右推，右侧始终是 DSH 自己的对话（真能打字）
+ *           工作台内部 = 左栏（项目 / 文件）+ 主区（全屏 or 小窗），对话栏不由我们渲染。
+ *
+ * 让位几何全部来自 hostdock.js，组件只消费 geo，不直接碰宿主 DOM。
  */
 import { useRef } from 'react'
 import { el, Light, Splitter, ContextMenu, Toasts } from './ui.js'
 import { ModalHost } from './modals.js'
+import { useHostDock } from './hostdock.js'
 import {
   store, useStore, STATES, normState, MODES, modeDef, PANE_TABS, DEFAULT_SPLIT,
   fmtDuration, relTime, shortPath, projEmoji, openGrid, enterProject, closeOverlay,
-  openModal, openMenu, setMode, setSplit, setLeftTab, openTab, closeTab, setActiveTab,
-  loadSessions, stateOf, sessionsOf, primarySession,
-  uiOf, flushUi, setWinRect, resetWinRect,
+  openModal, openMenu, setMode, setSplit, setDockPx, setLeftTab, toggleLeft, openTab, closeTab, setActiveTab,
+  loadSessions, stateOf, sessionsOf, primarySession, uiOf, flushUi, setWinRect, resetWinRect,
 } from './core.js'
-import { InfoPane, FilesPane, EditorPane, TermPane, WebPane, CustomPane, ChatPane } from './panes.js'
-
-const EMPTY_TRANSCRIPT = { sid: '', state: 'idle', messages: [], title: '', error: '', truncated: false }
+import { InfoPane, FilesPane, EditorPane, TermPane, WebPane, CustomPane } from './panes.js'
 
 export function MainView() {
   useStore()
+  const rootRef = useRef(null)
+
   const open = store.open
+  const active = open ? (store.projects.find((p) => p.id === store.activeId) || null) : null
+  const docked = !!(active && store.view === 'project')
+  const ui = active ? uiOf(active.id) : null
+
+  /* 让位：只有进项目才挤对话；退出/卸载自动还原 */
+  const geo = useHostDock(rootRef, docked, ui ? ui.dock : 0)
+  const dockedFit = docked && geo.ready && geo.width > 0
 
   if (!open) return null
-  const active = store.projects.find((p) => p.id === store.activeId) || null
 
-  return el('div', { className: 'wt-scope wt-overlay', 'data-ns': 'worktable', role: 'dialog', 'aria-label': '工作台' },
-    el('div', { className: 'wt-bg', 'aria-hidden': 'true' },
-      el('i', { className: 'wt-blob wt-b1' }),
-      el('i', { className: 'wt-blob wt-b2' }),
-      el('i', { className: 'wt-blob wt-b3' }),
-      el('i', { className: 'wt-blob wt-b4' }),
+  /* 锚点没找到（宿主改版）时退回整块覆盖：功能不受影响，只是看不到右侧对话 */
+  const style = dockedFit
+    ? { left: geo.left + 'px', top: geo.top + 'px', width: geo.width + 'px', height: geo.height + 'px' }
+    : null
+
+  return el('div', {
+    className: 'wt-scope wt-root',
+    'data-ns': 'worktable',
+    'data-dock': dockedFit ? '1' : '0',
+    ref: rootRef,
+  },
+    el('div', {
+      className: 'wt-dock' + (dockedFit ? ' is-docked' : ' is-full'),
+      style,
+      role: 'region',
+      'aria-label': '工作台',
+    },
+      el('div', { className: 'wt-bg', 'aria-hidden': 'true' },
+        el('i', { className: 'wt-blob wt-b1' }),
+        el('i', { className: 'wt-blob wt-b2' }),
+        el('i', { className: 'wt-blob wt-b3' }),
+        el('i', { className: 'wt-blob wt-b4' }),
+      ),
+      docked
+        ? el(Workspace, { key: active.id, project: active, ui, geo })
+        : [el(Topbar, { key: 'top' }), el(GridView, { key: 'grid' })],
     ),
-    el('div', { className: 'wt-shell' },
-      el(Topbar, { active }),
-      active ? el(ProjectView, { key: active.id, project: active }) : el(GridView),
-    ),
+    /* 菜单 / 小窗 / toast 挂在让位区之外：fixed 定位不受 dock 裁剪 */
     el(ContextMenu),
     el(ModalHost),
     el(Toasts),
   )
 }
 
-/* ============================ 顶栏 ============================ */
+/* ============================ 顶栏（控制室） ============================ */
 
-function Topbar({ active }) {
+function Topbar() {
   const counts = store.sessions.counts || {}
-  const sub = active
-    ? ((active.path || '未设置目录') + ' · ' + modeDef(uiOf(active.id).mode).label + '模式 · ' + (active.sessions || []).length + ' 个对话')
-    : ('项目 ' + store.projects.length + ' 个 · 宿主会话 ' + (counts.total || 0) + ' 个 · 快照 ' + (store.sessions.at ? relTime(store.sessions.at) : '—'))
+  const sub = '项目 ' + store.projects.length + ' 个 · 宿主会话 ' + (counts.total || 0) + ' 个 · 快照 '
+    + (store.sessions.at ? relTime(store.sessions.at) : '—')
 
   return el('header', { className: 'topbar' },
     el('div', null,
       el('div', { className: 'tb-title' },
-        el('h1', null, active ? (active.alias || active.name) : '控制室'),
-        el('span', { className: 'eyebrow' }, active ? 'Workspace' : 'Control'),
+        el('h1', null, '控制室'),
+        el('span', { className: 'eyebrow' }, 'Control'),
       ),
       el('p', { className: 'tb-sub', title: sub }, sub),
     ),
     el('div', { className: 'tb-actions' },
-      active ? el('button', { type: 'button', className: 'btn', onClick: openGrid }, '← 全部项目') : null,
-      el('button', { type: 'button', className: 'btn', onClick: () => { loadSessions(); } }, '刷新'),
+      el('button', { type: 'button', className: 'btn', onClick: () => { loadSessions() } }, '刷新'),
       el('button', { type: 'button', className: 'btn primary', onClick: () => openModal('add') }, '＋ 新建项目'),
       el('button', { type: 'button', className: 'btn ico', title: '关闭 (Esc)', onClick: closeOverlay }, '✕'),
     ),
@@ -110,7 +132,7 @@ function GridView() {
       el(AddCard),
       projects.length ? null : el('div', { className: 'empty' }, '还没有项目，点「新建项目」开始'),
     ),
-    el('p', { className: 'grid-note' }, '右击项目或卡片：布局 · 编辑 · 绑定 · 删除 · 隐藏'),
+    el('p', { className: 'grid-note' }, '右击项目或卡片：模式 · 编辑 · 绑定 · 删除 · 隐藏'),
   )
 }
 
@@ -132,7 +154,7 @@ function ProjectCard({ project }) {
   return el('article', {
     className: cls,
     tabIndex: 0,
-    title: (project.path || '未设置目录') + ' · 点击进入',
+    title: (project.path || '未设置目录') + ' · 点击进入（右侧就是它的 DSH 对话）',
     onClick: () => enterProject(project.id),
     onContextMenu: (e) => { e.preventDefault(); e.stopPropagation(); openMenu(project.id, e.clientX, e.clientY) },
   },
@@ -169,60 +191,75 @@ function AddCard() {
   )
 }
 
-/* ============================ 项目工作区 ============================ */
+/* ============================ 项目工作区（让位区） ============================ */
 
-function ProjectView({ project }) {
-  useStore()
-  const ui = uiOf(project.id)
-  const mode = ui.mode
-
+function Workspace({ project, ui, geo }) {
   const leftW = ui.split.left || DEFAULT_SPLIT.left
-  const chatW = ui.split.chat || DEFAULT_SPLIT.chat
+  const primary = primarySession(project)
 
   const onLeft = (next, persist) => {
     if (next === 0) { setSplit(project.id, 'left', DEFAULT_SPLIT.left, true); return }
     if (next == null) { flushUi(); return }
     setSplit(project.id, 'left', next, persist)
   }
-  const onChat = (next, persist) => {
-    if (next === 0) { setSplit(project.id, 'chat', DEFAULT_SPLIT.chat, true); return }
+  /* 工作台右边缘：直接改让位宽度，拖的同时右侧对话跟着变宽变窄 */
+  const onDock = (next, persist) => {
     if (next == null) { flushUi(); return }
-    setSplit(project.id, 'chat', next, persist)
+    if (next === 0) { setDockPx(project.id, 0, true); return }
+    setDockPx(project.id, next, persist)
   }
 
-  return el('section', { className: 'view active view-workspace' },
-    el('div', { className: 'detail-bar' },
-      el('div', { className: 'detail-crumb' },
-        el('span', { className: 'c-ico', 'aria-hidden': 'true', style: { fontSize: '17px' } }, projEmoji(project)),
-        el('b', null, project.alias || project.name),
-        el('span', { className: 'p mono', title: project.path }, shortPath(project.path || '未设置目录', 40)),
-        el('span', { className: 'tag gold' }, STATES[stateOf(project.id)].label),
+  return el('div', { className: 'dock-wrap' },
+    el('header', { className: 'dock-head' },
+      el('div', { className: 'dh-main' },
+        el('span', { className: 'dh-ico', 'aria-hidden': 'true' }, projEmoji(project)),
+        el('b', { className: 'dh-name', title: project.path }, project.alias || project.name),
+        el(Light, { pid: project.id }),
+        el('span', { className: 'dh-dot', 'aria-hidden': 'true' }, '·'),
+        el('span', { className: 'dh-sub mono', title: project.path }, shortPath(project.path || '未设置目录', 30)),
+        primary ? el('span', { className: 'dh-chat', title: '右侧对话：' + (primary.title || primary.id) },
+          el('span', { className: 'light ' + normState(primary.state), 'aria-hidden': 'true' }),
+          String(primary.title || primary.id).slice(0, 14),
+        ) : el('span', { className: 'dh-chat off' }, '未绑定对话'),
       ),
-      el('div', { className: 'seg', title: '工作区模式（也可右击项目切换）' },
-        MODES.map((m) => el('button', {
-          key: m.id, type: 'button', className: m.id === mode ? 'on' : '', title: m.hint,
-          onClick: () => setMode(project.id, m.id),
-        }, m.icon + ' ' + m.label)),
+      el('div', { className: 'dh-tools' },
+        el('div', { className: 'seg tiny', title: '工作区模式（右击项目也能切）' },
+          MODES.map((m) => el('button', {
+            key: m.id, type: 'button', className: m.id === ui.mode ? 'on' : '', title: m.hint,
+            onClick: () => setMode(project.id, m.id),
+          }, m.icon + ' ' + m.label)),
+        ),
+        el('button', {
+          type: 'button', className: 'mini-btn' + (ui.leftHidden ? ' on' : ''),
+          title: ui.leftHidden ? '展开左栏（项目 / 文件）' : '收起左栏，工作区占满',
+          onClick: () => toggleLeft(project.id),
+        }, ui.leftHidden ? '▤ 展开' : '▤ 收起'),
+        el('button', { type: 'button', className: 'mini-btn', title: '回到控制室', onClick: openGrid }, '≡ 项目'),
+        el('button', { type: 'button', className: 'mini-btn', title: '关闭工作台 (Esc)', onClick: closeOverlay }, '✕'),
       ),
-      el('span', { className: 'detail-hint' }, mode === 'float'
-        ? '拖动标题栏移动 · 右下角缩放 · 双击标题栏复位'
-        : '拖动分割条调宽度 · 双击复位'),
     ),
-    el('div', { className: 'ws', 'data-mode': mode }, [
-      el(LeftPane, { key: 'left', project, width: leftW, tab: ui.leftTab }),
-      el(Splitter, { key: 's1', pid: project.id, side: 'left', width: leftW, min: 168, max: 420, onResize: onLeft }),
-      mode === 'float'
+
+    el('div', { className: 'ws', 'data-mode': ui.mode },
+      ui.leftHidden ? null : el(LeftPane, { key: 'left', project, width: leftW, tab: ui.leftTab }),
+      ui.leftHidden ? null : el(Splitter, {
+        key: 's1', pid: project.id, side: 'left', width: leftW,
+        min: 168, max: Math.max(240, (geo.width || 640) - 300), onResize: onLeft,
+      }),
+      ui.mode === 'float'
         ? el(FloatWindow, { key: 'main', project, ui })
         : el(MainPane, { key: 'main', project, ui }),
-      el(Splitter, { key: 's2', pid: project.id, side: 'right', width: chatW, min: 240, max: 860, onResize: onChat }),
-      el(ChatColumn, { key: 'chat', project, width: chatW }),
-    ]),
+      /* 右边缘 = 工作台 / 对话的分界，拖动即改让位宽度 */
+      el(Splitter, {
+        key: 'edge', pid: project.id, side: 'left', className: 'dock-edge',
+        width: geo.width || 0, min: 380, max: Math.max(420, geo.max || 1400), onResize: onDock,
+      }),
+    ),
   )
 }
 
 /**
- * 窗口模式：视窗浮在中间栏里、贴着对话栏。
- * 几何存 ui.win（比例），拖动标题栏移动、右下角缩放，双击标题栏复位；
+ * 窗口模式：小窗浮在让位区里、紧贴对话栏。
+ * 几何存 ui.win（比例），拖标题栏移动、右下角缩放，双击标题栏复位；
  * 与全屏模式共用同一个 MainPane，所以标签页 / 终端 / 浏览器等功能完全一致。
  */
 function FloatWindow({ project, ui }) {
@@ -303,12 +340,12 @@ function FloatWindow({ project, ui }) {
       el('div', { className: 'float-body' }, el(MainPane, { project, ui, nest: true })),
       el('span', { className: 'float-grip', title: '拖动缩放', onPointerDown: begin('resize') }),
     ),
-    el('p', { className: 'canvas-hint' }, '窗口模式 · 拖动标题栏移动，右下角缩放'),
+    el('p', { className: 'canvas-hint' }, '拖动标题栏移动 · 右下角缩放 · 右边缘拖动改工作台宽度'),
   )
 }
 
 function LeftPane({ project, width, tab }) {
-  const ui = useStore()
+  useStore()
   return el('aside', { className: 'pane pane-left', style: { flex: '0 0 ' + width + 'px' } },
     el('div', { className: 'pane-head' },
       el('div', { className: 'subtabs' },
@@ -377,18 +414,4 @@ function renderPane(kind, project) {
   if (kind === 'web') return el(WebPane, { project })
   if (kind === 'custom') return el(CustomPane, { project })
   return el(EditorPane, { project })
-}
-
-function ChatColumn({ project, width }) {
-  const t = store.transcript
-  const primary = primarySession(project)
-  return el('aside', { className: 'pane pane-chat', style: { flex: '0 0 ' + width + 'px' } },
-    el('div', { className: 'pane-head' },
-      el('span', { className: 'kind-chip' }, el('i', null, '✦'), '对话'),
-      el('span', { className: 'pane-title-text', title: primary ? (primary.title || primary.id) : '' },
-        primary ? (primary.title || String(primary.id).slice(0, 16)) : '未绑定'),
-      t.state === 'loading' ? el('span', { className: 'pane-hint' }, '读取中') : null,
-    ),
-    el(ChatPane, { project }),
-  )
 }

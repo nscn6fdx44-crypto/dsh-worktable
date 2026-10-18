@@ -130,7 +130,22 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 
 /* ============================ 主区浮层 ============================ */
 
-.wt-overlay { position: fixed; inset: 0; z-index: 900; background: var(--bg); color: var(--txt); overflow: hidden; display: flex; flex-direction: column; }
+/* 根层永远铺满宿主内容区，但不吃事件：只有 .wt-dock 那一块可交互，
+   所以让位之后右侧的 DSH 对话照常能点能打字。 */
+.wt-root { position: absolute; inset: 0; z-index: 900; pointer-events: none; }
+.wt-root > .ctx-menu, .wt-root > .scrim, .wt-root > .toasts { pointer-events: auto; }
+
+.wt-dock {
+  position: absolute; display: flex; flex-direction: column; overflow: hidden;
+  pointer-events: auto; background: var(--bg); color: var(--txt);
+}
+.wt-dock.is-full { inset: 0; }
+.wt-dock.is-docked {
+  border-right: 1px solid rgba(240, 180, 41, .22);
+  box-shadow: 18px 0 48px -30px rgba(0, 0, 0, .9), 1px 0 0 rgba(255, 255, 255, .04);
+  animation: wtDockIn .2s var(--ease);
+}
+@keyframes wtDockIn { from { opacity: 0; transform: translateX(-12px) } to { opacity: 1; transform: none } }
 .wt-scope .wt-bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; background: var(--bg); }
 .wt-scope .wt-bg::after {
   content: ""; position: absolute; inset: 0;
@@ -190,8 +205,39 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 
 .wt-scope .view { padding: 0 24px 24px; }
 .wt-scope .view.active { animation: wtFadeUp .3s var(--ease); }
-.wt-scope .view-workspace { display: flex; flex-direction: column; flex: 1; min-height: 0; padding-bottom: 16px; }
 @keyframes wtFadeUp { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+
+/* ============================ 工作区（让位区） ============================ */
+
+.wt-scope .dock-wrap { position: relative; z-index: 1; display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; }
+
+.wt-scope .dock-head {
+  display: flex; align-items: center; gap: 8px; flex: none; height: 34px; padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(240,180,41,.10), rgba(240,180,41,.015));
+}
+.wt-scope .dh-main { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1; }
+.wt-scope .dh-ico { flex: none; font-size: 14px; line-height: 1; }
+.wt-scope .dh-name { flex: none; max-width: 40%; font-size: 12.5px; font-weight: 620; color: #f7dd9f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wt-scope .dh-dot { flex: none; color: rgba(246,218,156,.32); }
+.wt-scope .dh-sub { min-width: 0; font-size: 10px; color: var(--txt-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wt-scope .dh-chat {
+  display: inline-flex; align-items: center; gap: 5px; flex: none; max-width: 32%; margin-left: auto;
+  padding: 2px 8px; border-radius: 999px; font-size: 10px; color: rgba(246,218,156,.82);
+  border: 1px solid rgba(240,180,41,.24); background: rgba(240,180,41,.08);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wt-scope .dh-chat.off { color: var(--txt-mute); border-color: var(--line); background: rgba(255,255,255,.03); }
+.wt-scope .dh-tools { display: flex; align-items: center; gap: 5px; flex: none; }
+.wt-scope .seg.tiny { height: 22px; }
+.wt-scope .seg.tiny button { padding: 0 8px; font-size: 10.5px; }
+
+/* 工作台右边缘：一拖就改让位宽度，右侧 DSH 对话跟着变 */
+.wt-scope .split-handle.dock-edge {
+  position: absolute; top: 0; bottom: 0; right: 0; width: 8px; z-index: 3;
+}
+.wt-scope .split-handle.dock-edge i { height: 56%; width: 3px; background: rgba(240,180,41,.22); }
+.wt-scope .split-handle.dock-edge:hover i { background: rgba(240,180,41,.85); height: 80%; }
 
 /* ============================ 控制室 ============================ */
 
@@ -308,14 +354,6 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 
 /* ============================ 项目工作区（分栏） ============================ */
 
-.wt-scope .detail-bar {
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex: none;
-  margin: 0 24px 10px; padding: 8px 12px; border-radius: 12px;
-  border: 1px solid var(--line); background: var(--panel);
-}
-.wt-scope .detail-crumb { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; }
-.wt-scope .detail-crumb b { font-size: 14px; font-weight: 620; white-space: nowrap; }
-.wt-scope .detail-crumb .p { font-size: 10.5px; color: var(--txt-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wt-scope .seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden; background: rgba(0,0,0,.22); flex: none; }
 .wt-scope .seg button { padding: 5px 11px; font-size: 11.5px; font-weight: 560; color: var(--txt-mute); background: transparent; border: 0; border-right: 1px solid var(--line); cursor: pointer; white-space: nowrap; }
 .wt-scope .seg button:last-child { border-right: 0; }
@@ -324,9 +362,7 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 .wt-scope .tag { font-family: var(--mono); font-size: 10.5px; padding: 2px 7px; border-radius: 6px; color: var(--txt-dim); background: rgba(255,255,255,.045); border: 1px solid var(--line); white-space: nowrap; }
 .wt-scope .tag.gold { color: #e9c778; background: rgba(240,180,41,.08); border-color: rgba(240,180,41,.22); }
 
-.wt-scope .detail-hint { flex: none; font-family: var(--mono); font-size: 9.5px; color: var(--txt-mute); white-space: nowrap; }
-
-.wt-scope .ws { display: flex; flex: 1; min-height: 0; gap: 0; padding: 0 14px; overflow: hidden; position: relative; }
+.wt-scope .ws { display: flex; flex: 1; min-height: 0; gap: 0; padding: 0 10px 10px; overflow: hidden; position: relative; }
 .wt-scope .pane {
   display: flex; flex-direction: column; min-height: 0; min-width: 0;
   border: 1px solid var(--line); border-radius: var(--r); overflow: hidden;
@@ -542,19 +578,7 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 .wt-scope .custom-preview { border-radius: 10px; border: 1px solid var(--line); overflow: hidden; background: #fff; }
 .wt-scope .custom-preview iframe { width: 100%; height: 100%; border: 0; display: block; }
 
-/* 对话 */
-.wt-scope .chat-body { display: flex; flex-direction: column; gap: 8px; overflow: hidden; padding: 9px 10px 11px; }
-.wt-scope .chat-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 7px; padding-right: 2px; }
-.wt-scope .msg { min-width: 0; padding: 7px 9px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255,255,255,.03); }
-.wt-scope .msg.me { border-color: rgba(240,180,41,.24); background: rgba(240,180,41,.07); }
-.wt-scope .msg-role { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--txt-mute); }
-.wt-scope .msg-time { margin-left: auto; letter-spacing: 0; text-transform: none; font-family: var(--mono); font-size: 9px; opacity: .7; }
-.wt-scope .msg-text { font-size: 11.5px; line-height: 1.65; color: var(--txt-dim); white-space: pre-wrap; word-break: break-word; }
-.wt-scope .chat-more { flex: none; text-align: center; font-family: var(--mono); font-size: 9px; color: var(--txt-mute); }
-.wt-scope .chat-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; flex: 1; text-align: center; padding: 16px; }
-.wt-scope .chat-empty p { margin: 0; font-size: 11.5px; line-height: 1.7; color: var(--txt-mute); }
-.wt-scope .chat-foot { display: flex; align-items: center; gap: 6px; flex: none; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 7px; }
-.wt-scope .chat-note { margin-left: auto; font-size: 9px; color: var(--txt-mute); }
+/* 对话不在这里：右栏是宿主自己的会话区，由 hostdock.js 让位 */
 
 /* ============================ 右击菜单 ============================ */
 
@@ -678,7 +702,6 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
   .wt-scope .grid { --cols: 1; --gap: 24px }
   .wt-scope .topbar { margin: 10px 12px; flex-wrap: wrap }
   .wt-scope .view { padding: 0 12px 20px }
-  .wt-scope .detail-bar { margin: 0 12px 8px }
   .wt-scope .ws { padding: 0 12px }
   .wt-scope .layout-row { grid-template-columns: repeat(2, 1fr) }
 }
