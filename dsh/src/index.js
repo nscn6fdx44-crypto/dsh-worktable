@@ -229,6 +229,20 @@ export function apply(ctx) {
     sendJson(res, 200, { ok: true, from, to })
   })})
 
+  /* 删除：一律走系统回收站 / 废纸篓，不做硬删。
+     路径先过白名单，再拒绝「白名单根本身」和盘符根，免得一条请求把工作区端掉。 */
+  register({ kind: 'exact', path: BASE + '/fs/delete', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const target = await assertExisting(body?.path, 'any')
+    if (dirname(target) === target) return sendJson(res, 400, { error: '不能删除磁盘根目录' })
+    if (isProtectedRoot(target)) return sendJson(res, 403, { error: '不能删除工作区根目录：' + target })
+    const r = await moveToTrash(target)
+    if (!r.ok) return sendJson(res, 500, { error: '删除失败：' + msg(r.error) })
+    sendJson(res, 200, { ok: true, path: target, trash: r.trash })
+  })})
+
   register({ kind: 'exact', path: BASE + '/fs/stat', handler: guard(async (req, res) => {
     if (!allowMethod(req, res, 'POST')) return
     const body = await readJson(req, res, MAX_BODY_JSON)
@@ -711,6 +725,63 @@ function safeTitle(header, observed) {
 }
 
 /* ============================ 系统文件管理器 ============================ */
+
+const psQuote = (p) => "'" + String(p).replace(/'/g, "''") + "'"
+
+/** 白名单根本身不许删（工作目录 / home / DSH_HOME / 已注册项目根） */
+function isProtectedRoot(target) {
+  const norm = process.platform === 'win32' ? target.toLowerCase() : target
+  for (const root of canonicalRoots()) {
+    const r = process.platform === 'win32' ? root.toLowerCase() : root
+    if (norm === r) return true
+  }
+  return false
+}
+
+/**
+ * 丢进系统回收站（Windows 回收站 / macOS 废纸篓 / Linux gio trash）。
+ * 不用 rm / fs.rm —— 文件管理器里的删除必须是能后悔的。
+ */
+function moveToTrash(target) {
+  return new Promise((resolveP) => {
+    const done = (ok, extra) => resolveP({ ok, ...(extra || {}) })
+    let cmd
+    let args
+    if (process.platform === 'win32') {
+      const isDir = isDirQuiet(target)
+      const script = [
+        '$ErrorActionPreference = "Stop"',
+        'Add-Type -AssemblyName Microsoft.VisualBasic',
+        '[Microsoft.VisualBasic.FileIO.FileSystem]::' + (isDir ? 'DeleteDirectory' : 'DeleteFile')
+          + '(' + psQuote(target) + ", 'OnlyErrorDialogs', 'SendToRecycleBin')",
+      ].join('; ')
+      const ps = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+      cmd = existsSync(ps) ? ps : 'powershell.exe'
+      args = ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]
+    } else if (process.platform === 'darwin') {
+      cmd = 'osascript'
+      args = ['-e', 'tell application "Finder" to delete POSIX file "' + String(target).replace(/"/g, '\\"') + '"']
+    } else {
+      cmd = 'gio'
+      args = ['trash', target]
+    }
+
+    let child
+    try {
+      child = spawn(cmd, args, { windowsHide: true })
+    } catch (err) {
+      done(false, { error: msg(err) })
+      return
+    }
+    let errText = ''
+    try { child.stderr?.on('data', (d) => { errText += String(d) }) } catch { /* 无 stderr */ }
+    child.on('error', (err) => done(false, { error: msg(err) }))
+    child.on('exit', (code) => {
+      if (code === 0) done(true, { trash: true })
+      else done(false, { error: errText.trim() || ('退出码 ' + code) })
+    })
+  })
+}
 
 /**
  * 每次「打开系统文件管理器」记一行到 ~/.dsh/worktable-reveal.log。

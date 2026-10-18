@@ -334,32 +334,62 @@ check('顶栏「项目信息」按标签页打开', allByClass(overlay, /info-bo
 check('项目信息显示绑定对话数', /绑定对话/.test(textOf(overlay)))
 check('git 区块渲染分支', textOf(overlay).includes('main'), textOf(allByClass(overlay, /git-box/)[0] || overlay).slice(0, 80))
 
-/* 「文件管理器」= 直接弹系统窗口，面板里只剩一张说明卡 */
+/* 「文件管理器」= 面板里自绘列表（系统资源管理器要 HWND，嵌不进 HTML 面板） */
 clickByLabel(overlay, '🗂 文件管理器')
-await new Promise((r) => setTimeout(r, 30))
+await new Promise((r) => setTimeout(r, 40))
 overlay = render(overlayComp)
-check('打开文件管理器就调系统窗口', reveals.length === 1, JSON.stringify(reveals))
-check('系统窗口打开的是对话工作目录', String(reveals[0]?.path || '').replace(/\\/g, '/') === 'C:/demo/app-alpha', JSON.stringify(reveals[0]))
-check('文件管理器面板是说明卡（不再画目录树）', allByClass(overlay, /(^|\s)sfc(\s|$)/).length === 1 && allByClass(overlay, /files-list/).length === 0, allByClass(overlay, /files-list/).length)
-check('说明卡有「在系统文件管理器中打开」按钮', textOf(overlay).includes('在系统文件管理器中打开'))
-check('说明卡标出跟随的对话目录', textOf(overlay).includes('跟随对话'), textOf(overlay).slice(0, 120))
-check('说明卡显示对话工作目录', /C:[\\/]+demo[\\/]+app-alpha/.test(textOf(overlay)), textOf(overlay).slice(0, 160))
+check('打开文件管理器会列对话的工作目录', String(lastListPath).replace(/\\/g, '/') === 'C:/demo/app-alpha', lastListPath)
+check('打开文件管理器不再弹系统窗口', reveals.length === 0, JSON.stringify(reveals))
+check('面板画出目录条目', textOf(overlay).includes('README.md') && textOf(overlay).includes('main.c'), textOf(overlay).slice(0, 140))
+check('面板有面包屑 + 三列表头', allByClass(overlay, /(^|\s)fx-crumbs(\s|$)/).length === 1 && allByClass(overlay, /(^|\s)fx-th(\s|$)/).length === 3,
+  allByClass(overlay, /(^|\s)fx-th(\s|$)/).length)
+check('面板显示条目数与大小列', textOf(overlay).includes('3 项') && textOf(overlay).includes('2.0 KB'), textOf(overlay).slice(0, 160))
 
-/* 标签页已经开着的时候再点它，也要重新弹一次系统窗口（用户：「打不开」多半是没重弹） */
-const filesTab = allByClass(overlay, /(^|\s)tab(\s|$)/).find((n) => textOf(n).includes('文件管理器'))
-check('标签栏里有文件管理器标签页', !!filesTab)
-const beforeRetap = reveals.length
-filesTab.props.onClick({ stopPropagation() {} })
-await new Promise((r) => setTimeout(r, 30))
+/* 单击选中 */
+const fileRow = allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('README.md'))
+check('列表行可点击', !!fileRow)
+fileRow.props.onClick()
 overlay = render(overlayComp)
-check('再点已开着的文件管理器标签页会重新打开系统窗口', reveals.length === beforeRetap + 1, reveals.length - beforeRetap)
-check('面板显示上次打开结果', textOf(overlay).includes('上次打开成功'), textOf(overlay).slice(0, 140))
-check('面板给出常用目录入口', allByClass(overlay, /sfc-quick/).length === 1)
+check('单击选中条目', allByClass(overlay, /fx-row on/).length === 1, allByClass(overlay, /fx-row on/).length)
+check('状态栏显示已选', textOf(overlay).includes('已选 README.md'), textOf(overlay).slice(-90))
+
+/* 「⧉ 系统窗口」是唯一的弹窗出口 */
+const beforeReveal = reveals.length
+clickByLabel(overlay, '⧉ 系统窗口')
+await new Promise((r) => setTimeout(r, 30))
+check('点「系统窗口」才弹资源管理器', reveals.length === beforeReveal + 1, reveals.length - beforeReveal)
+check('弹的是当前目录', String(reveals[reveals.length - 1]?.path || '').replace(/\\/g, '/') === 'C:/projects/smart-car', JSON.stringify(reveals[reveals.length - 1]))
+overlay = render(overlayComp)
+
+/* 搜索过滤（走 store，不依赖组件内部 state） */
+const qInput = allByClass(overlay, /(^|\s)fx-query(\s|$)/)[0]
+check('面板有过滤输入框', !!qInput)
+qInput.props.onChange({ target: { value: 'main' } })
+overlay = render(overlayComp)
+const filtered = allByClass(overlay, /(^|\s)fx-row(\s|$)/)
+check('搜索只留下匹配项', filtered.length === 1 && textOf(filtered[0]).includes('main.c'), filtered.length + ' 行')
+allByClass(overlay, /(^|\s)fx-query(\s|$)/)[0].props.onChange({ target: { value: '' } })
+overlay = render(overlayComp)
+
+/* 排序：点「大小」表头 */
+clickByLabel(overlay, '大小')
+overlay = render(overlayComp)
+check('点表头切成按大小排序', textOf(overlay).includes('大小 ↓') || textOf(overlay).includes('大小 ↑'), textOf(overlay).slice(0, 100))
 
 /* 编辑器：不再从文件列表点，空态直接填路径 */
 clickByLabel(overlay, '◆ 编辑器')
 overlay = render(overlayComp)
 check('编辑器空态有路径输入与「打开」按钮', allByClass(overlay, /ed-open/).length === 1 && textOf(overlay).includes('打开'), textOf(overlay).slice(0, 100))
+
+/* 回到文件管理器，双击文件 → 直接进编辑器 */
+clickByLabel(overlay, '文件管理器')
+overlay = render(overlayComp)
+const rowForOpen = allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('README.md'))
+rowForOpen.props.onDoubleClick()
+await new Promise((r) => setTimeout(r, 40))
+overlay = render(overlayComp)
+check('双击文件切到编辑器标签页', textOf(overlay).includes('README.md') && allByClass(overlay, /ed-area|editor-body/).length >= 1, textOf(overlay).slice(0, 140))
+check('编辑器正文载入文件内容', JSON.stringify(overlay).includes('固件说明') || textOf(overlay).includes('18 B'), textOf(overlay).slice(0, 120))
 
 /* 打开终端标签页 */
 clickByLabel(overlay, '终端')

@@ -194,6 +194,14 @@ check('fs/mkdir 递归建目录', mk.status === 200 && existsSync(join(tmp, 'sub
 const rn = await call(BASE + '/fs/rename', { from: join(tmp, 'sub'), to: join(tmp, 'sub2') })
 check('fs/rename 200', rn.status === 200 && existsSync(join(tmp, 'sub2')), rn.body.slice(0, 60))
 
+/* 删除：只测「拒绝」分支 —— 真删会往系统回收站丢垃圾，不在自动测试里做 */
+const delMissing = await call(BASE + '/fs/delete', { path: join(tmp, 'not-here') })
+check('fs/delete 不存在 → 404', delMissing.status === 404, delMissing.body.slice(0, 60))
+const delRoot = await call(BASE + '/fs/delete', { path: process.cwd() })
+check('fs/delete 拒绝删除工作区根', delRoot.status === 403 && existsSync(process.cwd()), delRoot.status + ' ' + delRoot.body.slice(0, 70))
+const delRel = await call(BASE + '/fs/delete', { path: 'some/rel' })
+check('fs/delete 拒绝相对路径', delRel.status === 400, delRel.body.slice(0, 60))
+
 const bin = await call(BASE + '/fs/read', { path: join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'notepad.exe') })
 check('fs/read 越界/二进制被拒', bin.status === 403 || bin.status === 415 || bin.status === 404, bin.status + ' ' + bin.body.slice(0, 70))
 

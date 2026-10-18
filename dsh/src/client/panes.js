@@ -8,7 +8,9 @@ import { el, Icon, Light } from './ui.js'
 import {
   store, useStore, STATES, normState, fmtSize, fmtDuration, relTime, shortPath, projEmoji,
   loadTree, openFile, editText, saveFile, termExec, termKill, termClear, loadGit,
-  workspaceDirOf, samePath, revealPath,
+  workspaceDirOf, revealPath,
+  visibleEntries, setFsSort, setFsQuery, selectEntry, fsMkdir, fsRename, fsDelete, fsReveal,
+  joinPath, crumbsOf,
   sessionsOf, primarySession, stateOf, jumpToSession,
   openModal, siteUrlOf, setWebUrl, setCustomHtml, cycleStatus, updateProject, projectOf, toast,
 } from './core.js'
@@ -94,94 +96,227 @@ export function InfoPane({ project }) {
   )
 }
 
-/* ============================ 文件管理器（系统窗口） ============================ */
+/* ============================ 文件管理器（面板内自绘） ============================ */
 
 /**
- * 文件管理器：**不再自己画目录树**，直接交给系统的文件管理器（Windows 资源管理器）。
- * 点「🗂 文件管理器」标签页时 core.openTab / setActiveTab 已经弹过一次；
- * 这里只留路径、常用入口和「再打开一次」的按钮，外加一个任意路径的入口。
+ * 文件管理器。
  *
- * 关键是那个状态行：explorer 有没有被真正拉起来，用户得看得见，不然只会觉得「打不开」。
+ * 为什么自绘：系统资源管理器是要 HWND 的原生窗口，HTML 面板里没有能承载它的句柄，
+ * SetParent 只能盖在整个窗口上、跟不了面板布局。所以列表自己画，但保留
+ * 「⧉ 在系统窗口中显示」这个出口 —— 复制粘贴、拖拽、预览这些原生能力还是它强。
+ *
+ * 交互：单击选中 · 双击进目录 / 开文件（文件进编辑器）· 右键菜单（显示 / 重命名 / 回收站）
+ *      · ＋ 新建文件夹 · 搜索过滤 · 表头点排序 · 删除走系统回收站，不做硬删。
  */
 export function FilesPane({ project }) {
   useStore()
-  const [pathInput, setPathInput] = useState('')
-  const [copied, setCopied] = useState(false)
-
+  const tree = store.tree
+  const view = store.fs
   const rv = store.reveal || {}
   const workDir = workspaceDirOf(project)
   const projDir = String(project.path || '')
-  const homeDir = String(store.defaults.home || '')
-  const primary = primarySession(project)
-  const busy = rv.state === 'loading'
 
-  const open = (dir) => { const t = String(dir || '').trim(); if (t) revealPath(t) }
-  const enter = () => { const p = pathInput.trim(); if (p) { open(p); setPathInput('') } }
+  const [pathInput, setPathInput] = useState('')
+  const [renaming, setRenaming] = useState('')
+  const [renameText, setRenameText] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [menu, setMenu] = useState(null)
 
-  const copy = () => {
-    const target = workDir || projDir
-    if (!target) return
-    try {
-      Promise.resolve(navigator.clipboard?.writeText(target)).then(() => {
-        setCopied(true)
-        setTimeout(() => setCopied(false), 1600)
-      }, () => toast('复制失败', 'warn'))
-    } catch { toast('复制失败', 'warn') }
+  /* 第一次进面板落到对话的工作目录；切项目（树不属于它）也跟着换 */
+  useEffect(() => {
+    if (!workDir) return
+    if (store.tree.pid !== project.id || !store.tree.path) loadTree(workDir, { pid: project.id })
+  }, [workDir, project.id])
+
+  const rows = visibleEntries(tree, view)
+  const dirPath = String(tree.path || '')
+  const busy = tree.state === 'loading'
+
+  const go = (dir) => {
+    const t = String(dir || '').trim()
+    if (!t) return
+    selectEntry('')
+    loadTree(t)
+  }
+  const activate = (row) => {
+    const full = joinPath(dirPath, row.name)
+    if (row.dir) go(full)
+    else openFile(full, project.id)
+  }
+  const jump = () => { const p = pathInput.trim(); if (p) { go(p); setPathInput('') } }
+
+  /* ---------- 面包屑 ---------- */
+  const crumbNodes = []
+  const crumbs = crumbsOf(dirPath)
+  crumbs.forEach((c, i) => {
+    if (i) crumbNodes.push(el('span', { key: 'sep-' + i, className: 'fx-sep', 'aria-hidden': 'true' }, '›'))
+    crumbNodes.push(el('button', {
+      key: c.path, type: 'button', className: 'fx-crumb' + (i === crumbs.length - 1 ? ' on' : ''),
+      title: c.path, onClick: () => go(c.path),
+    }, c.label))
+  })
+
+  /* ---------- 新建 / 重命名（内联输入） ---------- */
+  const startCreate = () => { setCreating(true); setNewName('新建文件夹'); setRenaming('') }
+  const commitCreate = () => {
+    const nm = newName.trim()
+    setCreating(false)
+    if (nm) fsMkdir(dirPath, nm)
+  }
+  const startRename = (row) => { setRenaming(row.name); setRenameText(row.name); setCreating(false); setMenu(null) }
+  const commitRename = () => {
+    const nm = renameText.trim()
+    const from = renaming
+    setRenaming('')
+    if (nm && nm !== from) fsRename(dirPath, from, nm)
   }
 
-  const quick = []
-  if (workDir) quick.push({ key: 'work', label: '对话工作目录', path: workDir })
-  if (projDir && !samePath(projDir, workDir)) quick.push({ key: 'proj', label: '项目目录', path: projDir })
-  if (homeDir && !samePath(homeDir, workDir) && !samePath(homeDir, projDir)) quick.push({ key: 'home', label: '用户目录', path: homeDir })
+  const sortMark = (f) => (view.sort === f ? (view.dir > 0 ? '↑' : '↓') : '')
 
-  return el('div', { className: 'pane-body files-body files-sys' },
-    el('div', { className: 'sfc' },
-      el('div', { className: 'sfc-ico', 'aria-hidden': 'true' }, '📂'),
-      el('h3', { className: 'sfc-title' }, '文件浏览在系统窗口里'),
-      el('p', { className: 'sfc-path mono', title: workDir || projDir }, workDir || projDir || '（没有可打开的目录）'),
-      el('p', { className: 'sfc-hint' }, primary && primary.cwd
-        ? '跟随对话：' + (primary.title || primary.id)
-        : '这个项目还没绑定对话，用项目目录'),
+  const rowKey = (e, ev) => {
+    ev.preventDefault()
+    selectEntry(e.name)
+    setMenu({ name: e.name, dir: e.dir, x: ev.clientX || 0, y: ev.clientY || 0 })
+  }
 
-      el('div', { className: 'sfc-actions' },
-        el('button', {
-          type: 'button', className: 'btn primary', disabled: busy,
-          onClick: () => open(workDir),
-        }, busy ? '正在打开…' : '📂 在系统文件管理器中打开'),
-        el('button', { type: 'button', className: 'btn', onClick: copy }, copied ? '已复制路径' : '复制路径'),
-      ),
+  return el('div', { className: 'pane-body files-body fx-body' },
 
-      quick.length
-        ? el('div', { className: 'sfc-quick' },
-          quick.map((q) => el('button', {
-            key: q.key, type: 'button', className: 'mini-btn', title: q.path,
-            onClick: () => open(q.path),
-          }, '📁 ' + q.label)),
-        )
-        : null,
-
-      el('div', { className: 'sfc-jump' },
-        el('input', {
-          className: 'mono', value: pathInput, autoComplete: 'off',
-          placeholder: '也可以输入任意绝对路径，回车用系统窗口打开…',
-          onChange: (e) => setPathInput(e.target.value),
-          onKeyDown: (e) => { if (e.key === 'Enter') enter() },
-        }),
-      ),
-
-      rv.state === 'ok' || rv.state === 'error'
-        ? el('p', { className: 'sfc-status ' + (rv.state === 'ok' ? 'ok' : 'bad') },
-          el('span', { className: 'sfc-dot ' + rv.state, 'aria-hidden': 'true' }),
-          el('span', null, rv.state === 'ok'
-            ? '上次打开成功 · ' + relTime(rv.at) + (rv.cmd ? ' · ' + rv.cmd : '')
-            : '上次打开失败 · ' + (rv.error || '未知原因')),
-        )
-        : null,
-
-      el('p', { className: 'sfc-note' }, '如果窗口没跳到前面，看一下任务栏 —— 系统资源管理器不会抢焦点。再点一次标签页可以重开。'),
+    /* 工具条：上一级 + 面包屑 + 刷新 + 新建 + 系统窗口 */
+    el('div', { className: 'fx-bar' },
+      el('button', {
+        type: 'button', className: 'fx-nav', title: '上一级',
+        disabled: !tree.parent, onClick: () => go(tree.parent),
+      }, '↑'),
+      el('div', { className: 'fx-crumbs' }, ...crumbNodes),
+      el('button', { type: 'button', className: 'mini-btn', title: '刷新', onClick: () => loadTree(dirPath, { force: true }) },
+        busy ? '…' : '⟳'),
+      el('button', { type: 'button', className: 'mini-btn', title: '新建文件夹', onClick: startCreate }, '＋ 新建'),
+      el('button', { type: 'button', className: 'mini-btn', title: '在系统资源管理器中打开这个目录', onClick: () => revealPath(dirPath) }, '⧉ 系统窗口'),
     ),
+
+    /* 地址栏 + 搜索 */
+    el('div', { className: 'fx-search' },
+      el('input', {
+        className: 'mono fx-path', value: pathInput, autoComplete: 'off',
+        placeholder: dirPath || '输入绝对路径，回车跳转（例：D:\\work\\demo）',
+        onChange: (e) => setPathInput(e.target.value),
+        onKeyDown: (e) => { if (e.key === 'Enter') jump() },
+      }),
+      el('input', {
+        className: 'fx-query', value: view.query, autoComplete: 'off',
+        placeholder: '过滤…',
+        onChange: (e) => setFsQuery(e.target.value),
+      }),
+    ),
+
+    /* 表头 */
+    el('div', { className: 'fx-head' },
+      el('button', { type: 'button', className: 'fx-th name' + (view.sort === 'name' ? ' on' : ''), onClick: () => setFsSort('name') },
+        '名称 ' + sortMark('name')),
+      el('button', { type: 'button', className: 'fx-th size' + (view.sort === 'size' ? ' on' : ''), onClick: () => setFsSort('size') },
+        '大小 ' + sortMark('size')),
+      el('button', { type: 'button', className: 'fx-th time' + (view.sort === 'mtime' ? ' on' : ''), onClick: () => setFsSort('mtime') },
+        '修改 ' + sortMark('mtime')),
+    ),
+
+    /* 列表 */
+    el('div', { className: 'fx-list' },
+      creating
+        ? el('div', { className: 'fx-row editing' },
+          el('span', { className: 'fx-name' },
+            el('span', { className: 'fx-ico', 'aria-hidden': 'true' }, '📁'),
+            el('input', {
+              className: 'fx-edit', value: newName, autoFocus: true,
+              onChange: (e) => setNewName(e.target.value),
+              onKeyDown: (e) => {
+                if (e.key === 'Enter') commitCreate()
+                if (e.key === 'Escape') setCreating(false)
+              },
+              onBlur: commitCreate,
+            }),
+          ),
+          el('span', { className: 'fx-size mono' }, '—'),
+          el('span', { className: 'fx-time mono' }, '新建中'),
+        )
+        : null,
+
+      rows.length
+        ? rows.map((e) => el('div', {
+          key: e.name,
+          className: 'fx-row' + (view.sel === e.name ? ' on' : ''),
+          role: 'button',
+          title: joinPath(dirPath, e.name),
+          onClick: () => selectEntry(e.name),
+          onDoubleClick: () => activate(e),
+          onContextMenu: (ev) => rowKey(e, ev),
+        },
+          el('span', { className: 'fx-name' },
+            el('span', { className: 'fx-ico', 'aria-hidden': 'true' }, e.dir ? '📁' : fileEmoji(e.name)),
+            renaming === e.name
+              ? el('input', {
+                className: 'fx-edit', value: renameText, autoFocus: true,
+                onClick: (ev) => ev.stopPropagation(),
+                onChange: (ev) => setRenameText(ev.target.value),
+                onKeyDown: (ev) => {
+                  ev.stopPropagation()
+                  if (ev.key === 'Enter') commitRename()
+                  if (ev.key === 'Escape') setRenaming('')
+                },
+                onBlur: commitRename,
+              })
+              : el('span', { className: 'fx-label' }, e.name),
+            e.link ? el('small', { className: 'fx-tag' }, '链接') : null,
+          ),
+          el('span', { className: 'fx-size mono' }, e.dir ? '—' : fmtSize(e.size)),
+          el('span', { className: 'fx-time mono' }, e.mtime ? relTime(e.mtime) : '—'),
+        ))
+        : el('div', { className: 'fx-empty' },
+          tree.state === 'error'
+            ? el('p', null, tree.error || '读不了这个目录')
+            : busy
+              ? el('p', null, '读取中…')
+              : el('p', null, view.query ? '没有匹配「' + view.query + '」的条目' : '这个目录是空的'),
+          tree.state === 'error'
+            ? el('button', { type: 'button', className: 'btn small', onClick: () => revealPath(dirPath || projDir) }, '用系统窗口打开')
+            : null,
+        ),
+    ),
+
+    /* 状态栏 */
+    el('div', { className: 'fx-foot' },
+      el('span', null, (view.query ? rows.length + ' / ' + (tree.total || 0) : (tree.total || 0)) + ' 项'),
+      tree.truncated ? el('span', { className: 'fx-warn' }, '只显示前 800 项') : null,
+      view.sel ? el('span', { className: 'fx-sel mono', title: view.sel }, '已选 ' + view.sel) : null,
+      rv.state === 'error'
+        ? el('span', { className: 'fx-warn', title: rv.error }, '上次系统窗口打开失败')
+        : null,
+    ),
+
+    /* 右键菜单 */
+    menu
+      ? el('div', {
+        className: 'fx-mask',
+        onClick: () => setMenu(null),
+        onContextMenu: (ev) => { ev.preventDefault(); setMenu(null) },
+      },
+        el('div', {
+          className: 'fx-menu',
+          style: { left: menu.x + 'px', top: menu.y + 'px' },
+          onClick: (ev) => ev.stopPropagation(),
+        },
+          menu.dir
+            ? el('button', { type: 'button', onClick: () => { const m = menu; setMenu(null); go(joinPath(dirPath, m.name)) } }, '📂 进入目录')
+            : el('button', { type: 'button', onClick: () => { const m = menu; setMenu(null); openFile(joinPath(dirPath, m.name), project.id) } }, '◆ 在编辑器中打开'),
+          el('button', { type: 'button', onClick: () => { const m = menu; setMenu(null); fsReveal(dirPath, m.name) } }, '⧉ 在系统窗口中显示'),
+          el('button', { type: 'button', onClick: () => startRename({ name: menu.name, dir: menu.dir }) }, '✎ 重命名'),
+          el('button', { type: 'button', className: 'danger', onClick: () => { const m = menu; setMenu(null); fsDelete(dirPath, m.name) } }, '🗑 移到回收站'),
+        ),
+      )
+      : null,
   )
 }
+
 
 function fileEmoji(name) {
   if (/\.(md|markdown|txt)$/i.test(name)) return '📄'
@@ -191,13 +326,6 @@ function fileEmoji(name) {
   if (/\.(png|jpg|jpeg|gif|webp|svg|ico)$/i.test(name)) return '🖼️'
   if (/\.(html|htm|css|scss)$/i.test(name)) return '🎨'
   return '·'
-}
-
-function joinPath(base, name) {
-  const b = String(base || '')
-  if (!b) return name
-  const sep = b.includes('\\') ? '\\' : '/'
-  return b.replace(/[\\/]+$/, '') + sep + name
 }
 
 /* ============================ 主区：编辑器 ============================ */

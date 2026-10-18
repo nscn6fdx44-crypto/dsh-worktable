@@ -106,6 +106,36 @@ export function shortPath(p, max = 42) {
   return '…' + s.slice(s.length - max + 1)
 }
 
+/** 拼路径：沿用 base 的分隔符风格（Windows 反斜杠 / POSIX 正斜杠） */
+export function joinPath(base, name) {
+  const b = String(base || '')
+  const n = String(name || '')
+  if (!b) return n
+  const sep = b.includes('\\') ? '\\' : '/'
+  return b.replace(/[\\/]+$/, '') + sep + n
+}
+
+/** 面包屑：把绝对路径切成 [{label, path}]，Windows 盘符单独一节 */
+export function crumbsOf(p) {
+  const s = String(p || '')
+  if (!s) return []
+  const win = /^[a-zA-Z]:/.test(s)
+  const sep = s.includes('\\') ? '\\' : '/'
+  const parts = s.split(/[\\/]+/).filter(Boolean)
+  const out = []
+  let acc = ''
+  if (win) {
+    acc = parts[0] + sep
+    out.push({ label: parts[0].toUpperCase(), path: acc })
+    parts.shift()
+  }
+  for (const seg of parts) {
+    acc = acc ? (acc.endsWith(sep) ? acc + seg : acc + sep + seg) : (s.startsWith(sep) ? sep + seg : seg)
+    out.push({ label: seg, path: acc })
+  }
+  return out
+}
+
 export function relTime(ts) {
   if (!Number.isFinite(ts) || ts <= 0) return ''
   const diff = Date.now() - ts
@@ -172,7 +202,10 @@ export const store = {
   status: {},                   // 手工覆盖态（跟绑定会话冲突时以手工为准）
   defaults: { workspace: '', home: '', shell: '', loaded: false },
   sessions: { state: 'pending', counts: null, rows: [], at: 0, error: '', source: '' },
-  tree: { state: 'idle', root: '', path: '', entries: [], error: '' },
+  /* 文件管理器：一次只列一个目录，path/parent 用于面包屑与「上一级」；pid 记住是哪个项目的树 */
+  tree: { state: 'idle', pid: '', path: '', name: '', parent: '', entries: [], total: 0, truncated: false, error: '', at: 0 },
+  /* 文件管理器的视图偏好（排序 / 过滤 / 选中项），纯前端 */
+  fs: { sort: 'name', dir: 1, query: '', sel: '', busy: '' },
   editor: { state: 'idle', path: '', name: '', text: '', saved: '', error: '', truncated: false, binary: false, size: 0, saving: false },
   terms: {},                    // { [pid]: { id, cwd, busy, lines: [] } }
   git: { state: 'idle', repo: false, branch: '', changes: [], counts: null, error: '', log: [], branches: [] },
@@ -703,11 +736,19 @@ export function openTab(pid, kind, opts = {}) {
   const exists = ui.tabs.some((t) => t.key === key)
   const tabs = exists ? ui.tabs : ui.tabs.concat([{ key, kind, title }])
   patchUi(pid, { tabs, activeTab: key })
-  /* 文件管理器不画列表：打开这个标签页 = 让系统资源管理器弹出该目录 */
-  if (kind === 'files' && pid !== GRID_PID && !opts.silent) {
+  /* 文件管理器在面板里自绘（系统资源管理器嵌不进 HTML），开标签页不再弹系统窗口 */
+  if (kind === 'files' && pid !== GRID_PID) {
     const p = projectOf(pid)
-    if (p) revealPath(workspaceDirOf(p), { quiet: true })
+    const dir = p ? workspaceDirOf(p) : ''
+    if (dir && (store.tree.pid !== pid || !sameTreePath(dir))) loadTree(dir, { pid })
   }
+}
+
+/** 当前树已经在这个目录（含大小写/斜杠差异）就不要再列一次 */
+function sameTreePath(dir) {
+  const norm = (v) => String(v || '').replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase()
+  const cur = norm(store.tree.path)
+  return !!cur && cur === norm(dir)
 }
 
 export function closeTab(pid, key) {
@@ -719,17 +760,8 @@ export function closeTab(pid, key) {
   patchUi(pid, { tabs, activeTab })
 }
 
-/**
- * 切页签。切到「文件管理器」也要重新弹一次系统窗口 ——
- * 标签页本来就已经开着的时候，用户再点它就是「我要再看一眼目录」。
- */
-export function setActiveTab(pid, key, opts = {}) {
+export function setActiveTab(pid, key) {
   patchUi(pid, { activeTab: key })
-  if (opts.silent === true) return
-  const tab = (uiOf(pid).tabs || []).find((t) => t.key === key)
-  if (!tab || tab.kind !== 'files' || pid === GRID_PID) return
-  const p = projectOf(pid)
-  if (p) revealPath(workspaceDirOf(p), { quiet: true })
 }
 
 /* ============================ 文件管理器（交给系统窗口） ============================ */
@@ -768,28 +800,123 @@ export async function revealPath(path, opts = {}) {
 const treeCache = new Map()          // path → { entries, at }
 let treeToken = 0
 
-export async function loadTree(path) {
+/**
+ * 列一个目录。
+ * @param {string} path 绝对路径
+ * @param {{force?:boolean, pid?:string}} opts force = 不吃 4s 缓存（增删改之后必须强制刷新）；
+ *        pid = 记下这棵树属于哪个项目，切项目时据此判断要不要换目录
+ */
+export async function loadTree(path, opts = {}) {
   const target = String(path || '')
   if (!target) return
   const token = ++treeToken
+  const pid = String(opts.pid || store.tree.pid || '')
   const cached = treeCache.get(target)
-  if (cached && Date.now() - cached.at < 4000) {
-    emit({ tree: { state: 'ok', root: target, path: target, entries: cached.entries, error: '' } })
+  if (!opts.force && cached && Date.now() - cached.at < 4000) {
+    emit({ tree: { ...store.tree, ...cached.meta, pid, state: 'ok', error: '' } })
     return
   }
-  emit({ tree: { ...store.tree, state: 'loading', root: target, path: target, error: '' } })
+  emit({ tree: { ...store.tree, state: 'loading', pid, path: target, error: '' } })
   try {
     const data = await apiPost('/fs/list', { path: target }, { timeout: 15_000 })
     if (token !== treeToken) return
     const entries = Array.isArray(data?.entries) ? data.entries : []
-    treeCache.set(target, { entries, at: Date.now() })
-    treeCache.set(data.path, { entries, at: Date.now() })
-    emit({ tree: { state: 'ok', root: data.path || target, path: data.path || target, entries, error: '' } })
+    const meta = {
+      path: data.path || target,
+      name: data.name || baseName(data.path || target),
+      parent: String(data.parent || ''),
+      entries,
+      total: Number(data.total) || entries.length,
+      truncated: !!data.truncated,
+      at: Date.now(),
+    }
+    treeCache.set(target, { meta, at: Date.now() })
+    treeCache.set(meta.path, { meta, at: Date.now() })
+    emit({ tree: { ...meta, pid, state: 'ok', error: '' } })
   } catch (err) {
     if (token !== treeToken) return
-    emit({ tree: { state: 'error', root: target, path: target, entries: [], error: String(err?.message ?? err) } })
+    emit({ tree: { ...store.tree, state: 'error', pid, path: target, entries: [], total: 0, error: String(err?.message ?? err) } })
   }
 }
+
+/* ---------- 文件管理器：视图偏好 ---------- */
+
+export function setFsSort(field) {
+  const f = ['name', 'size', 'mtime'].includes(field) ? field : 'name'
+  if (store.fs.sort === f) return emit({ fs: { ...store.fs, dir: -store.fs.dir } })
+  emit({ fs: { ...store.fs, sort: f, dir: f === 'name' ? 1 : -1 } })
+}
+
+export function setFsQuery(q) {
+  emit({ fs: { ...store.fs, query: String(q || '') } })
+}
+
+export function selectEntry(name) {
+  emit({ fs: { ...store.fs, sel: String(name || '') } })
+}
+
+/**
+ * 面板里显示的行：按 fs.sort / fs.dir 排序，按 fs.query 过滤。
+ * 目录永远在前（这是文件管理器的常识，不跟排序字段混）。
+ */
+export function visibleEntries(tree = store.tree, fs = store.fs) {
+  const q = String(fs.query || '').trim().toLowerCase()
+  const rows = (tree.entries || []).filter((e) => (q ? String(e.name).toLowerCase().includes(q) : true))
+  const k = fs.sort
+  const sign = fs.dir < 0 ? -1 : 1
+  return rows.sort((a, b) => {
+    if (a.dir !== b.dir) return a.dir ? -1 : 1
+    if (k === 'size') return ((a.size || 0) - (b.size || 0)) * sign
+    if (k === 'mtime') return ((a.mtime || 0) - (b.mtime || 0)) * sign
+    return String(a.name).localeCompare(String(b.name), 'zh-Hans-CN') * sign
+  })
+}
+
+/* ---------- 文件管理器：写操作（一律 force 刷新目录） ---------- */
+
+async function fsWrite(path, body, okText) {
+  try {
+    await apiPost(path, body, { timeout: 20_000 })
+    if (okText) toast(okText, 'ok')
+    return true
+  } catch (err) {
+    toast('操作失败：' + String(err?.message ?? err), 'warn')
+    return false
+  }
+}
+
+export async function fsMkdir(dir, name) {
+  const clean = String(name || '').trim()
+  if (!clean) { toast('名字不能为空', 'warn'); return false }
+  if (/[\\/:*?"<>|]/.test(clean)) { toast('名字里不能有 \\ / : * ? " < > |', 'warn'); return false }
+  const target = joinPath(dir, clean)
+  const ok = await fsWrite('/fs/mkdir', { path: target }, '已新建文件夹 ' + clean)
+  if (ok) { emit({ fs: { ...store.fs, sel: clean } }); loadTree(dir, { force: true }) }
+  return ok
+}
+
+export async function fsRename(dir, from, to) {
+  const clean = String(to || '').trim()
+  if (!clean || clean === from) return false
+  if (/[\\/:*?"<>|]/.test(clean)) { toast('名字里不能有 \\ / : * ? " < > |', 'warn'); return false }
+  const ok = await fsWrite('/fs/rename', { from: joinPath(dir, from), to: joinPath(dir, clean) }, '已重命名为 ' + clean)
+  if (ok) { emit({ fs: { ...store.fs, sel: clean } }); loadTree(dir, { force: true }) }
+  return ok
+}
+
+export async function fsDelete(dir, name) {
+  const target = joinPath(dir, name)
+  const ok = await fsWrite('/fs/delete', { path: target }, '已移入回收站：' + name)
+  if (ok) { emit({ fs: { ...store.fs, sel: '' } }); loadTree(dir, { force: true }) }
+  return ok
+}
+
+/** 在系统窗口里选中这一项（文件管理器仍然是「系统那个」更好用时留的出口） */
+export function fsReveal(dir, name) {
+  const target = name ? joinPath(dir, name) : dir
+  return revealPath(target, { select: !!name })
+}
+
 
 /* ============================ 编辑器 ============================ */
 
