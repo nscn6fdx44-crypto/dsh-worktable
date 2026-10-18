@@ -6,6 +6,7 @@
  *   所有 host 调用都走 apiGet / apiPost，统一超时、错误形状与竞态令牌。
  */
 import { useState, useEffect } from 'react'
+import { viewKindOf, isMediaKind, hasPreview } from './render.js'
 
 export const API = '/api/trae-worktable'
 export const VERSION = typeof __WT_VERSION__ === 'undefined' ? 'dev' : __WT_VERSION__
@@ -210,6 +211,9 @@ export const store = {
     state: 'idle', path: '', name: '', text: '', saved: '', error: '', truncated: false,
     /* partial = 只读了文件的一段（大文件只读预览）；这种状态**禁止保存**，否则会把文件截断写回 */
     partial: false, tail: false, binary: false, errorCode: 0, size: 0, limit: 0, previewBytes: 0, saving: false,
+    /* kind 决定正文怎么画（markdown / code / image / pdf / video / audio / text）；
+       view 是用户的看法（preview 渲染 / edit 原文），媒体类没有 preview/edit 之分 */
+    kind: 'text', view: 'edit', mediaUrl: '',
   },
   terms: {},                    // { [pid]: { id, cwd, busy, lines: [] } }
   git: { state: 'idle', repo: false, branch: '', changes: [], counts: null, error: '', log: [], branches: [] },
@@ -1004,23 +1008,54 @@ export async function openExternal(path, opts = {}) {
 
 let fileToken = 0
 
+/** 媒体文件的原始字节地址（<img src> / <iframe src> 只能 GET，走不了 apiPost） */
+export function rawUrl(p) {
+  return API + '/fs/raw?path=' + encodeURIComponent(String(p || ''))
+}
+
 /**
  * 打开文件。
  * @param {string} path
  * @param {string} [pid] 项目 id（有就把编辑器标签页切过去）
- * @param {{mode?:'auto'|'head'|'tail'|'full', bytes?:number}} [opts]
+ * @param {{mode?:'auto'|'head'|'tail'|'full', bytes?:number, forceText?:boolean}} [opts]
  *   auto（默认）＝小的整份读、大的自动降级成只读预览；
  *   head / tail ＝ 明确只看开头 / 结尾（大日志就用这个）；
  *   full ＝ 我就要整份，超上限就报 413。
+ *   forceText ＝ 就算图片 / PDF 也当文本读（排查「为什么预览不出来」时用）。
  */
 export async function openFile(path, pid, opts = {}) {
   const target = String(path || '')
   if (!target) return
+  const name = baseName(target)
+  const kind = viewKindOf(name)
+
+  /* 图片 / PDF / 音视频：文本通道只会得到 415，直接交给浏览器渲染 */
+  if (isMediaKind(kind) && !opts.forceText) {
+    const token = ++fileToken
+    emit({
+      editor: {
+        ...store.editor,
+        state: 'ok', path: target, name, kind, view: 'preview',
+        text: '', saved: '', error: '', errorCode: 0, binary: false,
+        partial: false, truncated: false, tail: false, size: 0,
+        mediaUrl: rawUrl(target),
+      },
+    })
+    if (pid) openTab(pid, 'editor')
+    setEditorTabTitle(pid, name)
+    /* 体积另问一次（拿不到就算了，不挡预览） */
+    apiPost('/fs/stat', { path: target }, { timeout: 8000 }).then((d) => {
+      if (token !== fileToken) return
+      emit({ editor: { ...store.editor, size: Number(d?.size) || 0 } })
+    }).catch(() => {})
+    return
+  }
+
   const token = ++fileToken
   emit({
     editor: {
-      ...store.editor, state: 'loading', path: target, name: baseName(target),
-      error: '', errorCode: 0, binary: false, partial: false,
+      ...store.editor, state: 'loading', path: target, name, kind,
+      error: '', errorCode: 0, binary: false, partial: false, mediaUrl: '',
     },
   })
   if (pid) openTab(pid, 'editor')
@@ -1030,18 +1065,25 @@ export async function openFile(path, pid, opts = {}) {
     if (opts.bytes) body.bytes = opts.bytes
     const data = await apiPost('/fs/read', body, { timeout: 30_000 })
     if (token !== fileToken) return
+    const partial = !!data.partial
+    const truncated = !!data.truncated
     emit({
       editor: {
         state: 'ok',
         path: data.path || target,
-        name: data.name || baseName(target),
+        name: data.name || name,
+        kind,
+        /* 只看到片段时不进渲染预览：拿半截 Markdown 渲染出来只会误导，
+           这时候让用户直接看原文（只读），跟「只读 · 开头/结尾」的语义一致。 */
+        view: (partial || truncated || !hasPreview(kind)) ? 'edit' : 'preview',
         text: String(data.text ?? ''),
         saved: String(data.text ?? ''),
         error: '',
         errorCode: 0,
+        mediaUrl: '',
         /* partial 与 truncated 都意味着「你看到的不是完整文件」→ 一律只读 */
-        partial: !!data.partial,
-        truncated: !!data.truncated,
+        partial,
+        truncated,
         tail: data.mode === 'tail',
         binary: !!data.binary,
         size: Number(data.size) || 0,
@@ -1049,11 +1091,7 @@ export async function openFile(path, pid, opts = {}) {
         previewBytes: Number(data.previewBytes) || 0,
       },
     })
-    if (pid) {
-      const ui = uiOf(pid)
-      const tabs = ui.tabs.map((t) => (t.kind === 'editor' ? { ...t, title: data.name || baseName(target) } : t))
-      patchUi(pid, { tabs })
-    }
+    setEditorTabTitle(pid, data.name || name)
   } catch (err) {
     if (token !== fileToken) return
     const info = err?.data || {}
@@ -1062,7 +1100,9 @@ export async function openFile(path, pid, opts = {}) {
         ...store.editor,
         state: 'error',
         path: target,
-        name: baseName(target),
+        name,
+        kind,
+        view: 'edit',
         error: String(err?.message ?? err),
         errorCode: Number(err?.status) || 0,
         size: Number(info.size) || 0,
@@ -1074,6 +1114,20 @@ export async function openFile(path, pid, opts = {}) {
   }
 }
 
+function setEditorTabTitle(pid, title) {
+  if (!pid || !title) return
+  const ui = uiOf(pid)
+  const tabs = ui.tabs.map((t) => (t.kind === 'editor' ? { ...t, title } : t))
+  patchUi(pid, { tabs })
+}
+
+/** 切「预览 / 编辑」（Markdown 与代码才有意义） */
+export function setEditorView(view) {
+  const v = view === 'preview' ? 'preview' : 'edit'
+  if (store.editor.view === v) return
+  emit({ editor: { ...store.editor, view: v } })
+}
+
 export function editText(text) {
   emit({ editor: { ...store.editor, text: String(text ?? '') } })
 }
@@ -1081,6 +1135,10 @@ export function editText(text) {
 export async function saveFile() {
   const ed = store.editor
   if (!ed.path || ed.state !== 'ok') return
+  if (isMediaKind(ed.kind)) {
+    toast('图片 / PDF / 音视频没有可写的文本内容', 'info')
+    return
+  }
   /* 只读预览绝不能写回：写回去就是「用一个片段覆盖整个文件」，等于把文件毁了 */
   if (ed.partial || ed.truncated) {
     toast('这是只读预览（文件太大，只读了一段），不能在编辑器里保存', 'warn')

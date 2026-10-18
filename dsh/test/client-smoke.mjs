@@ -56,10 +56,14 @@ const fakeTree = {
     { name: 'src', dir: true, size: 0, mtime: NOW },
     { name: 'README.md', dir: false, size: 128, mtime: NOW },
     { name: 'main.c', dir: false, size: 2048, mtime: NOW },
+    { name: 'app.js', dir: false, size: 512, mtime: NOW },
+    { name: 'shot.png', dir: false, size: 4096, mtime: NOW },
+    { name: 'manual.pdf', dir: false, size: 8192, mtime: NOW },
   ],
-  total: 3, truncated: false,
+  total: 6, truncated: false,
 }
 const fakeFile = { path: 'C:\\projects\\smart-car\\README.md', name: 'README.md', size: 18, text: '# smart car\n固件说明\n', truncated: false }
+const fakeJs = { path: 'C:\\projects\\smart-car\\app.js', name: 'app.js', size: 62, text: 'const a = 1\n// 注释\nfunction go() { return "x" }\n', truncated: false }
 const fakeGit = { ok: true, repo: true, branch: 'main', changes: [{ code: ' M', file: 'main.c' }], counts: { staged: 0, unstaged: 1, untracked: 0, total: 1 } }
 const fakeGitLog = { ok: true, commits: [{ hash: 'a1b2c3d', date: '2026-10-01', subject: '整理构建脚本', author: 'demo' }] }
 const fakeGitBranches = { ok: true, branches: ['main'] }
@@ -71,6 +75,7 @@ const reveals = []
 const deletes = []
 const opens = []
 const writes = []
+const reads = []
 /* 'big' 时把 /fs/read 变成「8 MB 大文件」：不带 mode → 413，带 mode → 只读预览 */
 let readCase = ''
 globalThis.fetch = async (url, opts) => {
@@ -91,6 +96,14 @@ globalThis.fetch = async (url, opts) => {
   }
   if (u.endsWith('/fs/write')) {
     try { writes.push(JSON.parse(String(opts?.body || '{}'))) } catch { /* ignore */ }
+  }
+  let readPath = ''
+  if (u.endsWith('/fs/read')) {
+    try { readPath = String(JSON.parse(String(opts?.body || '{}')).path || '') } catch { readPath = '' }
+    reads.push(readPath)
+  }
+  if (u.endsWith('/fs/read') && readPath.endsWith('app.js')) {
+    return { ok: true, status: 200, json: async () => fakeJs, text: async () => JSON.stringify(fakeJs) }
   }
   if (u.endsWith('/fs/read') && readCase === 'big') {
     let req = {}
@@ -394,7 +407,7 @@ check('打开文件管理器不再弹系统窗口', reveals.length === 0, JSON.s
 check('面板画出目录条目', textOf(overlay).includes('README.md') && textOf(overlay).includes('main.c'), textOf(overlay).slice(0, 140))
 check('面板有面包屑 + 三列表头', allByClass(overlay, /(^|\s)fx-crumbs(\s|$)/).length === 1 && allByClass(overlay, /(^|\s)fx-th(\s|$)/).length === 3,
   allByClass(overlay, /(^|\s)fx-th(\s|$)/).length)
-check('面板显示条目数与大小列', textOf(overlay).includes('3 项') && textOf(overlay).includes('2.0 KB'), textOf(overlay).slice(0, 160))
+check('面板显示条目数与大小列', textOf(overlay).includes('6 项') && textOf(overlay).includes('2.0 KB'), textOf(overlay).slice(0, 160))
 
 /* 单击选中 */
 const fileRow = allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('README.md'))
@@ -506,6 +519,63 @@ await new Promise((r) => setTimeout(r, 20))
 check('只读预览点了保存也不写盘（不会把文件截断写回）', writes.length === writesBefore, writes.length - writesBefore)
 readCase = ''
 overlay = render(overlayComp)
+
+/* ---------- 渲染层：Markdown 预览 / 代码高亮 / 图片与 PDF 内嵌 ---------- */
+
+/* 重新正常打开 README.md（上一段把它留在了「只读预览」态） */
+clickByLabel(overlay, '文件管理器')
+overlay = render(overlayComp)
+allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('README.md')).props.onDoubleClick()
+await new Promise((r) => setTimeout(r, 40))
+overlay = render(overlayComp)
+
+const mdNode = allByClass(overlay, /ed-preview ed-md/)[0]
+const mdHtml = mdNode ? String(mdNode.props.dangerouslySetInnerHTML?.__html || '') : ''
+check('Markdown 文件默认进渲染预览', !!mdNode, allByClass(overlay, /ed-preview/).length)
+check('Markdown 标题渲染成 <h1>', /<h1[^>]*>smart car<\/h1>/.test(mdHtml), mdHtml.slice(0, 80))
+check('渲染预览态没有原文 textarea', allByClass(overlay, /ed-area/).length === 0)
+check('有「预览 / 编辑」切换', textOf(overlay).includes('预览') && textOf(overlay).includes('编辑'), textOf(overlay).slice(0, 90))
+check('标签栏标出文件类型', textOf(overlay).includes('Markdown'), textOf(overlay).slice(0, 90))
+
+clickByLabel(overlay, '编辑')
+overlay = render(overlayComp)
+const editArea = allByClass(overlay, /ed-area/)[0]
+check('切到「编辑」后回到原文 textarea', !!editArea && String(editArea.props.value).includes('smart car'), editArea && String(editArea.props.value).slice(0, 30))
+check('编辑态 textarea 可写（不是只读预览）', !!editArea && editArea.props.readOnly === false)
+
+/* 代码文件：默认高亮只读 */
+clickByLabel(overlay, '文件管理器')
+overlay = render(overlayComp)
+allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('app.js')).props.onDoubleClick()
+await new Promise((r) => setTimeout(r, 40))
+overlay = render(overlayComp)
+const hlCode = allByClass(overlay, /ed-pre/)[0]
+const hlHtml = hlCode ? String(collect(hlCode).find((n) => n.props && n.props.dangerouslySetInnerHTML)?.props.dangerouslySetInnerHTML.__html || '') : ''
+check('js 文件走语法高亮', !!hlCode && /hl-k/.test(hlHtml), hlHtml.slice(0, 90))
+check('关键字标成 hl-k', /class="hl-k">const</.test(hlHtml), hlHtml.slice(0, 90))
+check('注释与字符串也上色', /class="hl-c"/.test(hlHtml) && /class="hl-s"/.test(hlHtml), hlHtml.slice(0, 120))
+
+/* 图片 / PDF：不读文本，直接内嵌 */
+const readsBeforeImg = reads.length
+clickByLabel(overlay, '文件管理器')
+overlay = render(overlayComp)
+allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('shot.png')).props.onDoubleClick()
+await new Promise((r) => setTimeout(r, 40))
+overlay = render(overlayComp)
+const imgNode = allByClass(overlay, /ed-media-img/)[0]
+check('图片文件内嵌成 <img>', !!imgNode, allByClass(overlay, /ed-media/).length)
+check('图片 src 指向 /fs/raw', !!imgNode && /\/fs\/raw\?path=/.test(String(imgNode.props.src)) && String(imgNode.props.src).includes('shot.png'), imgNode && imgNode.props.src)
+check('图片不再走 /fs/read（不走文本通道）', reads.length === readsBeforeImg, reads.length - readsBeforeImg)
+check('媒体态没有保存按钮', !collect(overlay).some((n) => n.props && typeof n.props.onClick === 'function' && textOf(n).trim() === '保存'))
+
+clickByLabel(overlay, '文件管理器')
+overlay = render(overlayComp)
+allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('manual.pdf')).props.onDoubleClick()
+await new Promise((r) => setTimeout(r, 40))
+overlay = render(overlayComp)
+const pdfFrame = allByClass(overlay, /ed-media-frame/)[0]
+check('PDF 内嵌成 iframe', !!pdfFrame && /manual\.pdf/.test(String(pdfFrame.props.src)), pdfFrame && pdfFrame.props.src)
+check('PDF 也给了系统程序出口', textOf(overlay).includes('用系统程序打开'), textOf(overlay).slice(0, 90))
 
 /* 打开终端标签页 */
 clickByLabel(overlay, '终端')
@@ -621,6 +691,77 @@ check('小窗不再有工作区模式字段', allByClass(overlay, /layout-card/)
 check('绑定下拉可选「新建对话」', modalText.includes('新建对话'), modalText.slice(0, 120))
 check('小窗有绑定对话下拉', allByClass(overlay, /wt-select/).length === 1)
 check('小窗提示只写 localStorage', modalText.includes('localStorage'))
+
+/* ---------- 渲染层单元测试（直接测源码里的纯函数） ---------- */
+{
+  const R = await import('../src/client/render.js')
+
+  check('viewKindOf 认得 md / 代码 / 图片 / pdf', R.viewKindOf('a.md') === 'markdown' && R.viewKindOf('a.ts') === 'code'
+    && R.viewKindOf('a.PNG') === 'image' && R.viewKindOf('a.pdf') === 'pdf' && R.viewKindOf('a.txt') === 'text',
+  [R.viewKindOf('a.md'), R.viewKindOf('a.ts'), R.viewKindOf('a.PNG'), R.viewKindOf('a.pdf')].join(','))
+  check('hasPreview 只给 md 与代码', R.hasPreview('markdown') && R.hasPreview('code') && !R.hasPreview('text'))
+  check('isMediaKind 覆盖四类媒体', R.isMediaKind('image') && R.isMediaKind('pdf') && R.isMediaKind('video') && R.isMediaKind('audio') && !R.isMediaKind('code'))
+
+  const md = R.renderMarkdown([
+    '# 标题',
+    '',
+    '第一段 **粗** *斜* `code` ~~删~~',
+    '',
+    '- 甲',
+    '- 乙',
+    '',
+    '> 引用一行',
+    '',
+    '```js',
+    'const x = 1 // 注释',
+    '```',
+    '',
+    '| A | B |',
+    '| --- | --- |',
+    '| 1 | 2 |',
+    '',
+    '---',
+    '',
+    '[外链](https://example.com) [内链](./docs/a.md)',
+  ].join('\n'))
+
+  check('md: 标题', /<h1[^>]*>标题<\/h1>/.test(md), md.slice(0, 60))
+  check('md: 粗体 / 斜体 / 行内代码 / 删除线', /<b>粗<\/b>/.test(md) && /<i>斜<\/i>/.test(md)
+    && /ed-md-code-inline">code</.test(md) && /<del>删<\/del>/.test(md), md.slice(0, 160))
+  check('md: 无序列表', /<ul class="ed-md-list"><li>甲<\/li><li>乙<\/li><\/ul>/.test(md), md.slice(0, 200))
+  check('md: 引用块', /<blockquote class="ed-md-quote">/.test(md))
+  check('md: 围栏代码带语言高亮', /ed-md-pre"><code><span class="hl-k">const<\/span>/.test(md), md.slice(md.indexOf('ed-md-pre'), md.indexOf('ed-md-pre') + 90))
+  check('md: 表格转成 th/td', /<th>A<\/th>/.test(md) && /<td>2<\/td>/.test(md))
+  check('md: 分隔线', /<hr class="ed-md-hr">/.test(md))
+  check('md: 外链开新窗口', /<a class="ed-md-a" href="https:\/\/example\.com" target="_blank"/.test(md))
+  check('md: 内链不生成可导航 href', !/href="\.\/docs/.test(md) && /ed-md-inner/.test(md), md.slice(-120))
+
+  const evil = R.renderMarkdown('<script>alert(1)</script>\n\n[x](javascript:alert(1))\n\n![i](javascript:alert(1))')
+  check('md: 原始 HTML 被转义（不执行）', !evil.includes('<script>') && evil.includes('&lt;script&gt;'), evil.slice(0, 90))
+  check('md: javascript: 链接被丢掉', !/href="javascript/.test(evil), evil.slice(0, 120))
+  check('md: javascript: 图片被丢掉', !/<img/.test(evil), evil.slice(0, 120))
+
+  const withImg = R.renderMarkdown('![图](img/a.png)', { dir: 'C:\\proj\\docs', imageUrl: (p) => 'RAW:' + p })
+  check('md: 相对图片按文件目录解析', withImg.includes('RAW:C:\\proj\\docs\\img\\a.png'), withImg)
+  const upImg = R.renderMarkdown('![图](../up.png)', { dir: 'C:\\proj\\docs', imageUrl: (p) => 'RAW:' + p })
+  check('md: ../ 能回退一级', upImg.includes('RAW:C:\\proj\\up.png'), upImg)
+  const extImg = R.renderMarkdown('![图](https://cdn.x/a.png)', { dir: 'C:\\proj', imageUrl: () => 'RAW' })
+  check('md: 外链图片原样保留', extImg.includes('src="https://cdn.x/a.png"'), extImg)
+
+  const hl = R.highlightCode('const a = "s" // c\n/* b */\nfoo(1, 0xFF)', 'js')
+  check('hl: 关键字 / 字符串 / 注释 / 数字', /hl-k">const</.test(hl) && /hl-s">&quot;s&quot;</.test(hl)
+    && /hl-c">\/\/ c</.test(hl) && /hl-c">\/\* b \*\/</.test(hl) && /hl-n">0xFF</.test(hl), hl.slice(0, 120))
+  check('hl: 函数调用识别', /hl-f">foo</.test(hl), hl.slice(-60))
+  check('hl: 代码里的 HTML 被转义', !R.highlightCode('<div onclick="x">', 'js').includes('<div'), R.highlightCode('<div>', 'js'))
+  const cssHl = R.highlightCode('.a { color: #fff; margin: 4px }', 'css')
+  check('hl: css 属性名与数值', /hl-p">color</.test(cssHl) && /hl-n">#fff</.test(cssHl), cssHl)
+  const htmlHl = R.highlightCode('<p class="x">hi</p>', 'html')
+  check('hl: html 标签与属性', /hl-t">p</.test(htmlHl) && /hl-a">class</.test(htmlHl), htmlHl)
+  check('hl: 未知语言退化为纯转义', R.highlightCode('a<b', '') === 'a&lt;b')
+
+  check('joinFs 处理盘符与 ../', R.joinFs('C:\\a\\b', '../c/d.txt') === 'C:\\a\\c\\d.txt', R.joinFs('C:\\a\\b', '../c/d.txt'))
+  check('joinFs 处理 POSIX 根', R.joinFs('/a/b', '../c') === '/a/c', R.joinFs('/a/b', '../c'))
+}
 
 const failed = results.filter((r) => !r)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)

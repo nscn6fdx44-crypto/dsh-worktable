@@ -1,11 +1,11 @@
-# trae-usage-worktable（DSH 插件 · 0.8.7）
+# trae-usage-worktable（DSH 插件 · 0.8.8）
 
 > DeepSeek Harness 侧边栏的完整工作台。本目录是 `nscn6fdx44-crypto/trae-usage`
 > 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的**独立实现**：
 > 同款 Cordis 双 bundle 协议、同款交互模型，代码自己写、路由前缀自带
 > （`/api/trae-worktable/*`），不与上游抢路径。
 
-## 能力（0.8.7）
+## 能力（0.8.8）
 
 | 半侧 | 文件 | 内容 |
 |---|---|---|
@@ -102,9 +102,20 @@
     每次调用追加一行到 `~/.dsh/worktable-reveal.log`；
   - **编辑器**：读文件、改、`Ctrl+S` 保存回磁盘（原子写：临时文件 + rename）；
     空态可以直接填文件绝对路径打开；在文件管理器里双击文件也会落到这里；
+    - **按类型分流渲染**（0.8.8 起，借鉴上游 dsh-worktable 的 `FileViewer`）：
+      `.md` 默认渲染成文档（标题 / 列表 / 引用 / 表格 / 围栏代码 / 图片 / 外链），
+      代码文件默认语法高亮（js·ts·json / css·scss / html·vue·svg 三套 tokenizer），
+      两者顶栏都有 `预览 ↔ 编辑` 切换；图片 / PDF / 音视频直接内嵌（`<img>` / `<iframe>` / `<video>`）；
+      纯文本仍然只有编辑态。渲染器是**自己写的零依赖实现**（`src/client/render.js`，
+      不引 markdown-it / highlight.js —— 那两个库会让 bundle 涨 1 MB）；
+      所有文件内容先 escape 再拼标签，原始 HTML 不会被执行，相对链接降级成纯文本不导航；
+    - **新增 `GET /fs/raw`**：媒体文件的原始字节（`<img src>` 之类只能 GET 不能 POST），
+      只放行图片 / PDF / 音视频扩展名（其它类型 415 `not-media`），上限 48 MB，
+      响应带 `content-disposition: inline` + `nosniff`；读权限与 `/fs/list` 同一档；
     - **大文件不再是一堵墙**（0.8.7 起）：`auto` 模式下 >4 MB 的文件**自动降级成只读预览**
       （默认开头 256 KB，可切「看结尾」），顶栏标 `只读 · 开头/结尾`，底部提示条说明
       「你看到的不是完整文件」，并给三条出路：看开头 / 看结尾 / `🚀 用系统程序打开`；
+      **只读片段不进渲染预览**——半截 Markdown 渲染出来只会误导，一律显示原文；
     - **只读预览禁止保存**：`partial / truncated` 状态下 `Ctrl+S` 与保存按钮都拦下来
       ——否则就是把一个片段写回整个文件、把文件毁掉（这是原来真实存在的数据丢失口子）；
     - 显式请求整份（`mode:'full'`）且超限时返回 413 + `code:'too-large'` + `size/limit`，
@@ -144,6 +155,7 @@
 | POST | `/fs/mkdir` | `{ path }` → 递归建目录 |
 | POST | `/fs/rename` | `{ from, to }` → 移动 / 改名，目标已存在则 409 |
 | POST | `/fs/stat` | `{ path }` → `{ dir, size, mtime }` |
+| GET | `/fs/raw?path=` | 媒体原始字节（图片 / PDF / 音视频，上限 48 MB）；其它类型 415 `not-media`，`inline` + `nosniff` |
 | POST | `/term/exec` | `{ id, cmd, cwd }` → `application/x-ndjson` 流：`{t:'out'|'err'|'sys'|'cwd'|'clear'|'end'}` |
 | POST | `/term/kill` | `{ id }` → 终止当前命令 |
 | POST | `/git` | `{ path, op:'status'|'log'|'branches' }` → **只读**，`status` 解析 `-z` porcelain |
@@ -206,11 +218,12 @@ dsh/
 │       ├── hostdock.js # 宿主让位：会话区右推 + 让位几何（computeDock 纯函数）
 │       ├── overlay.js  # 总览 / 工作区（共用同一套让位外壳）
 │       ├── panes.js    # 项目信息 / 文件管理器 / 编辑器 / 终端 / 浏览器 / 自定义
+│       ├── render.js   # 零依赖渲染层：Markdown → HTML、代码高亮、类型判定
 │       ├── modals.js   # 新建 / 编辑 / 绑定
 │       └── theme.css   # 全套样式（收在 .wt-scope 下）
 ├── test/
-│   ├── host-routes.mjs # 85 项：路由 / 沙箱 / 文件（含大文件预览与 tail） / reveal / open / git / 托管 / 终端 / 四态判定
-│   └── client-smoke.mjs# 143 项：座位 / 侧边栏四态（含改状态后重算）/ 菜单 / 让位换算 / 文件管理器 / 大文件只读预览 / 标签页
+│   ├── host-routes.mjs # 94 项：路由 / 沙箱 / 文件（大文件预览 / tail / fs-raw） / reveal / open / git / 托管 / 终端 / 四态判定
+│   └── client-smoke.mjs# 185 项：座位 / 侧边栏四态 / 菜单 / 让位换算 / 文件管理器 / 大文件只读预览 / 渲染层（md·高亮·媒体）/ 标签页
 └── lib/                # 构建产物（安装前必须 build）
 ```
 
@@ -288,11 +301,13 @@ npm run build && npm pack
 
 ## 与上游的差异（有意为之）
 
-| 项 | 上游 0.4.0 | 本插件 0.8.7 |
+| 项 | 上游 0.4.0 | 本插件 0.8.8 |
 |---|---|---|
 | 右侧对话 | 宿主会话视图让位（margin + CSS 变量），可真实输入 | 给宿主中心列写 `marginLeft` 让位，右侧就是原生会话（真能输入） |
 | 终端 | node-pty + WebSocket，真 PTY | 每命令一进程 + NDJSON 流，无原生依赖 |
 | 文件安全 | 任意绝对路径 | 根白名单 + realpath + 凭证目录拒绝 |
+| 文件管理 | 单栏递归树，无删除 / 重命名 / 元信息 | 目录一屏 + 面包屑 + 排序 + 搜索 + 回收站删除 + 系统窗口 |
+| 文件预览 | markdown-it + highlight.js + pdf/img（1.4 MB bundle） | 自写零依赖渲染器（十几 KB）：md / 高亮 / pdf / 图片 / 音视频，语义近似 |
 | 窗口模型 | 窗格内多标签、跨格拖拽、自由浮动层 | 单工作区多标签页（无左栏），工作台固定铺满让位区（无浮动窗口）；对话栏用宿主原生会话区 |
 | 路由前缀 | `/api/worktable` | `/api/trae-worktable`（不抢注） |
 

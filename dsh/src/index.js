@@ -10,6 +10,7 @@
  *   只读宿主状态   GET  /health      GET /sessions      GET /defaults      POST /transcript
  *   文件系统       POST /fs/list     POST /fs/read      POST /fs/write
  *                  POST /fs/mkdir    POST /fs/rename    POST /fs/stat
+ *                  GET  /fs/raw（图片 / PDF / 音视频原始字节，内嵌预览用）
  *                  POST /fs/reveal（系统文件管理器）      POST /fs/open（系统默认程序）
  *   命令           POST /term/exec（NDJSON 流）          POST /term/kill
  *   版本控制       POST /git（只读：status / log / branches）
@@ -48,6 +49,8 @@ const MAX_FILE_BYTES = 4 * 1024 * 1024
 /* 超过上限时只读预览的窗口大小（前 N 字节 / 后 N 字节） */
 const MAX_PREVIEW_BYTES = 256 * 1024
 const MAX_WRITE_BYTES = 4 * 1024 * 1024
+/* 内嵌预览（图片 / PDF / 音视频）走原始字节，比文本宽松：只要浏览器吞得下就让它看 */
+const MAX_RAW_BYTES = 48 * 1024 * 1024
 const MAX_PREVIEW_CHARS = 400_000
 const MAX_SESSIONS = 200
 const MAX_EVENT_SCAN = 400
@@ -58,6 +61,15 @@ const GIT_TIMEOUT_MS = 10_000
 
 /* 凭证目录：即便在 home 内也不允许读写 */
 const DENY_SEGMENTS = new Set(['.ssh', '.aws', '.gnupg', '.kube', '.dsh', '.netrc', '.git-credentials', '.password-store'])
+
+/* /fs/raw 放行的媒体类型：这些东西在编辑器里永远是「二进制」，只能让浏览器自己渲染 */
+const MEDIA_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.avif', '.svg',
+  '.pdf',
+  '.mp4', '.webm', '.ogv', '.mov',
+  '.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac',
+])
+
 
 /* 已注册的项目根：/site 托管与文件读写白名单都靠它 */
 const PROJECT_ROOTS = new Map()
@@ -96,7 +108,7 @@ export function apply(ctx) {
           sessions: !!service(ctx, 'sessions'),
           sessionQuery: !!service(ctx, 'sessionQuery'),
         },
-        limits: { fileBytes: MAX_FILE_BYTES, dirEntries: MAX_DIR_ENTRIES, termOutput: MAX_TERM_OUTPUT },
+        limits: { fileBytes: MAX_FILE_BYTES, dirEntries: MAX_DIR_ENTRIES, termOutput: MAX_TERM_OUTPUT, rawBytes: MAX_RAW_BYTES },
       })
     },
   })
@@ -318,6 +330,39 @@ export function apply(ctx) {
     const target = await assertExisting(body?.path, 'any')
     const st = statSync(target)
     sendJson(res, 200, { path: target, dir: st.isDirectory(), size: st.size, mtime: st.mtimeMs })
+  })})
+
+  /* 原始字节：图片 / PDF / 音视频的内嵌预览（<img src> 与 <iframe src> 只能 GET）。
+     只放行 MEDIA_EXTS，不给它当「通用下载通道」；读权限与 /fs/list 同档（不设白名单、挡凭证目录）。 */
+  register({ kind: 'exact', path: BASE + '/fs/raw', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'GET')) return
+    const url = new URL(req.url || '/', 'http://dsh.internal')
+    const target = await assertExisting(url.searchParams.get('path'), 'file')
+    const ext = extname(target).toLowerCase()
+    if (!MEDIA_EXTS.has(ext)) {
+      return sendJson(res, 415, {
+        error: '这个类型不走内嵌预览（' + ext + '）', code: 'not-media', ext,
+        media: [...MEDIA_EXTS],
+      })
+    }
+    const st = statSync(target)
+    if (st.size > MAX_RAW_BYTES) {
+      return sendJson(res, 413, {
+        error: '文件过大（' + fmtBytes(st.size) + '），内嵌预览上限 ' + fmtBytes(MAX_RAW_BYTES),
+        code: 'too-large', size: st.size, limit: MAX_RAW_BYTES,
+      })
+    }
+    res.writeHead(200, {
+      'content-type': mimeOf(target),
+      'content-length': st.size,
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      /* inline：浏览器就地渲染，不要弹下载 */
+      'content-disposition': 'inline; filename*=UTF-8\'\'' + encodeURIComponent(basename(target)),
+    })
+    const stream = createReadStream(target)
+    stream.on('error', () => { try { res.destroy() } catch { /* 已断开 */ } })
+    stream.pipe(res)
   })})
 
   /* 用系统文件管理器打开（Windows 资源管理器 / macOS Finder / Linux 默认）。
@@ -1481,6 +1526,19 @@ function mimeOf(file) {
     '.gif': 'image/gif',
     '.webp': 'image/webp',
     '.ico': 'image/x-icon',
+    '.bmp': 'image/bmp',
+    '.avif': 'image/avif',
+    '.pdf': 'application/pdf',
+    '.mp4': 'video/mp4',
+    '.webm': 'video/webm',
+    '.ogv': 'video/ogg',
+    '.mov': 'video/quicktime',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg',
+    '.m4a': 'audio/mp4',
+    '.flac': 'audio/flac',
+    '.aac': 'audio/aac',
     '.woff2': 'font/woff2',
     '.woff': 'font/woff',
     '.txt': 'text/plain; charset=utf-8',

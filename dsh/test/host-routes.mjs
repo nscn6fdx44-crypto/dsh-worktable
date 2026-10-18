@@ -95,29 +95,42 @@ function makeRes(done) {
   return res
 }
 
-/** 一次性 JSON 调用 */
-function call(path, bodyObj, method = 'POST') {
+/** 流式 GET：/fs/raw 用 createReadStream().pipe(res)，res 必须是真 Writable */
+function callRaw(path, query) {
+  return new Promise((resolve) => {
+    const handler = routeOf(path) || routeOf(path, 'prefix')
+    if (!handler) return resolve({ status: 404, body: 'no route', headers: {} })
+    const qs = query ? '?' + new URLSearchParams(query).toString() : ''
+    const res = makeRes((out) => resolve(out))
+    handler({ method: 'GET', url: path + qs, on() {} }, res)
+  })
+}
+
+/** 一次性 JSON 调用（query 给 GET 用，例如 /fs/raw?path=…） */
+function call(path, bodyObj, method = 'POST', query) {
   return new Promise((resolve) => {
     const handler = routeOf(path) || routeOf(path, 'prefix')
     if (!handler) return resolve({ status: 404, body: 'no route' })
     const payload = bodyObj === undefined ? '' : JSON.stringify(bodyObj)
+    const qs = query ? '?' + new URLSearchParams(query).toString() : ''
     let delivered = false
     const req = {
       method,
-      url: path,
+      url: path + qs,
       on(e, fn) {
         if (e === 'data' && payload) setTimeout(() => { if (!delivered) fn(payload) }, 0)
         if (e === 'end') setTimeout(() => { delivered = true; fn() }, 1)
       },
     }
     let status = 0
+    let headers = {}
     let out = ''
     const res = {
       writableEnded: false,
-      writeHead(s) { status = s; return res },
+      writeHead(s, h) { status = s; if (h) headers = h; return res },
       write(chunk) { out += chunk; return true },
-      end(chunk) { if (chunk) out += chunk; res.writableEnded = true; setTimeout(() => resolve({ status, body: out }), 0) },
-      destroy() {},
+      end(chunk) { if (chunk) out += chunk; res.writableEnded = true; setTimeout(() => resolve({ status, headers, body: out }), 0) },
+      destroy() { res.writableEnded = true; resolve({ status, headers, body: out }) },
     }
     handler(req, res)
   })
@@ -180,6 +193,34 @@ const rj = JSON.parse(read1.body)
 check('fs/read 200 + 文本', read1.status === 200 && rj.text.includes('中文内容'), 'size=' + rj.size)
 check('fs/read 未截断', rj.truncated === false)
 check('fs/read 识别换行', rj.eol === 'lf' || rj.eol === 'crlf', rj.eol)
+
+/* /fs/raw：图片 / PDF / 音视频的内嵌预览通道（浏览器 <img>/<iframe> 只能 GET） */
+const pngFile = join(tmp, 'shot.png')
+writeFileSync(pngFile, Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('WT-PNG-BODY')]))
+const rawPng = await callRaw(BASE + '/fs/raw', { path: pngFile })
+check('fs/raw 200 + image/png', rawPng.status === 200 && /^image\/png/.test(String(rawPng.headers['content-type'] || '')), JSON.stringify(rawPng.headers || {}).slice(0, 90))
+check('fs/raw 回的是原始字节', rawPng.body.includes('WT-PNG-BODY'), JSON.stringify(rawPng.body.slice(0, 24)))
+check('fs/raw 就地渲染（inline + nosniff）', /inline/.test(String(rawPng.headers['content-disposition'] || '')) && rawPng.headers['x-content-type-options'] === 'nosniff', rawPng.headers['content-disposition'])
+
+const pdfFile = join(tmp, 'manual.pdf')
+writeFileSync(pdfFile, '%PDF-1.4\n%%EOF\n')
+const rawPdf = await callRaw(BASE + '/fs/raw', { path: pdfFile })
+check('fs/raw pdf → application/pdf', rawPdf.status === 200 && /application\/pdf/.test(String(rawPdf.headers['content-type'] || '')), rawPdf.headers['content-type'])
+
+const rawText = await call(BASE + '/fs/raw', undefined, 'GET', { path: file })
+check('fs/raw 非媒体类型 → 415', rawText.status === 415 && JSON.parse(rawText.body).code === 'not-media', rawText.body.slice(0, 80))
+const rawDir = await call(BASE + '/fs/raw', undefined, 'GET', { path: tmp })
+check('fs/raw 目录 → 400', rawDir.status === 400, rawDir.body.slice(0, 60))
+const rawMiss = await call(BASE + '/fs/raw', undefined, 'GET', { path: join(tmp, 'nope.png') })
+check('fs/raw 不存在 → 404', rawMiss.status === 404, rawMiss.body.slice(0, 60))
+const rawDenied = await call(BASE + '/fs/raw', undefined, 'GET', { path: join(homedir(), '.ssh', 'id_rsa') })
+check('fs/raw 也挡凭证目录', rawDenied.status === 403, rawDenied.status + ' ' + rawDenied.body.slice(0, 60))
+
+const hugePng = join(tmp, 'huge.png')
+writeFileSync(hugePng, Buffer.alloc(49 * 1024 * 1024))
+const rawBig = await call(BASE + '/fs/raw', undefined, 'GET', { path: hugePng })
+check('fs/raw 超上限 → 413', rawBig.status === 413 && JSON.parse(rawBig.body).code === 'too-large', rawBig.body.slice(0, 90))
+rmSync(hugePng, { force: true })
 
 const wr = await call(BASE + '/fs/write', { path: file, text: '# 改过了\n' })
 check('fs/write 200', wr.status === 200 && JSON.parse(wr.body).ok === true, wr.body.slice(0, 60))

@@ -6,8 +6,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { el, Icon, Light } from './ui.js'
 import {
+  viewKindOf, isMediaKind, hasPreview, renderMarkdown, highlightCode, langOf,
+} from './render.js'
+import {
   store, useStore, STATES, normState, fmtSize, fmtDuration, relTime, shortPath, projEmoji,
-  loadTree, openFile, editText, saveFile, termExec, termKill, termClear, loadGit,
+  loadTree, openFile, editText, saveFile, setEditorView, rawUrl,
+  termExec, termKill, termClear, loadGit,
   workspaceDirOf, revealPath, openExternal,
   visibleEntries, setFsSort, setFsQuery, selectEntry, fsMkdir, fsRename, fsDelete, fsReveal,
   openFsMenu, closeFsMenu,
@@ -348,19 +352,48 @@ function fileEmoji(name) {
   if (/\.(js|mjs|cjs|ts|jsx|tsx|vue|svelte)$/i.test(name)) return '🟨'
   if (/\.(py)$/i.test(name)) return '🐍'
   if (/\.(json|yml|yaml|toml|ini)$/i.test(name)) return '⚙️'
+  if (/\.pdf$/i.test(name)) return '📕'
   if (/\.(png|jpg|jpeg|gif|webp|svg|ico)$/i.test(name)) return '🖼️'
+  if (/\.(mp4|webm|mov)$/i.test(name)) return '🎬'
+  if (/\.(mp3|wav|m4a|flac)$/i.test(name)) return '🎵'
   if (/\.(html|htm|css|scss)$/i.test(name)) return '🎨'
   return '·'
 }
 
 /* ============================ 主区：编辑器 ============================ */
 
+/** 渲染结果的缓存：store 每秒 tick 一次会重渲染，400 KB 的 Markdown 没必要每秒重排一遍 */
+let previewCache = { key: '', html: '' }
+
+function dirOf(p) {
+  const s = String(p || '')
+  const i = Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/'))
+  return i > 0 ? s.slice(0, i) : ''
+}
+
+function previewOf(ed, kind) {
+  const key = kind + '\u0000' + ed.path + '\u0000' + ed.text
+  if (previewCache.key === key) return previewCache.html
+  const html = kind === 'markdown'
+    ? renderMarkdown(ed.text, { dir: dirOf(ed.path), imageUrl: rawUrl })
+    : highlightCode(ed.text, langOf(ed.name))
+  previewCache = { key, html }
+  return html
+}
+
+const KIND_LABEL = { markdown: 'Markdown', code: '代码', image: '图片', pdf: 'PDF', video: '视频', audio: '音频', text: '文本' }
+
 export function EditorPane({ project }) {
   useStore()
   const ed = store.editor
+  const kind = ed.kind || viewKindOf(ed.name)
+  const media = isMediaKind(kind)
+  const canPreview = hasPreview(kind)
   /* partial / truncated 都代表「你看到的不是完整文件」—— 一律只读，绝不写回 */
   const readonly = ed.state === 'ok' && (ed.partial || ed.truncated)
-  const dirty = ed.state === 'ok' && !readonly && ed.text !== ed.saved
+  const dirty = ed.state === 'ok' && !readonly && !media && ed.text !== ed.saved
+  /* 只看到片段时不进渲染预览：半截 Markdown 渲染出来只会误导 */
+  const view = (canPreview && !readonly && ed.view === 'preview') ? 'preview' : 'edit'
   const area = useRef(null)
   const [openPath, setOpenPath] = useState('')
   const doOpen = () => {
@@ -391,7 +424,7 @@ export function EditorPane({ project }) {
       el('div', { className: 'pane-empty' },
         el('span', { className: 'pe-ico' }, '◆'),
         el('p', null, '还没有打开文件'),
-        el('p', { className: 'hint' }, '填一个文件绝对路径直接打开（文件管理器现在走系统窗口）；Ctrl+S 保存到磁盘。'),
+        el('p', { className: 'hint' }, '去「🗂 文件管理器」双击文件，或在这里填一个绝对路径。Markdown 与代码会自动渲染，图片 / PDF 直接内嵌显示；Ctrl+S 保存。'),
         el('div', { className: 'ed-open' },
           el('input', {
             className: 'mono', value: openPath, autoComplete: 'off',
@@ -408,20 +441,103 @@ export function EditorPane({ project }) {
   const previewSize = ed.previewBytes ? fmtSize(ed.previewBytes) : ''
   const limitSize = ed.limit ? fmtSize(ed.limit) : '4.0 MB'
 
+  /* ---------- 正文：媒体内嵌 / 渲染预览 / 原文编辑 ---------- */
+  let body = null
+  if (media && ed.state === 'ok') {
+    body = el('div', { className: 'ed-media' },
+      kind === 'image'
+        ? el('img', { className: 'ed-media-img', src: ed.mediaUrl, alt: ed.name })
+        : kind === 'pdf'
+          ? el('iframe', { className: 'ed-media-frame', src: ed.mediaUrl, title: ed.name })
+          : kind === 'video'
+            ? el('video', { className: 'ed-media-player', src: ed.mediaUrl, controls: true, preload: 'metadata' })
+            : el('div', { className: 'ed-media-audio' },
+              el('span', { className: 'ed-media-ico', 'aria-hidden': 'true' }, '🎵'),
+              el('audio', { src: ed.mediaUrl, controls: true, preload: 'metadata' }),
+            ),
+      el('p', { className: 'ed-media-hint' },
+        '内嵌预览来自本地文件（/fs/raw）。显示不正常就用「🚀 用系统程序打开」。'),
+    )
+  } else if (ed.state === 'loading') {
+    body = el('p', { className: 'wt-mute' }, '读取中…')
+  } else if (ed.state === 'error') {
+    body = el('div', { className: 'pane-error' },
+      el('p', null, ed.error),
+      el('p', { className: 'hint' }, ed.errorCode === 413
+        ? '编辑器只处理 ' + limitSize + ' 以内的文本；再大就该交给系统程序，或者只看开头 / 结尾。'
+        : (ed.errorCode === 415 || ed.binary)
+          ? '二进制文件没法当文本编辑 —— 用系统默认程序打开才看得到内容。'
+          : '路径或权限可能不对；也可以直接用系统程序打开它。'),
+      el('div', { className: 'ed-note-acts' },
+        ed.errorCode === 413 || ed.errorCode === 415
+          ? el('button', {
+            type: 'button', className: 'mini-btn',
+            onClick: () => openFile(ed.path, project?.id, { mode: 'head', bytes: ed.previewBytes || 262144 }),
+          }, '只读预览前 ' + (previewSize || '256 KB'))
+          : null,
+        el('button', { type: 'button', className: 'mini-btn on', onClick: () => openExternal(ed.path) }, '🚀 用系统默认程序打开'),
+        el('button', { type: 'button', className: 'mini-btn', onClick: () => revealPath(ed.path, { select: true }) }, '⧉ 在文件管理器中显示'),
+        el('button', { type: 'button', className: 'btn small', onClick: () => openFile(ed.path, project?.id) }, '重试'),
+      ),
+    )
+  } else if (view === 'preview') {
+    body = kind === 'markdown'
+      ? el('div', { className: 'ed-preview ed-md', dangerouslySetInnerHTML: { __html: previewOf(ed, kind) } })
+      : el('pre', { className: 'ed-preview ed-pre' }, el('code', { dangerouslySetInnerHTML: { __html: previewOf(ed, kind) } }))
+  } else {
+    body = el('textarea', {
+      ref: area,
+      className: 'ed-area mono',
+      spellCheck: false,
+      readOnly: readonly,
+      value: ed.text,
+      onChange: (e) => editText(e.target.value),
+      onKeyDown: (e) => {
+        if (e.key === 'Tab') {
+          e.preventDefault()
+          const t = e.target
+          const at = t.selectionStart
+          editText(ed.text.slice(0, at) + '  ' + ed.text.slice(t.selectionEnd))
+        }
+      },
+    })
+  }
+
   return el('div', { className: 'pane-body editor-body' },
     el('div', { className: 'ed-bar' },
       el('span', { className: 'ed-name mono', title: ed.path }, ed.name + (dirty ? ' ●' : '')),
+      el('span', { className: 'tag' }, KIND_LABEL[kind] || '文本'),
       ed.size ? el('span', { className: 'ed-meta mono' }, fmtSize(ed.size)) : null,
       readonly
         ? el('span', { className: 'tag warn', title: '只读预览：文件太大，编辑器只读了一段' }, ed.tail ? '只读 · 结尾' : '只读 · 开头')
         : ed.truncated ? el('span', { className: 'tag' }, '已截断') : null,
-      ed.state === 'ok'
+
+      /* 预览 / 编辑：只对 Markdown 与代码出现 */
+      canPreview && ed.state === 'ok' && !readonly
+        ? el('span', { className: 'ed-seg' },
+          el('button', {
+            type: 'button', className: 'mini-btn' + (view === 'preview' ? ' on' : ''),
+            title: kind === 'markdown' ? '渲染成文档' : '语法高亮只读',
+            onClick: () => setEditorView('preview'),
+          }, kind === 'markdown' ? '预览' : '高亮'),
+          el('button', {
+            type: 'button', className: 'mini-btn' + (view === 'edit' ? ' on' : ''),
+            title: '看原文并编辑',
+            onClick: () => setEditorView('edit'),
+          }, '编辑'),
+        )
+        : null,
+
+      ed.state === 'ok' && !media
         ? el('button', {
           type: 'button', className: 'mini-btn' + (dirty ? ' on' : ''),
           disabled: readonly,
           title: readonly ? '只读预览不能保存（会把文件截断写回）' : '保存到磁盘 (Ctrl+S)',
           onClick: () => saveFile(),
         }, ed.saving ? '保存中…' : '保存')
+        : null,
+      ed.state === 'ok' && media
+        ? el('button', { type: 'button', className: 'mini-btn on', onClick: () => openExternal(ed.path) }, '🚀 用系统程序打开')
         : null,
       el('button', { type: 'button', className: 'mini-btn', title: '重新载入', onClick: () => openFile(ed.path, project?.id) }, '重载'),
     ),
@@ -441,44 +557,7 @@ export function EditorPane({ project }) {
       )
       : null,
 
-    ed.state === 'loading'
-      ? el('p', { className: 'wt-mute' }, '读取中…')
-      : ed.state === 'error'
-        ? el('div', { className: 'pane-error' },
-          el('p', null, ed.error),
-          el('p', { className: 'hint' }, ed.errorCode === 413
-            ? '编辑器只处理 ' + limitSize + ' 以内的文本；再大就该交给系统程序，或者只看开头 / 结尾。'
-            : (ed.errorCode === 415 || ed.binary)
-              ? '二进制文件没法当文本编辑 —— 用系统默认程序打开才看得到内容。'
-              : '路径或权限可能不对；也可以直接用系统程序打开它。'),
-          el('div', { className: 'ed-note-acts' },
-            ed.errorCode === 413 || ed.errorCode === 415
-              ? el('button', {
-                type: 'button', className: 'mini-btn',
-                onClick: () => openFile(ed.path, project?.id, { mode: 'head', bytes: ed.previewBytes || 262144 }),
-              }, '只读预览前 ' + (previewSize || '256 KB'))
-              : null,
-            el('button', { type: 'button', className: 'mini-btn on', onClick: () => openExternal(ed.path) }, '🚀 用系统默认程序打开'),
-            el('button', { type: 'button', className: 'mini-btn', onClick: () => revealPath(ed.path, { select: true }) }, '⧉ 在文件管理器中显示'),
-            el('button', { type: 'button', className: 'btn small', onClick: () => openFile(ed.path, project?.id) }, '重试'),
-          ),
-        )
-        : el('textarea', {
-          ref: area,
-          className: 'ed-area mono',
-          spellCheck: false,
-          readOnly: readonly,
-          value: ed.text,
-          onChange: (e) => editText(e.target.value),
-          onKeyDown: (e) => {
-            if (e.key === 'Tab') {
-              e.preventDefault()
-              const t = e.target
-              const at = t.selectionStart
-              editText(ed.text.slice(0, at) + '  ' + ed.text.slice(t.selectionEnd))
-            }
-          },
-        }),
+    body,
   )
 }
 
