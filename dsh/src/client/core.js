@@ -1323,6 +1323,9 @@ export function normalizeWebUrl(raw) {
   if (!s) return ''
   if (s.startsWith('/') && !s.startsWith('//')) return s
   if (/^https?:\/\/\S+$/i.test(s)) return s
+  /* 只填了端口号（5173 / :5173）—— 开发时最常见的输入，别让人还要补 http://localhost: */
+  const port = s.replace(/^:/, '')
+  if (/^\d{2,5}$/.test(port)) return 'http://localhost:' + port + '/'
   if (/^[a-z0-9][a-z0-9.-]*(:\d+)?([/?#]\S*)?$/i.test(s) && /[.:]/.test(s)) return 'http://' + s
   return ''
 }

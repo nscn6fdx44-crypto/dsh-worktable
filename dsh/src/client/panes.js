@@ -824,7 +824,7 @@ export function WebPane({ project }) {
               el('span', { className: 'pe-ico' }, '◍'),
               el('p', null, '浏览器窗格'),
               el('ul', { className: 'wb-help' },
-                el('li', null, '地址栏填 localhost:5173 或 http://localhost:5173，回车即开；省略 http:// 也认。'),
+                el('li', null, '地址栏填端口（5173）、localhost:5173 或完整 http:// 地址都认，回车即开。'),
                 el('li', null, '点右上「⋯」→ 探测：先确认服务活着、以及它允不允许被 iframe 嵌。'),
                 el('li', null, '若被 X-Frame-Options / CSP 拒绝，会出一张说明卡，用「🚀 系统浏览器」打开。'),
               ),
