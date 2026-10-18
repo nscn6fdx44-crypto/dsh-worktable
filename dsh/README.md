@@ -1,11 +1,11 @@
-# trae-usage-worktable（DSH 插件 · 0.7.0）
+# trae-usage-worktable（DSH 插件 · 0.7.1）
 
 > DeepSeek Harness 侧边栏的完整工作台。本目录是 `nscn6fdx44-crypto/trae-usage`
 > 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的**独立实现**：
 > 同款 Cordis 双 bundle 协议、同款交互模型，代码自己写、路由前缀自带
 > （`/api/trae-worktable/*`），不与上游抢路径。
 
-## 能力（0.7.0）
+## 能力（0.7.1）
 
 | 半侧 | 文件 | 内容 |
 |---|---|---|
@@ -39,9 +39,9 @@
 
 - **两种模式共用同一份比例**：工作台与对话的分界（`dock-edge` 拖动条，双击恢复自动）
   改的是同一个 `ui.dock`，所以全屏调好的宽度切到窗口模式照样生效；窗口几何另存 `ui.win`；
-- **左栏可收起**（顶栏 `▤ 收起`）：让位区偏窄时收起项目/文件栏，工作区立刻占满；
-- **左栏**两个页签：`项目`（信息 / 绑定对话 / git 状态与最近提交）· `文件`（目录浏览 + 路径跳转）；
-- **主区是标签页工作区**，可同时开多个：`编辑器` / `终端` / `浏览器` / `自定义`；
+- **没有左栏**（0.7.1 删除）：项目信息与文件浏览都改成标签页，整块让位区都归工作区；
+- **标签页**可同时开多个：`🗂 文件`（目录浏览 + 路径跳转）/ `◆ 编辑器` / `›_ 终端` / `◍ 浏览器` / `❖ 自定义`，
+  另有 `ⓘ 项目信息`（状态 / 绑定对话 / git 状态与最近提交）从顶栏按钮打开；首次进项目自动开「文件」页；
   - **编辑器**：读文件、改、`Ctrl+S` 保存回磁盘（原子写：临时文件 + rename）；
   - **终端**：把命令交给宿主所在机器执行，NDJSON 流式回显；`cd` 由 host 接管并保持；
     `↑↓` 翻历史、`Ctrl+L` 清屏、可中断、120s 超时、512KB 输出上限；
@@ -97,7 +97,7 @@ localStorage（统一 `wt.` 前缀）：
 | key | 内容 |
 |---|---|
 | `wt.projects` | 项目：`{id,name,alias,icon,path,note,folder,order,hidden,sessions[],created,updated}` |
-| `wt.ui.v2` | 每个项目的工作区状态：`{ layout, split:{left,chat}, leftTab, tabs[], activeTab }` |
+| `wt.ui.v2` | 每个项目的工作区状态：`{ mode, dock, win:{x,y,w,h}, tabs[], activeTab }` |
 | `wt.status` | 手工状态覆盖（点了状态灯才写） |
 | `wt.view` | `grid` / `project` |
 | `wt.termHistory` | 终端命令历史（最近 80 条） |
@@ -168,7 +168,7 @@ npm run build && npm pack
 ```
 
 ```powershell
-& "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<本仓库绝对路径>\dsh\trae-usage-worktable-0.7.0.tgz"
+& "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<本仓库绝对路径>\dsh\trae-usage-worktable-0.7.1.tgz"
 ```
 
 ## 验收清单（重启 DSH 后）
@@ -179,9 +179,9 @@ npm run build && npm pack
 3. 右侧对话能正常打字、发送 —— 它就是宿主会话，不是预览；
 4. 拖工作台右边缘的 `dock-edge` 能改工作台宽度、右侧对话跟着变宽变窄；双击恢复自动；
    切「全屏」后同一份宽度仍然生效，刷新后宽度与模式都还在；
-5. 左栏「文件」→ 列目录 → 点 `package.json` → 开编辑器 → 改一行 → `Ctrl+S` → 磁盘内容确实变了；
+5. 「🗂 文件」标签页 → 列目录 → 点 `package.json` → 自动开编辑器 → 改一行 → `Ctrl+S` → 磁盘内容确实变了；
 6. 打开「终端」→ `git status` 有输出 → `cd ..` 后再 `pwd` 路径确实变了；
-7. 「浏览器」默认打开项目静态页；`▤ 收起` 收起左栏后工作区占满；
+7. 「浏览器」默认打开项目静态页；顶栏「ⓘ 项目信息」把状态 / 绑定 / git 开成标签页；
 8. 侧边栏里只有项目，不再有单独的「宿主会话」列表；右击只有一个「绑定对话」入口。
 
 ## 已知坑（真机踩过，逐条可复现）
@@ -216,12 +216,12 @@ npm run build && npm pack
 
 ## 与上游的差异（有意为之）
 
-| 项 | 上游 0.4.0 | 本插件 0.7.0 |
+| 项 | 上游 0.4.0 | 本插件 0.7.1 |
 |---|---|---|
-| 右侧对话 | 宿主会话视图让位（margin + CSS 变量），可真实输入 | 只读预览 + 一键跳回宿主 |
+| 右侧对话 | 宿主会话视图让位（margin + CSS 变量），可真实输入 | 给宿主中心列写 `marginLeft` 让位，右侧就是原生会话（真能输入） |
 | 终端 | node-pty + WebSocket，真 PTY | 每命令一进程 + NDJSON 流，无原生依赖 |
 | 文件安全 | 任意绝对路径 | 根白名单 + realpath + 凭证目录拒绝 |
-| 窗口模型 | 窗格内多标签、跨格拖拽、自由浮动层 | 单工作区多标签页 + 「全屏 / 窗口」两形态；对话栏用宿主原生会话区 |
+| 窗口模型 | 窗格内多标签、跨格拖拽、自由浮动层 | 单工作区多标签页（无左栏）+ 「全屏 / 窗口」两形态；对话栏用宿主原生会话区 |
 | 路由前缀 | `/api/worktable` | `/api/trae-worktable`（不抢注） |
 
 ## License

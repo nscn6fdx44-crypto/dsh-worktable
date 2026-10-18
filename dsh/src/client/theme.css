@@ -445,16 +445,7 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 .wt-scope .pane-error { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; padding: 10px 12px; margin: 8px 0; border-radius: 10px; border: 1px solid rgba(232,115,74,.32); background: rgba(232,115,74,.07); }
 .wt-scope .pane-error p { margin: 0; font-size: 11.5px; color: #f0a08a; line-height: 1.6; word-break: break-word; }
 
-/* 左栏切换 */
-.wt-scope .subtabs { display: inline-flex; gap: 2px; flex: 1; min-width: 0; }
-.wt-scope .subtabs button {
-  padding: 4px 9px; border-radius: 7px; border: 1px solid transparent; background: transparent;
-  color: var(--txt-mute); font-size: 11.5px; cursor: pointer; white-space: nowrap;
-}
-.wt-scope .subtabs button:hover { color: var(--txt-dim); background: rgba(255,255,255,.05); }
-.wt-scope .subtabs button.on { color: #f7dd9f; background: rgba(240,180,41,.12); border-color: rgba(240,180,41,.28); }
-
-/* 项目信息 */
+/* 项目信息（标签页，无左栏） */
 .wt-scope .info-body { display: flex; flex-direction: column; gap: 10px; }
 .wt-scope .info-head { display: flex; align-items: center; gap: 9px; }
 .wt-scope .info-ico { font-size: 22px; line-height: 1; flex: none; }

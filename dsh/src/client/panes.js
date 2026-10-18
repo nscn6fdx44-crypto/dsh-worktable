@@ -1,6 +1,6 @@
 /**
- * 窗格：项目信息 / 文件浏览 / 编辑器 / 终端 / 浏览器 / 自定义。
- * 对话不在这里 —— 右栏就是宿主自己的会话区（见 hostdock.js）。
+ * 窗格：文件浏览 / 项目信息 / 编辑器 / 终端 / 浏览器 / 自定义。
+ * 全部是工作区里的标签页，没有独立左栏；对话也不在这里 —— 右栏就是宿主自己的会话区（见 hostdock.js）。
  * 每个窗格只读 store 的对应切片，动作全部来自 core。
  */
 import { useState, useEffect, useRef } from 'react'
@@ -8,11 +8,11 @@ import { el, Icon, Light } from './ui.js'
 import {
   store, useStore, STATES, normState, fmtSize, fmtDuration, relTime, shortPath, projEmoji,
   loadTree, openFile, editText, saveFile, termExec, termKill, termClear, loadGit,
-  setLeftTab, sessionsOf, primarySession, stateOf, jumpToSession,
+  sessionsOf, primarySession, stateOf, jumpToSession,
   openModal, siteUrlOf, setWebUrl, setCustomHtml, cycleStatus, updateProject, projectOf, toast,
 } from './core.js'
 
-/* ============================ 左栏：项目信息 ============================ */
+/* ============================ 文件 / 项目信息（标签页） ============================ */
 
 export function InfoPane({ project }) {
   useStore()
@@ -93,7 +93,7 @@ export function InfoPane({ project }) {
   )
 }
 
-/* ============================ 左栏：文件浏览 ============================ */
+/* ============================ 文件浏览（标签页） ============================ */
 
 export function FilesPane({ project }) {
   useStore()
@@ -190,7 +190,7 @@ export function EditorPane({ project }) {
       el('div', { className: 'pane-empty' },
         el('span', { className: 'pe-ico' }, '◆'),
         el('p', null, '还没有打开文件'),
-        el('p', { className: 'hint' }, '在左侧「文件」里点一个文本文件，就能在这里查看与编辑；Ctrl+S 保存到磁盘。'),
+        el('p', { className: 'hint' }, '在「文件」标签页里点一个文本文件，就能在这里查看与编辑；Ctrl+S 保存到磁盘。'),
       ),
     )
   }

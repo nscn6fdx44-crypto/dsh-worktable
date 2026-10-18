@@ -251,18 +251,11 @@ check('顶栏显示项目名', mainText.includes('智能小车固件'))
 check('顶栏有「≡ 项目 / 关闭」', ['≡ 项目', '✕'].every((t) => mainText.includes(t)), mainText.slice(0, 90))
 check('模式切换条存在', allByClass(overlay, /(^|\s)seg(\s|$)|(^|\s)seg tiny(\s|$)/).length >= 1)
 check('不再自绘对话栏（右侧交给宿主）', allByClass(overlay, /pane-chat/).length === 0)
-check('左栏仍在', allByClass(overlay, /pane-left/).length === 1)
-check('分割条 = 左栏 + 让位边界', allByClass(overlay, /split-handle/).length === 2, allByClass(overlay, /split-handle/).length)
+check('工作台内没有左栏（已删除）', allByClass(overlay, /pane-left/).length === 0, allByClass(overlay, /pane-left/).length)
+check('分割条只剩「工作台 / 对话」一条', allByClass(overlay, /split-handle/).length === 1, allByClass(overlay, /split-handle/).length)
 check('让位边界是 dock-edge', allByClass(overlay, /dock-edge/).length === 1)
-
-/* 左栏可收起：让位区窄的时候工作区能占满 */
-clickByLabel(overlay, '▤ 收起')
-overlay = render(overlayComp)
-check('收起左栏：左栏与左分割条一起消失', allByClass(overlay, /pane-left/).length === 0 && allByClass(overlay, /split-handle/).length === 1)
-check('收起状态写进 wt.ui.v2', JSON.parse(ls.get('wt.ui.v2') || '{}')['custom-1'].leftHidden === true)
-clickByLabel(overlay, '▤ 展开')
-overlay = render(overlayComp)
-check('展开左栏恢复', allByClass(overlay, /pane-left/).length === 1 && allByClass(overlay, /split-handle/).length === 2)
+check('进项目自动打开「文件」标签页', allByClass(overlay, /files-body/).length === 1, allByClass(overlay, /files-body/).length)
+check('顶栏有「项目信息」按钮', textOf(overlay).includes('项目信息'))
 const chatPill = allByClass(overlay, /dh-chat/)[0]
 check('顶栏标出右侧对话（主绑定）', !!chatPill && !/off/.test(chatPill.props.className), chatPill && chatPill.props.className)
 check('对话气泡显示主对话标题', !!chatPill && textOf(chatPill).includes('app-alpha'), chatPill && textOf(chatPill))
@@ -324,10 +317,13 @@ clickByLabel(overlay, '全屏')
 overlay = render(overlayComp)
 check('全屏模式：没有浮动视窗', allByClass(overlay, /float-win/).length === 0 && allByClass(overlay, /pane-canvas/).length === 0)
 check('全屏模式：中间栏铺满', allByClass(overlay, /pane-main/).length === 1 && allByClass(overlay, /pane-nest/).length === 0)
-check('全屏模式：左栏仍在', allByClass(overlay, /pane-left/).length === 1)
+check('全屏模式：仍然没有左栏', allByClass(overlay, /pane-left/).length === 0)
 check('全屏模式：让位边界仍在', allByClass(overlay, /dock-edge/).length === 1)
 
-/* 左栏信息 */
+/* 项目信息：从顶栏开成标签页 */
+clickByLabel(overlay, '项目信息')
+overlay = render(overlayComp)
+check('顶栏「项目信息」按标签页打开', allByClass(overlay, /info-body/).length === 1, allByClass(overlay, /info-body/).length)
 check('项目信息显示绑定对话数', /绑定对话/.test(textOf(overlay)))
 check('git 区块渲染分支', textOf(overlay).includes('main'), textOf(allByClass(overlay, /git-box/)[0] || overlay).slice(0, 80))
 
@@ -335,14 +331,14 @@ check('git 区块渲染分支', textOf(overlay).includes('main'), textOf(allByCl
 clickByLabel(overlay, '文件')
 overlay = render(overlayComp)
 const filesText = textOf(overlay)
-check('文件窗格列出目录条目', filesText.includes('src') && filesText.includes('README.md') && filesText.includes('main.c'), filesText.slice(0, 90))
+check('文件标签页列出目录条目', filesText.includes('src') && filesText.includes('README.md') && filesText.includes('main.c'), filesText.slice(0, 90))
 check('文件条目显示大小', /128|2 KB|KB/.test(filesText), filesText.slice(0, 120))
 
 clickByLabel(overlay, 'README.md')
 await new Promise((r) => setTimeout(r, 30))
 overlay = render(overlayComp)
 const editor = allByClass(overlay, /ed-area/)[0]
-check('点击文件后打开编辑器标签页', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 1)
+check('点击文件后打开编辑器标签页', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 3, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
 check('编辑器渲染文件内容', !!editor && String(editor.props.value).includes('固件说明'), editor && String(editor.props.value).slice(0, 40))
 check('编辑器有保存按钮', textOf(overlay).includes('保存'))
 
@@ -353,7 +349,7 @@ const termIn = allByClass(overlay, /term-in/)[0]
 check('终端窗格渲染输入行', !!termIn)
 check('终端窗格显示提示符', textOf(overlay).includes('❯'))
 check('终端显示当前目录', textOf(overlay).includes('smart-car') || textOf(overlay).includes('C:\\projects'), textOf(overlay).slice(0, 80))
-check('终端标签页与编辑器并存', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 2, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
+check('终端标签页与编辑器并存', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 4, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
 
 /* 打开浏览器标签页 */
 clickByLabel(overlay, '浏览器')
@@ -364,7 +360,7 @@ check('浏览器窗格渲染 iframe', !!frame || textOf(overlay).includes('浏�
 /* 切回窗口模式，标签页应保留（两种模式功能一致） */
 clickByLabel(overlay, '窗口')
 overlay = render(overlayComp)
-check('窗口模式保留全部标签页', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 3, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
+check('窗口模式保留全部标签页', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 5, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
 check('窗口模式仍渲染当前窗格内容', !!allByClass(overlay, /web-frame/)[0] || textOf(overlay).includes('浏览器窗格'))
 clickByLabel(overlay, '全屏')
 overlay = render(overlayComp)

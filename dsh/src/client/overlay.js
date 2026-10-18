@@ -4,7 +4,8 @@
  * 两态：
  *   grid    整块覆盖（控制室 + 项目卡片）
  *   project 只占对话左侧那块：宿主会话区被右推，右侧始终是 DSH 自己的对话（真能打字）
- *           工作台内部 = 左栏（项目 / 文件）+ 主区（全屏 or 小窗），对话栏不由我们渲染。
+ *           工作台内部只有主区（标签页：文件 / 编辑器 / 终端 / 浏览器 / 自定义 / 项目信息），
+ *           不再有左栏 —— 文件与项目信息都是标签页，对话栏不由我们渲染。
  *
  * 让位几何全部来自 hostdock.js，组件只消费 geo，不直接碰宿主 DOM。
  */
@@ -13,9 +14,9 @@ import { el, Light, Splitter, ContextMenu, Toasts } from './ui.js'
 import { ModalHost } from './modals.js'
 import { useHostDock } from './hostdock.js'
 import {
-  store, useStore, STATES, normState, MODES, modeDef, PANE_TABS, DEFAULT_SPLIT,
+  store, useStore, STATES, normState, MODES, modeDef, PANE_TABS, INFO_TAB,
   fmtDuration, relTime, shortPath, projEmoji, openGrid, enterProject, closeOverlay,
-  openModal, openMenu, setMode, setSplit, setDockPx, setLeftTab, toggleLeft, openTab, closeTab, setActiveTab,
+  openModal, openMenu, setMode, setDockPx, openTab, closeTab, setActiveTab,
   loadSessions, stateOf, sessionsOf, primarySession, uiOf, flushUi, setWinRect, resetWinRect,
 } from './core.js'
 import { InfoPane, FilesPane, EditorPane, TermPane, WebPane, CustomPane } from './panes.js'
@@ -194,14 +195,8 @@ function AddCard() {
 /* ============================ 项目工作区（让位区） ============================ */
 
 function Workspace({ project, ui, geo }) {
-  const leftW = ui.split.left || DEFAULT_SPLIT.left
   const primary = primarySession(project)
 
-  const onLeft = (next, persist) => {
-    if (next === 0) { setSplit(project.id, 'left', DEFAULT_SPLIT.left, true); return }
-    if (next == null) { flushUi(); return }
-    setSplit(project.id, 'left', next, persist)
-  }
   /* 工作台右边缘：直接改让位宽度，拖的同时右侧对话跟着变宽变窄 */
   const onDock = (next, persist) => {
     if (next == null) { flushUi(); return }
@@ -230,21 +225,17 @@ function Workspace({ project, ui, geo }) {
           }, m.icon + ' ' + m.label)),
         ),
         el('button', {
-          type: 'button', className: 'mini-btn' + (ui.leftHidden ? ' on' : ''),
-          title: ui.leftHidden ? '展开左栏（项目 / 文件）' : '收起左栏，工作区占满',
-          onClick: () => toggleLeft(project.id),
-        }, ui.leftHidden ? '▤ 展开' : '▤ 收起'),
+          type: 'button',
+          className: 'mini-btn' + (ui.activeTab === INFO_TAB.id ? ' on' : ''),
+          title: '项目信息：状态 / 绑定对话 / git（以标签页打开）',
+          onClick: () => openTab(project.id, INFO_TAB.id),
+        }, INFO_TAB.icon + ' ' + INFO_TAB.label),
         el('button', { type: 'button', className: 'mini-btn', title: '回到控制室', onClick: openGrid }, '≡ 项目'),
         el('button', { type: 'button', className: 'mini-btn', title: '关闭工作台 (Esc)', onClick: closeOverlay }, '✕'),
       ),
     ),
 
     el('div', { className: 'ws', 'data-mode': ui.mode },
-      ui.leftHidden ? null : el(LeftPane, { key: 'left', project, width: leftW, tab: ui.leftTab }),
-      ui.leftHidden ? null : el(Splitter, {
-        key: 's1', pid: project.id, side: 'left', width: leftW,
-        min: 168, max: Math.max(240, (geo.width || 640) - 300), onResize: onLeft,
-      }),
       ui.mode === 'float'
         ? el(FloatWindow, { key: 'main', project, ui })
         : el(MainPane, { key: 'main', project, ui }),
@@ -344,20 +335,6 @@ function FloatWindow({ project, ui }) {
   )
 }
 
-function LeftPane({ project, width, tab }) {
-  useStore()
-  return el('aside', { className: 'pane pane-left', style: { flex: '0 0 ' + width + 'px' } },
-    el('div', { className: 'pane-head' },
-      el('div', { className: 'subtabs' },
-        el('button', { type: 'button', className: tab === 'info' ? 'on' : '', onClick: () => setLeftTab(project.id, 'info') }, '项目'),
-        el('button', { type: 'button', className: tab === 'files' ? 'on' : '', onClick: () => setLeftTab(project.id, 'files') }, '文件'),
-      ),
-      el(Light, { pid: project.id }),
-    ),
-    tab === 'files' ? el(FilesPane, { project }) : el(InfoPane, { project }),
-  )
-}
-
 function MainPane({ project, ui, nest }) {
   const tabs = ui.tabs
   const activeKey = ui.activeTab || (tabs[0] ? tabs[0].key : '')
@@ -397,7 +374,7 @@ function MainPane({ project, ui, nest }) {
         el('div', { className: 'pane-empty' },
           el('span', { className: 'pe-ico' }, '◫'),
           el('p', null, '工作区还没有打开任何窗口'),
-          el('p', { className: 'hint' }, '用右上角的按钮打开编辑器 / 终端 / 浏览器 / 自定义窗口；在左侧「文件」里点文件会自动开编辑器。'),
+          el('p', { className: 'hint' }, '用右上角的按钮打开「文件」/ 编辑器 / 终端 / 浏览器 / 自定义窗口；在「文件」里点文件会自动开编辑器。'),
           el('div', { className: 'pe-actions' },
             PANE_TABS.map((t) => el('button', {
               key: t.id, type: 'button', className: 'btn small',
@@ -410,6 +387,8 @@ function MainPane({ project, ui, nest }) {
 }
 
 function renderPane(kind, project) {
+  if (kind === 'files') return el(FilesPane, { project })
+  if (kind === 'info') return el(InfoPane, { project })
   if (kind === 'term') return el(TermPane, { project })
   if (kind === 'web') return el(WebPane, { project })
   if (kind === 'custom') return el(CustomPane, { project })

@@ -59,9 +59,6 @@ export function modeDef(id) {
   return MODES.find((m) => m.id === id) || MODES[1]
 }
 
-/** 工作台内部左栏（项目 / 文件）默认宽度 */
-export const DEFAULT_SPLIT = { left: 208 }
-
 /** 浮动小窗默认几何：居中偏满，四周留一点背景方便拖动 */
 export const DEFAULT_WIN = { x: 0.5, y: 0.5, w: 0.88, h: 0.86 }
 
@@ -75,12 +72,24 @@ export function clampWin(raw) {
   return { x, y, w, h }
 }
 
+/**
+ * 工作区标签页。工作台里 **没有左栏**：项目信息 / 文件浏览都是标签页，
+ * 和编辑器、终端、浏览器、自定义窗口平级，标签页本身就把整块让位区占满。
+ */
 export const PANE_TABS = [
+  { id: 'files', label: '文件', icon: '🗂' },
   { id: 'editor', label: '编辑器', icon: '◆' },
   { id: 'term', label: '终端', icon: '›_' },
   { id: 'web', label: '浏览器', icon: '◍' },
   { id: 'custom', label: '自定义', icon: '❖' },
 ]
+
+/** 项目信息（状态 / 绑定 / git）不在快捷按钮里，单独从顶栏进 */
+export const INFO_TAB = { id: 'info', label: '项目信息', icon: 'ⓘ' }
+
+export function tabDef(id) {
+  return PANE_TABS.find((t) => t.id === id) || (id === INFO_TAB.id ? INFO_TAB : null)
+}
 
 export const EMOJI_CHOICES = ['🧰', '📁', '🔌', '🐍', '🌐', '🖥️', '🎨', '📜', '🗄️', '🧩', '📚', '🛠️', '⚙️', '🚀']
 
@@ -170,7 +179,7 @@ export const store = {
   open: false,
   activeId: null,
   projects: [],
-  ui: {},                       // { [pid]: { layout, split, leftTab, tabs, activeTab } }
+  ui: {},                       // { [pid]: { mode, dock, win, tabs, activeTab } }
   status: {},                   // 手工覆盖态（跟绑定会话冲突时以手工为准）
   defaults: { workspace: '', home: '', shell: '', loaded: false },
   sessions: { state: 'pending', counts: null, rows: [], at: 0, error: '', source: '' },
@@ -260,7 +269,7 @@ export function hydrate() {
 /* ============================ ui 片段读写 ============================ */
 
 function defaultUi() {
-  return { mode: DEFAULT_MODE, split: {}, dock: 0, win: null, leftTab: 'info', leftHidden: false, tabs: [], activeTab: '' }
+  return { mode: DEFAULT_MODE, dock: 0, win: null, tabs: [], activeTab: '' }
 }
 
 export function uiOf(pid) {
@@ -271,13 +280,9 @@ export function uiOf(pid) {
   const dock = Number(raw.dock)
   return {
     mode,
-    split: raw.split && typeof raw.split === 'object' ? raw.split : {},
     /* 0 = 自动（按宿主轨道比例算），>0 = 用户拖过的像素宽 */
     dock: Number.isFinite(dock) && dock > 0 ? Math.round(dock) : 0,
     win: raw.win && typeof raw.win === 'object' ? clampWin(raw.win) : { ...DEFAULT_WIN },
-    leftTab: raw.leftTab === 'files' ? 'files' : 'info',
-    /* 左栏可收起：让位区本来就窄，收起后工作区能占满整块 */
-    leftHidden: raw.leftHidden === true,
     tabs: Array.isArray(raw.tabs) ? raw.tabs : [],
     activeTab: typeof raw.activeTab === 'string' ? raw.activeTab : '',
   }
@@ -458,6 +463,8 @@ export function enterProject(pid) {
   if (primary && !switched) toast('没找到宿主打开对话的入口，右侧可能停在别的对话', 'warn')
   loadSessions()
   if (!store.defaults.loaded) loadDefaults()
+  /* 没有左栏了：第一次进项目先把「文件」标签页摆出来，工作区不至于空着 */
+  if (!uiOf(pid).tabs.length) openTab(pid, 'files')
   /* 先登记项目根，再读目录：host 的路径白名单靠这次登记放行（D 盘项目尤其需要） */
   registerProjectRoot(project).finally(() => {
     loadTree(project.path)
@@ -622,24 +629,9 @@ export function setDockPx(pid, px, persist = false) {
   return patchUi(pid, { dock }, persist)
 }
 
-export function setSplit(pid, key, px, persist = false) {
-  const ui = uiOf(pid)
-  const split = { ...ui.split, [key]: Math.round(px) }
-  patchUi(pid, { split }, persist)
-}
-
 /** 拖拽松手时把当前 ui 落盘（不能依赖闭包里的旧宽度） */
 export function flushUi() {
   writeLS(LS.ui, store.ui)
-}
-
-export function setLeftTab(pid, tab) {
-  patchUi(pid, { leftTab: tab })
-}
-
-export function toggleLeft(pid) {
-  const ui = uiOf(pid)
-  patchUi(pid, { leftHidden: !ui.leftHidden })
 }
 
 /* ============================ 标签页 ============================ */
@@ -651,7 +643,7 @@ function tabKey(kind, extra) {
 export function openTab(pid, kind, opts = {}) {
   const ui = uiOf(pid)
   const key = tabKey(kind, opts.key)
-  const title = opts.title || (PANE_TABS.find((t) => t.id === kind)?.label || kind)
+  const title = opts.title || (tabDef(kind)?.label || kind)
   const exists = ui.tabs.some((t) => t.key === key)
   const tabs = exists ? ui.tabs : ui.tabs.concat([{ key, kind, title }])
   patchUi(pid, { tabs, activeTab: key })
