@@ -1,6 +1,6 @@
 # trae-usage-worktable（DSH 插件 · 0.8.11）
 
-> DeepSeek Harness 侧边栏的完整工作台。本目录是 `nscn6fdx44-crypto/trae-usage`
+> DeepSeek Harness 侧边栏的完整工作台。本目录是 `nscn6fdx44-crypto/dsh-worktable`
 > 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的**独立实现**：
 > 同款 Cordis 双 bundle 协议、同款交互模型，代码自己写、路由前缀自带
 > （`/api/trae-worktable/*`），不与上游抢路径。
@@ -282,7 +282,11 @@ npm test           # 离线自测：stub 掉宿主，不需启动 DSH
 
 ## 安装
 
-### 开发态：link 本地源码
+> **前置（两种方式通用）**：安装前必须从托盘**完整退出 DSH**（`DeepSeek Harness.exe` 进程全部退出），
+> 否则 CLI 会报 `profile "desktop" is managed exclusively by the Electron application`；装完再手动重开 DSH。
+> 兼容性见 `package.json` 的 `dsh.compatibility`（当前 `0.2.0-rc.2 || 0.2.1-rc.2`）。
+
+### 开发态：link 本地源码（开发者自己用）
 
 ```powershell
 & "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:<本仓库绝对路径>\dsh"
@@ -291,15 +295,20 @@ npm test           # 离线自测：stub 掉宿主，不需启动 DSH
 本机已 link：`~/.dsh/profiles/desktop/node_modules/trae-usage-worktable` → 本目录。
 改完 `src/` 执行 `npm run build` 并**重启 DSH**（client bundle 按 rev 缓存，不重启不生效）。
 
-### 发布态：tgz
+### 发布态：tgz（分发给别人）
 
 ```sh
 npm run build && npm pack
+# 产物：trae-usage-worktable-0.8.11.tgz（含 lib/ 构建产物，可直接安装）
 ```
 
+把 `.tgz` 发给对方，对方在 PowerShell 执行：
+
 ```powershell
-& "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<本仓库绝对路径>\dsh\trae-usage-worktable-0.8.0.tgz"
+& "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "C:\路径\trae-usage-worktable-0.8.11.tgz"
 ```
+
+重启 DSH 后侧边栏即出现「工作台」。
 
 ## 验收清单（重启 DSH 后）
 

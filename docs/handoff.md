@@ -19,7 +19,7 @@
 | 项 | 值 |
 |---|---|
 | 包名 | `trae-worktable` |
-| 远端 | `https://github.com/nscn6fdx44-crypto/trae-usage.git` |
+| 远端 | `https://github.com/nscn6fdx44-crypto/dsh-worktable.git` |
 | 分支 | `main`（与 `origin/main` **已同步**；发版 tag `v0.2.0-traework` 锚在 `b581b2d`） |
 | 已有 tag | `v0.1.0`（`acf383c`，扩展初始实现）、`v0.2.0-traework`（`b581b2d`，TraeWork 窗格模块化 + 本地服务） |
 | 提交作者 | 已统一为 `438567753@qq.com` |

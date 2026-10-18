@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 
-export const REPO = "nscn6fdx44-crypto/trae-usage";
+export const REPO = "nscn6fdx44-crypto/dsh-worktable";
 const RELEASES_LATEST = `https://api.github.com/repos/${REPO}/releases/latest`;
 
 export function compareSemver(a: string, b: string): number {

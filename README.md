@@ -1,12 +1,18 @@
 # Trae Worktable
 
-An independent re-implementation for **TraeCode IDE** of the open-source project [`Aisland-SJL/dsh-worktable`](https://github.com/Aisland-SJL/dsh-worktable) (MIT). The feature design is inspired by upstream; the code is written independently.
+A "worktable" toolkit that turns your projects into a side-panel app drawer with a dockable split workspace and a unified look — shipped in several forms.
+
+This repo is an independent re-implementation (MIT) of the open-source project [`Aisland-SJL/dsh-worktable`](https://github.com/Aisland-SJL/dsh-worktable); feature design inspired by upstream, code written independently.
 
 > 中文说明见 [README.zh.md](README.zh.md)
 
-The repository's **main deliverable** is the **single-file workbench**: a self-contained HTML file that scans the projects on **your own machine** — no extension, no install, no build, no dependency.
+**What's in this repo**
+- **DSH plugin** (`dsh/`) — DeepSeek Harness side-panel worktable: file browser / editor / terminal / browser / custom window / read-only git. This is the form the repo name `dsh-worktable` refers to.
+- **Single-file workbench** (`workbench/`) — a self-contained HTML page that scans your own machine's projects — no extension, no install, no build.
+- **TraeCode extension** (`src/`) — the same worktable as a TraeCode IDE extension.
+- **Skill** (`traework/`) — workbench features as a Skill + single-file HTML (data via CLI).
 
-**Try it online**: <https://nscn6fdx44-crypto.github.io/trae-usage/workbench/> — a pure static page (GitHub Pages). It opens empty; after one click you scan your own machine's projects in the browser.
+**Try the workbench online**: <https://nscn6fdx44-crypto.github.io/dsh-worktable/workbench/> — a pure static page (GitHub Pages).
 
 ---
 

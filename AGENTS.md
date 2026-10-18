@@ -5,7 +5,7 @@
 ## 1. 项目身份
 
 - 包名 `trae-worktable`，产物是 **TraeCode IDE 扩展**（VS Code 扩展格式）
-- 远端仓库：`https://github.com/nscn6fdx44-crypto/trae-usage`
+- 远端仓库：`https://github.com/nscn6fdx44-crypto/dsh-worktable`
 - 上游参考：`https://github.com/Aisland-SJL/dsh-worktable`（MIT）。本项目为**独立实现**，未复制其源代码，只参考了功能设计与工程纪律
 
 ## 2. 目录职责

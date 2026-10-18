@@ -17,7 +17,7 @@
 
 | 项 | 值 |
 |---|---|
-| 仓库 | `https://github.com/nscn6fdx44-crypto/trae-usage.git` |
+| 仓库 | `https://github.com/nscn6fdx44-crypto/dsh-worktable.git` |
 | 分支 | `feat/workbench`。`main` 尚未包含本线改动，`behind_by = 0` |
 | 本线提交 | `928cc34` 建 `workbench/` 产物 · `2835de8` 项目栏自定义添加与多选移除 · `8ee4280` 零服务扫描 + 兼容模式兜底 · `87d687e` Pages 根入口页（本文档本身是随后的一个 docs 提交） |
 | 本地服务端口 | 默认 `7331`，被占用自动递增；交接时本机仍有实例跑在 `7332` 与 `7333` |

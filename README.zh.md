@@ -1,12 +1,16 @@
 # Trae Worktable
 
-把项目收纳成侧边栏应用抽屉，并提供可停靠的分栏工作区与统一外观系统。
+把项目收纳成侧边栏应用抽屉，并提供可停靠的分栏工作区与统一外观系统 —— 以多种形式提供。
 
-本仓库是开源项目 [`Aisland-SJL/dsh-worktable`](https://github.com/Aisland-SJL/dsh-worktable)（MIT）在 **TraeCode IDE 上的独立复刻实现**。功能设计参考上游，代码为独立编写。
+本仓库是开源项目 [`Aisland-SJL/dsh-worktable`](https://github.com/Aisland-SJL/dsh-worktable)（MIT）的独立复刻实现。功能设计参考上游，代码为独立编写。
 
-本仓库的**主力产物**是 **workbench 单文件工作台**：一个自包含的 HTML 文件，扫描**你自己机器**上的项目——不装扩展、不装依赖、无构建。
+**本仓库包含**
 
-**在线试用**：<https://nscn6fdx44-crypto.github.io/trae-usage/workbench/> —— 纯静态页（GitHub Pages）。打开即是空页面，点一下就能在浏览器里扫描你自己机器的项目。
+- **DSH 插件**（`dsh/`）—— DeepSeek Harness 侧边栏工作台：文件浏览 / 编辑器 / 终端 / 浏览器 / 自定义窗口 / 只读 git。仓库名 `dsh-worktable` 指的就是它。
+- **单文件工作台**（`workbench/`）—— 自包含 HTML 单页，扫描你自己机器上的项目，不装扩展、不装依赖、无构建。
+- **TraeCode 扩展**（`src/`）—— 同上工作台，作为 TraeCode IDE 扩展。
+- **Skill**（`traework/`）—— 工作台功能打包为 Skill + 单文件 HTML（数据走 CLI）。
+**在线试用工作台**：<https://nscn6fdx44-crypto.github.io/dsh-worktable/workbench/> —— 纯静态页（GitHub Pages）。
 
 ---
 
