@@ -93,7 +93,7 @@ export function WorktableSidebar() {
       ),
     ),
 
-    el('p', { className: 'side-tip' }, '右击项目：模式 · 编辑 · 对话绑定 · 删除'),
+    el('p', { className: 'side-tip' }, '右击项目：编辑 · 对话绑定 · 删除'),
 
     /* 主区没开时由侧边栏承载菜单/小窗/toast；主区一开就交给它，避免重复挂载 */
     store.open ? null : el('div', { className: 'wt-hosts' }, el(ContextMenu), el(ModalHost), el(Toasts)),

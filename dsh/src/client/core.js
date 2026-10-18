@@ -309,12 +309,21 @@ export function primarySession(project) {
   return list.length ? list[0] : null
 }
 
+/**
+ * 项目灯 = 这个项目里**最需要你注意**的那个对话的状态：
+ * 待处理 > 进行中 > 主对话。只绑一个对话时与主对话完全一致。
+ */
 export function stateOf(pid) {
   const manual = store.status[pid]
   if (STATES[manual]) return manual
   const p = projectOf(pid)
-  const primary = p ? primarySession(p) : null
-  return primary ? normState(primary.state) : 'idle'
+  if (!p) return 'idle'
+  const list = sessionsOf(p)
+  if (!list.length) return 'idle'
+  const states = list.map((s) => normState(s.state))
+  if (states.includes('needs-you')) return 'needs-you'
+  if (states.includes('working')) return 'working'
+  return states[0]
 }
 
 export function stateSource(pid) {
@@ -503,14 +512,10 @@ export function enterProject(pid) {
   if (primary && !switched) toast('没找到宿主打开对话的入口，右侧可能停在别的对话', 'warn')
   loadSessions()
   if (!store.defaults.loaded) loadDefaults()
-  /* 没有左栏了：第一次进项目先把「文件管理器」标签页摆出来，工作区不至于空着 */
-  if (!uiOf(pid).tabs.length) openTab(pid, 'files')
-  /* 先登记项目根 + 对话工作目录，再读目录：host 的路径白名单靠这次登记放行 */
-  registerProjectRoot(project).finally(() => {
-    /* 文件管理器默认开在「这个对话的工作目录」，不是项目目录 */
-    loadTree(workspaceDirOf(project))
-    loadGit(pid)
-  })
+  /* 第一次进项目先摆「项目信息」：工作区不至于空着，也不会一进来就弹系统窗口 */
+  if (!uiOf(pid).tabs.length) openTab(pid, INFO_TAB.id, { silent: true })
+  /* 先登记项目根 + 对话工作目录：host 的路径白名单靠这次登记放行 */
+  registerProjectRoot(project).finally(() => { loadGit(pid) })
 }
 
 export function closeOverlay() {
@@ -696,6 +701,11 @@ export function openTab(pid, kind, opts = {}) {
   const exists = ui.tabs.some((t) => t.key === key)
   const tabs = exists ? ui.tabs : ui.tabs.concat([{ key, kind, title }])
   patchUi(pid, { tabs, activeTab: key })
+  /* 文件管理器不画列表：打开这个标签页 = 让系统资源管理器弹出该目录 */
+  if (kind === 'files' && pid !== GRID_PID && !opts.silent) {
+    const p = projectOf(pid)
+    if (p) revealPath(workspaceDirOf(p))
+  }
 }
 
 export function closeTab(pid, key) {
@@ -709,6 +719,26 @@ export function closeTab(pid, key) {
 
 export function setActiveTab(pid, key) {
   patchUi(pid, { activeTab: key })
+}
+
+/* ============================ 文件管理器（交给系统窗口） ============================ */
+
+/**
+ * 让操作系统的文件管理器打开这个路径。
+ * 本插件不再自绘文件列表：点「文件管理器」标签页 = 直接弹系统窗口，
+ * 面板里只留路径、说明和「再打开一次」的按钮。
+ */
+export async function revealPath(path, opts = {}) {
+  const target = String(path || '').trim()
+  if (!target) { toast('没有可打开的目录', 'warn'); return false }
+  try {
+    const data = await apiPost('/fs/reveal', { path: target, select: opts.select === true }, { timeout: 8000 })
+    if (data && data.ok === false) throw new Error(data.error || '打开失败')
+    return true
+  } catch (err) {
+    toast('没能打开系统文件管理器：' + String(err?.message ?? err), 'warn')
+    return false
+  }
 }
 
 /* ============================ 文件树 ============================ */

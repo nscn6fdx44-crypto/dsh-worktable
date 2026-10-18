@@ -107,9 +107,9 @@ export function apply(ctx) {
   /* 心跳：控制室计时 */
   ctx.effect(() => startTicker(), 'trae-usage-worktable: ticker')
 
-  /* 会话快照轮询：只读宿主内存，不调模型。10s 一次，状态灯才跟得上对话 */
+  /* 会话快照轮询：只读宿主内存，不调模型。4s 一次，状态灯才跟得上对话 */
   ctx.effect(() => {
-    const timer = setInterval(() => { loadSessions() }, 10_000)
+    const timer = setInterval(() => { loadSessions() }, 4_000)
     return () => clearInterval(timer)
   }, 'trae-usage-worktable: poll')
 

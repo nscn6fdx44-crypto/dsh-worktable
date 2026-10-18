@@ -1,11 +1,11 @@
-# trae-usage-worktable（DSH 插件 · 0.8.1）
+# trae-usage-worktable（DSH 插件 · 0.8.2）
 
 > DeepSeek Harness 侧边栏的完整工作台。本目录是 `nscn6fdx44-crypto/trae-usage`
 > 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的**独立实现**：
 > 同款 Cordis 双 bundle 协议、同款交互模型，代码自己写、路由前缀自带
 > （`/api/trae-worktable/*`），不与上游抢路径。
 
-## 能力（0.8.1）
+## 能力（0.8.2）
 
 | 半侧 | 文件 | 内容 |
 |---|---|---|
@@ -24,9 +24,14 @@
 4. **不再单列宿主会话**——那份列表与项目列表信息重复，宿主会话统一在「绑定对话」里选；
 5. 右击项目：编辑 / 绑定对话 / 删除（模式项随窗口模式一起删了）。
 
-> 状态更新：客户端每 **10s** 拉一次 `/sessions`，host 每次请求都重读事件日志；
-> 判定活跃会话不再依赖列表行的 `live` 标记（持久化列表常常没有这个字段），
-> 只要 `sessions.get(id)` 还能取到日志就按活会话算 —— 这就是之前「状态不动」的原因。
+> 状态来源（0.8.2 起）：**以 DSH 自己的 `agent.status` 为准**——host 通过 `ctx.agents.get(sessionId)`
+> 拿到该会话的 Agent，`status` 只有 `running` / `idle` 两档，这是宿主维护的权威状态；
+> 只有 Agent 已卸载的老会话才退回扫事件日志（`turn/start` vs `turn/end`）。
+> 「待处理」= `agent.status === 'running'` 且日志里最后一次 `approval/asked` 晚于 `approval/decided`。
+> 客户端每 **4s** 拉一次 `/sessions`，host 每次请求都重读，状态灯这才跟得上。
+>
+> 项目灯取**最需要注意**的那个对话：`待处理 > 进行中 > 主对话`（见 `stateOf()`）。
+> 进项目后顶栏只留**一盏**灯（左侧那盏 = 项目聚合状态），对话气泡里不再重复放灯。
 
 ### 总览（`shell.overlay`）：也是一个「贴着对话的窗口」
 
@@ -61,18 +66,20 @@
 
 - **没有左栏**（0.7.1 删除）：项目信息与文件浏览都改成标签页，整块让位区都归工作区；
 - **标签页**可同时开多个：`🗂 文件管理器` / `◆ 编辑器` / `›_ 终端` / `◍ 浏览器` / `❖ 自定义`，
-  另有 `ⓘ 项目信息`（状态 / 绑定对话 / git 状态与最近提交）从顶栏按钮打开；首次进项目自动开文件管理器；
-  - **文件管理器**：**默认开在这个项目「对话的工作目录」**（主绑定会话的 `cwd`），
-    不是项目目录；顶栏可一键切「💬 对话目录 / 📁 项目目录」，`↑` 上级、`⟳` 刷新、
-    路径可复制，也可输入绝对路径跳转；点文件自动开编辑器，点目录进入；
-    对话的 cwd 会被单独登记进 host 路径白名单（`<项目id>~cwd`），D 盘目录也能读；
+  另有 `ⓘ 项目信息`（状态 / 绑定对话 / git 状态与最近提交）从顶栏按钮打开；首次进项目自动开「项目信息」；
+  - **文件管理器 = 系统窗口**（0.8.2 起不再自绘目录树）：点这个标签页直接让**系统的文件管理器**
+    （Windows 资源管理器 / macOS Finder / Linux 默认）弹出**该对话的工作目录**；
+    标签页本身只剩一张说明卡：路径 + `📂 在系统文件管理器中打开` + `📁 打开项目目录`
+    + 任意绝对路径输入框。重复点标签页会再弹一次；进项目不会自动弹。
+    目录经 host 的 `/fs/reveal` 打开，路径同样走白名单（对话 cwd 登记为 `<项目id>~cwd`）；
   - **编辑器**：读文件、改、`Ctrl+S` 保存回磁盘（原子写：临时文件 + rename）；
+    空态可以直接填文件绝对路径打开（文件列表已交给系统窗口，不再点选）；
   - **终端**：把命令交给宿主所在机器执行，NDJSON 流式回显；`cd` 由 host 接管并保持；
     `↑↓` 翻历史、`Ctrl+L` 清屏、可中断、120s 超时、512KB 输出上限；
   - **浏览器**：iframe + 地址栏；默认打项目的静态托管地址，也可填 `localhost` 开发服务器；
   - **自定义**：左边写 HTML、右边实时预览（iframe sandbox）。
 - **进项目即切对话**：把宿主切到项目的主绑定对话（`uiWorkspace.openSession`，
-  缺席时退到 `sessions.open`），所见即所聊；顶栏气泡显示当前主对话与状态灯。
+  缺席时退到 `sessions.open`），所见即所聊；顶栏左侧一盏状态灯 + 对话气泡里只写标题。
 - **绑定只有一个入口**：右击项目（或卡片按钮 / 顶栏气泡）打开的同一张小窗里，
   点会话即绑定、再点即解绑、`设为主` 切换主对话；不再有单独的「解除绑定」菜单项。
 - **新建项目时可以直接开一个新对话**：绑定下拉里有「＋ 新建对话（用项目目录）」，
@@ -90,7 +97,7 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/health` | 版本 / 平台 / 服务可用性 / 上限常量 |
-| GET | `/sessions` | `{ ok, at, source, counts:{running,waiting,done,idle,total}, sessions:[{id,title,cwd,state,live,updatedAt,turns}] }` |
+| GET | `/sessions` | `{ ok, at, source, counts:{running,waiting,done,idle,total}, sessions:[{id,title,cwd,state,live,agent,updatedAt,turns}] }` |
 | GET | `/defaults` | `{ workspace, home, platform, shell }`（新建项目的默认目录） |
 | POST | `/transcript` | `{ sessionId, limit }` → `{ ok, title, cwd, messages:[{id,role,text,time}], truncated }` |
 | POST | `/fs/list` | `{ path }` → `{ path, name, parent, entries:[{name,dir,link,size,mtime}], total, truncated }` |
@@ -164,8 +171,8 @@ dsh/
 │       ├── modals.js   # 新建 / 编辑 / 绑定
 │       └── theme.css   # 全套样式（收在 .wt-scope 下）
 ├── test/
-│   ├── host-routes.mjs # 57 项：路由 / 沙箱 / 文件 / git / 托管 / 终端 / 四态判定
-│   └── client-smoke.mjs# 113 项：座位 / 侧边栏四态 / 菜单 / 让位换算 / 文件管理器 / 标签页
+│   ├── host-routes.mjs # 63 项：路由 / 沙箱 / 文件 / reveal / git / 托管 / 终端 / 四态判定
+│   └── client-smoke.mjs# 113 项：座位 / 侧边栏四态 / 菜单 / 让位换算 / 系统文件管理器 / 标签页
 └── lib/                # 构建产物（安装前必须 build）
 ```
 
@@ -243,7 +250,7 @@ npm run build && npm pack
 
 ## 与上游的差异（有意为之）
 
-| 项 | 上游 0.4.0 | 本插件 0.8.1 |
+| 项 | 上游 0.4.0 | 本插件 0.8.2 |
 |---|---|---|
 | 右侧对话 | 宿主会话视图让位（margin + CSS 变量），可真实输入 | 给宿主中心列写 `marginLeft` 让位，右侧就是原生会话（真能输入） |
 | 终端 | node-pty + WebSocket，真 PTY | 每命令一进程 + NDJSON 流，无原生依赖 |

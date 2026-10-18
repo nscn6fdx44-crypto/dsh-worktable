@@ -8,7 +8,7 @@ import { el, Icon, Light } from './ui.js'
 import {
   store, useStore, STATES, normState, fmtSize, fmtDuration, relTime, shortPath, projEmoji,
   loadTree, openFile, editText, saveFile, termExec, termKill, termClear, loadGit,
-  workspaceDirOf, samePath,
+  workspaceDirOf, samePath, revealPath,
   sessionsOf, primarySession, stateOf, jumpToSession,
   openModal, siteUrlOf, setWebUrl, setCustomHtml, cycleStatus, updateProject, projectOf, toast,
 } from './core.js'
@@ -94,86 +94,55 @@ export function InfoPane({ project }) {
   )
 }
 
-/* ============================ 文件浏览（标签页） ============================ */
+/* ============================ 文件管理器（系统窗口） ============================ */
 
 /**
- * 文件管理器：默认开在 **这个项目的对话工作目录**（主绑定会话的 cwd），
- * 顶栏可一键切回「项目目录」，也能输入绝对路径跳转。
+ * 文件管理器：**不再自己画目录树**，直接交给系统的文件管理器（Windows 资源管理器）。
+ * 点「🗂 文件管理器」标签页时 core.openTab 已经弹过一次；这里只留路径、
+ * 说明和「再打开一次」的按钮，外加一个任意路径的入口。
  */
 export function FilesPane({ project }) {
   useStore()
-  const tree = store.tree
   const [pathInput, setPathInput] = useState('')
+  const [opening, setOpening] = useState('')
 
   const workDir = workspaceDirOf(project)
   const projDir = String(project.path || '')
-  const cur = tree.path || workDir
-  const atWork = !!workDir && samePath(cur, workDir)
-  const atProj = !!projDir && samePath(cur, projDir)
   const primary = primarySession(project)
+  const cur = opening || workDir
 
-  const up = () => { if (tree.path) loadTree(tree.path.replace(/[\\/][^\\/]+$/, '') || tree.root) }
-  const enter = () => { const p = pathInput.trim(); if (p) { loadTree(p); setPathInput('') } }
+  const open = async (dir) => {
+    const target = String(dir || '').trim()
+    if (!target) return
+    setOpening(target)
+    const ok = await revealPath(target)
+    if (!ok) setOpening('')
+  }
+  const enter = () => { const p = pathInput.trim(); if (p) { open(p); setPathInput('') } }
 
-  return el('div', { className: 'pane-body files-body' },
-    el('div', { className: 'files-bar' },
-      el('button', { type: 'button', className: 'mini-btn', title: '上级目录', onClick: up }, '↑'),
-      el('button', { type: 'button', className: 'mini-btn', title: '刷新', onClick: () => loadTree(cur) }, '⟳'),
-      el('span', { className: 'files-path mono', title: cur }, cur || '（没有可打开的目录）'),
-    ),
-    el('div', { className: 'files-bar files-loc' },
-      el('button', {
-        type: 'button', className: 'mini-btn' + (atWork ? ' on' : ''),
-        title: primary ? '对话工作目录：' + workDir + '（' + (primary.title || primary.id) + '）' : '还没绑定对话，退回项目目录',
-        onClick: () => workDir && loadTree(workDir),
-      }, '💬 对话目录'),
-      projDir && !samePath(projDir, workDir)
-        ? el('button', {
-          type: 'button', className: 'mini-btn' + (atProj ? ' on' : ''),
-          title: '项目目录：' + projDir,
-          onClick: () => loadTree(projDir),
-        }, '📁 项目目录')
-        : null,
-      el('span', { className: 'files-hint mono' }, primary && primary.cwd
-        ? '跟随对话 ' + primary.cwd
-        : '未绑定对话的工作目录，显示项目目录'),
-    ),
-    el('div', { className: 'files-jump' },
-      el('input', {
-        className: 'mono', value: pathInput, placeholder: '输入绝对路径跳转，回车打开…', autoComplete: 'off',
-        onChange: (e) => setPathInput(e.target.value),
-        onKeyDown: (e) => { if (e.key === 'Enter') enter() },
-      }),
-    ),
-    tree.state === 'error'
-      ? el('div', { className: 'pane-error' },
-        el('p', null, '读取失败：' + tree.error),
-        el('button', { type: 'button', className: 'btn small', onClick: () => loadTree(cur) }, '重试'),
-      )
-      : null,
-    el('div', { className: 'files-list' },
-      tree.state === 'loading' && !tree.entries.length
-        ? el('p', { className: 'wt-mute' }, '读取中…')
-        : tree.entries.length
-          ? tree.entries.map((ent) => el('button', {
-            key: ent.name,
-            type: 'button',
-            className: 'frow' + (store.editor.path && store.editor.path.endsWith(ent.name) ? ' active' : ''),
-            title: ent.name + (ent.dir ? '（目录）' : '  ' + fmtSize(ent.size)),
-            onClick: () => {
-              const next = joinPath(cur, ent.name)
-              if (ent.dir) loadTree(next)
-              else openFile(next, project.id)
-            },
-            onDoubleClick: () => { if (ent.dir) loadTree(joinPath(cur, ent.name)) },
-          },
-            el('span', { className: 'f-ico', 'aria-hidden': 'true' }, ent.dir ? '📁' : fileEmoji(ent.name)),
-            el('span', { className: 'f-name' }, ent.name),
-            ent.link ? el('span', { className: 'f-tag' }, 'link') : null,
-            ent.dir ? el('span', { className: 'f-tag' }, '›') : el('span', { className: 'f-size mono' }, fmtSize(ent.size)),
-          ))
-          : el('p', { className: 'wt-mute' }, tree.state === 'loading' ? '读取中…' : '目录为空'),
-      tree.truncated ? el('p', { className: 'wt-mute' }, '条目过多，仅显示前 ' + tree.entries.length + ' 项') : null,
+  return el('div', { className: 'pane-body files-body files-sys' },
+    el('div', { className: 'sfc' },
+      el('div', { className: 'sfc-ico', 'aria-hidden': 'true' }, '📂'),
+      el('h3', { className: 'sfc-title' }, '文件浏览在系统窗口里'),
+      el('p', { className: 'sfc-path mono', title: cur }, cur || '（没有可打开的目录）'),
+      el('p', { className: 'sfc-hint' }, primary && primary.cwd
+        ? '跟随对话：' + (primary.title || primary.id) + ' · ' + primary.cwd
+        : '这个项目还没绑定对话，用项目目录'),
+      el('div', { className: 'sfc-actions' },
+        el('button', { type: 'button', className: 'btn primary', onClick: () => open(workDir) }, '📂 在系统文件管理器中打开'),
+        projDir && !samePath(projDir, workDir)
+          ? el('button', { type: 'button', className: 'btn', onClick: () => open(projDir) }, '📁 打开项目目录')
+          : null,
+      ),
+      el('div', { className: 'sfc-jump' },
+        el('input', {
+          className: 'mono', value: pathInput, autoComplete: 'off',
+          placeholder: '也可以输入任意绝对路径，回车用系统窗口打开…',
+          onChange: (e) => setPathInput(e.target.value),
+          onKeyDown: (e) => { if (e.key === 'Enter') enter() },
+        }),
+      ),
+      el('p', { className: 'sfc-note' }, '再点一次「🗂 文件管理器」标签页会重新打开系统窗口；这个标签页不再自己画目录树。'),
     ),
   )
 }
@@ -202,6 +171,13 @@ export function EditorPane({ project }) {
   const ed = store.editor
   const dirty = ed.state === 'ok' && ed.text !== ed.saved
   const area = useRef(null)
+  const [openPath, setOpenPath] = useState('')
+  const doOpen = () => {
+    const p = openPath.trim()
+    if (!p) return
+    openFile(p, project?.id)
+    setOpenPath('')
+  }
 
   useEffect(() => {
     const onKey = (e) => {
@@ -219,7 +195,16 @@ export function EditorPane({ project }) {
       el('div', { className: 'pane-empty' },
         el('span', { className: 'pe-ico' }, '◆'),
         el('p', null, '还没有打开文件'),
-        el('p', { className: 'hint' }, '在「文件管理器」里点一个文本文件，就能在这里查看与编辑；Ctrl+S 保存到磁盘。'),
+        el('p', { className: 'hint' }, '填一个文件绝对路径直接打开（文件管理器现在走系统窗口）；Ctrl+S 保存到磁盘。'),
+        el('div', { className: 'ed-open' },
+          el('input', {
+            className: 'mono', value: openPath, autoComplete: 'off',
+            placeholder: 'C:\\projects\\demo\\README.md',
+            onChange: (e) => setOpenPath(e.target.value),
+            onKeyDown: (e) => { if (e.key === 'Enter') doOpen() },
+          }),
+          el('button', { type: 'button', className: 'btn small', onClick: doOpen }, '打开'),
+        ),
       ),
     )
   }

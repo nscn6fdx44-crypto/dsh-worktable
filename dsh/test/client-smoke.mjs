@@ -7,7 +7,7 @@
  *   - 总览 / 项目工作区：宿主会话区都让位到右侧，工作台只占左边，右侧是宿主原生对话
  *     两者共用同一套外壳（顶栏 + 面板 + 右边缘拖动条），铺满对话左侧那块
  *   - 工作台只有一种形态：铺满让位区，没有浮动窗口
- *   - 侧边栏状态框只记四态；文件管理器默认开在对话工作目录
+ *   - 侧边栏状态框只记四态；文件管理器交给系统窗口（点标签页即弹出）
  *   - 让位宽度换算（computeDock）
  *   - 新建项目小窗、对话绑定小窗
  */
@@ -65,10 +65,14 @@ const fakeGitLog = { ok: true, commits: [{ hash: 'a1b2c3d', date: '2026-10-01', 
 const fakeGitBranches = { ok: true, branches: ['main'] }
 
 let lastListPath = ''
+const reveals = []
 globalThis.fetch = async (url, opts) => {
   const u = String(url)
   if (u.endsWith('/fs/list')) {
     try { lastListPath = String(JSON.parse(String(opts?.body || '{}')).path || '') } catch { lastListPath = '' }
+  }
+  if (u.endsWith('/fs/reveal')) {
+    try { reveals.push(JSON.parse(String(opts?.body || '{}'))) } catch { /* ignore */ }
   }
   const body = u.endsWith('/sessions') ? fakeSessions
     : u.endsWith('/defaults') ? fakeDefaults
@@ -264,11 +268,9 @@ check('不再自绘对话栏（右侧交给宿主）', allByClass(overlay, /pane
 check('工作台内没有左栏（已删除）', allByClass(overlay, /pane-left/).length === 0, allByClass(overlay, /pane-left/).length)
 check('分割条只剩「工作台 / 对话」一条', allByClass(overlay, /split-handle/).length === 1, allByClass(overlay, /split-handle/).length)
 check('让位边界是 dock-edge', allByClass(overlay, /dock-edge/).length === 1)
-check('进项目自动打开文件管理器', allByClass(overlay, /files-body/).length === 1, allByClass(overlay, /files-body/).length)
-check('文件管理器标签页叫「文件管理器」', textOf(overlay).includes('文件管理器'), textOf(overlay).slice(0, 90))
-check('文件管理器默认打开「对话工作目录」', lastListPath.replace(/\\/g, '/') === 'C:/demo/app-alpha', lastListPath)
-check('文件管理器有「对话目录 / 项目目录」入口', textOf(overlay).includes('💬 对话目录') && textOf(overlay).includes('📁 项目目录'), textOf(overlay).slice(0, 120))
-check('文件管理器标出跟随的对话目录', textOf(overlay).includes('跟随对话'), textOf(overlay).slice(0, 140))
+check('进项目默认打开「项目信息」标签页', allByClass(overlay, /info-body/).length === 1, allByClass(overlay, /info-body/).length)
+check('进项目不会自动弹系统文件管理器', reveals.length === 0, JSON.stringify(reveals))
+check('标签栏里挂着「文件管理器」', textOf(overlay).includes('文件管理器'), textOf(overlay).slice(0, 90))
 check('顶栏有「项目信息」按钮', textOf(overlay).includes('项目信息'))
 const chatPill = allByClass(overlay, /dh-chat/)[0]
 check('顶栏标出右侧对话（主绑定）', !!chatPill && !/off/.test(chatPill.props.className), chatPill && chatPill.props.className)
@@ -332,20 +334,21 @@ check('顶栏「项目信息」按标签页打开', allByClass(overlay, /info-bo
 check('项目信息显示绑定对话数', /绑定对话/.test(textOf(overlay)))
 check('git 区块渲染分支', textOf(overlay).includes('main'), textOf(allByClass(overlay, /git-box/)[0] || overlay).slice(0, 80))
 
-/* 切到「文件管理器」并打开文件 */
+/* 「文件管理器」= 直接弹系统窗口，面板里只剩一张说明卡 */
 clickByLabel(overlay, '🗂 文件管理器')
-overlay = render(overlayComp)
-const filesText = textOf(overlay)
-check('文件标签页列出目录条目', filesText.includes('src') && filesText.includes('README.md') && filesText.includes('main.c'), filesText.slice(0, 90))
-check('文件条目显示大小', /128|2 KB|KB/.test(filesText), filesText.slice(0, 120))
-
-clickByLabel(overlay, 'README.md')
 await new Promise((r) => setTimeout(r, 30))
 overlay = render(overlayComp)
-const editor = allByClass(overlay, /ed-area/)[0]
-check('点击文件后打开编辑器标签页', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 3, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
-check('编辑器渲染文件内容', !!editor && String(editor.props.value).includes('固件说明'), editor && String(editor.props.value).slice(0, 40))
-check('编辑器有保存按钮', textOf(overlay).includes('保存'))
+check('打开文件管理器就调系统窗口', reveals.length === 1, JSON.stringify(reveals))
+check('系统窗口打开的是对话工作目录', String(reveals[0]?.path || '').replace(/\\/g, '/') === 'C:/demo/app-alpha', JSON.stringify(reveals[0]))
+check('文件管理器面板是说明卡（不再画目录树）', allByClass(overlay, /(^|\s)sfc(\s|$)/).length === 1 && allByClass(overlay, /files-list/).length === 0, allByClass(overlay, /files-list/).length)
+check('说明卡有「在系统文件管理器中打开」按钮', textOf(overlay).includes('在系统文件管理器中打开'))
+check('说明卡标出跟随的对话目录', textOf(overlay).includes('跟随对话'), textOf(overlay).slice(0, 120))
+check('说明卡显示对话工作目录', /C:[\\/]+demo[\\/]+app-alpha/.test(textOf(overlay)), textOf(overlay).slice(0, 160))
+
+/* 编辑器：不再从文件列表点，空态直接填路径 */
+clickByLabel(overlay, '◆ 编辑器')
+overlay = render(overlayComp)
+check('编辑器空态有路径输入与「打开」按钮', allByClass(overlay, /ed-open/).length === 1 && textOf(overlay).includes('打开'), textOf(overlay).slice(0, 100))
 
 /* 打开终端标签页 */
 clickByLabel(overlay, '终端')

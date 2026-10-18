@@ -3,6 +3,7 @@
  *
  * 覆盖：health、sessions 四态、defaults、transcript；
  *      fs/list、fs/read、fs/write、fs/mkdir、fs/rename（含原子写与越界拦截）；
+ *      fs/reveal（交给系统文件管理器，dry-run 不真弹窗）；
  *      git status/log；project/register + /site 静态托管；term/exec NDJSON 流。
  */
 import { apply } from '../lib/index.js'
@@ -201,6 +202,25 @@ check('fs/list 拒绝相对路径', relPath.status === 400, relPath.body.slice(0
 
 const outside = await call(BASE + '/fs/write', { path: (process.env.SystemRoot || 'C:\\Windows') + '\\wt-should-not-exist.txt', text: 'x' })
 check('fs/write 拒绝白名单外路径', outside.status === 403, outside.body.slice(0, 80))
+
+/* 交给系统文件管理器：只校验路径与返回结构，dry-run 下不真弹资源管理器 */
+process.env.WORKTABLE_OPEN_DRYRUN = '1'
+const rev = await call(BASE + '/fs/reveal', { path: tmp })
+const rvj = JSON.parse(rev.body)
+check('fs/reveal 200 + dryRun', rev.status === 200 && rvj.ok === true && rvj.dryRun === true, rev.body.slice(0, 90))
+check('fs/reveal 回传真实路径', typeof rvj.path === 'string' && rvj.path.length > 0, rvj.path)
+const revFile = await call(BASE + '/fs/reveal', { path: join(tmp, 'note.md'), select: true })
+const rfj = JSON.parse(revFile.body)
+check('fs/reveal 支持选中文件', revFile.status === 200 && rfj.select === true, revFile.body.slice(0, 80))
+
+const revMissing = await call(BASE + '/fs/reveal', { path: join(tmp, 'nope-dir') })
+check('fs/reveal 不存在 → 404', revMissing.status === 404, revMissing.body.slice(0, 60))
+
+const revRel = await call(BASE + '/fs/reveal', { path: 'relative/dir' })
+check('fs/reveal 拒绝相对路径', revRel.status === 400, revRel.body.slice(0, 60))
+
+const revOut = await call(BASE + '/fs/reveal', { path: (process.env.SystemRoot || 'C:////Windows') + '\\System32' })
+check('fs/reveal 白名单外 → 403', revOut.status === 403, revOut.body.slice(0, 70))
 
 const ssh = await call(BASE + '/fs/list', { path: join(homedir(), '.ssh') })
 check('fs/list 拒绝凭证目录', ssh.status === 403, ssh.body.slice(0, 80))

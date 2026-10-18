@@ -238,6 +238,20 @@ export function apply(ctx) {
     sendJson(res, 200, { path: target, dir: st.isDirectory(), size: st.size, mtime: st.mtimeMs })
   })})
 
+  /* 用系统文件管理器打开（Windows 资源管理器 / macOS Finder / Linux 默认）。
+     本插件不再自绘文件列表 —— 文件浏览整个交给系统窗口。
+     离线测试用 WORKTABLE_OPEN_DRYRUN=1：照常校验路径，但不真的弹窗口。 */
+  register({ kind: 'exact', path: BASE + '/fs/reveal', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const target = await assertExisting(body?.path, 'any')
+    const select = body?.select === true
+    const dryRun = process.env.WORKTABLE_OPEN_DRYRUN === '1'
+    if (!dryRun) openInSystem(target, select)
+    sendJson(res, 200, { ok: true, path: target, select, dryRun })
+  })})
+
   /* ---------- 终端（NDJSON 流） ---------- */
 
   register({ kind: 'exact', path: BASE + '/term/exec', handler: guard(async (req, res) => {
@@ -409,6 +423,9 @@ async function collectSessions(ctx) {
   const at = Date.now()
   const sessionsSvc = service(ctx, 'sessions')
   const querySvc = service(ctx, 'sessionQuery')
+  /* agents 注册表：agent.status 是 DSH 自己维护的 'running' / 'idle'，
+     比我们从事件日志推断「这一轮开没开」可靠得多 —— 状态灯对不上的根因就在这。 */
+  const agentsSvc = service(ctx, 'agents')
 
   let rows = []
   let source = 'live'
@@ -447,9 +464,11 @@ async function collectSessions(ctx) {
     const session = sessionsSvc && typeof sessionsSvc.get === 'function'
       ? safe(() => sessionsSvc.get(id))
       : null
+    const agent = agentsSvc && typeof agentsSvc.get === 'function' ? safe(() => agentsSvc.get(id)) : null
+    const agentStatus = agent ? String(safe(() => agent.status) || '') : ''
     const observed = readSessionState(session)
-    const live = row?.live === true || isLiveSession(session)
-    const state = pickState(live, observed)
+    const live = row?.live === true || isLiveSession(session) || !!agent
+    const state = pickState(live, observed, agentStatus)
     counts[state] = (counts[state] ?? 0) + 1
     counts.total += 1
     out.push({
@@ -458,6 +477,7 @@ async function collectSessions(ctx) {
       cwd: typeof header.cwd === 'string' ? header.cwd : '',
       state,
       live,
+      agent: agentStatus || undefined,
       persisted: row?.persisted === true,
       createdAt: Number(header.createdAt) || 0,
       updatedAt: observed.updatedAt || Number(header.createdAt) || 0,
@@ -611,7 +631,15 @@ function isLiveSession(session) {
   return Number(safe(() => session.seq)) > 0
 }
 
-function pickState(live, observed) {
+/**
+ * 四态判定，优先级：
+ *   1. agent.status（DSH 权威状态）—— running 时再用事件里的审批记录区分「进行中 / 待处理」；
+ *   2. 退回到事件日志推断（agent 已卸载的历史会话、或者宿主没挂 agents 服务时）；
+ *   3. 都没有就按「有没有跑过一轮」分 done / idle。
+ */
+function pickState(live, observed, agentStatus) {
+  if (agentStatus === 'running') return observed.pendingApproval ? 'waiting' : 'running'
+  if (agentStatus === 'idle') return observed.turns > 0 ? 'done' : 'idle'
   if (live && observed.openTurn) return observed.pendingApproval ? 'waiting' : 'running'
   if (observed.turns > 0) return 'done'
   return 'idle'
@@ -674,6 +702,27 @@ function safeTitle(header, observed) {
   }
   const id = String(header?.id ?? '')
   return id ? id.slice(0, 18) : '未命名会话'
+}
+
+/* ============================ 系统文件管理器 ============================ */
+
+/**
+ * 把路径交给操作系统的文件管理器。目录 → 打开该目录；文件 + select → 在资源管理器里选中它。
+ * explorer.exe 的退出码不可信（正常打开也常返回 1），这里只关心「有没有弹出来」。
+ */
+function openInSystem(target, select) {
+  const done = () => { /* 忽略退出码 */ }
+  try {
+    if (process.platform === 'win32') {
+      execFile('explorer.exe', [select ? '/select,' + target : target], { windowsHide: true }, done)
+      return
+    }
+    if (process.platform === 'darwin') {
+      execFile('open', select ? ['-R', target] : [target], done)
+      return
+    }
+    execFile('xdg-open', [select ? dirname(target) : target], done)
+  } catch { /* 打不开就算了，前端会提示 */ }
 }
 
 /* ============================ git ============================ */

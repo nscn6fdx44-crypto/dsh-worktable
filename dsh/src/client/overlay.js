@@ -171,7 +171,7 @@ function ProjectsTab({ projects }) {
       el(AddCard),
       projects.length ? null : el('div', { className: 'empty' }, '还没有项目，点「＋ 新建」开始'),
     ),
-    el('p', { className: 'grid-note' }, '右击项目或卡片：模式 · 编辑 · 绑定 · 删除 · 隐藏'),
+    el('p', { className: 'grid-note' }, '右击项目或卡片：编辑 · 绑定 · 删除 · 隐藏'),
   )
 }
 
@@ -308,8 +308,8 @@ function Workspace({ project, ui, geo }) {
         el(Light, { pid: project.id }),
         el('span', { className: 'dh-dot', 'aria-hidden': 'true' }, '·'),
         el('span', { className: 'dh-sub mono', title: project.path }, shortPath(project.path || '未设置目录', 30)),
+        /* 状态灯只留左边那一个（项目聚合状态）；这里别再放灯，两个灯会互相打脸 */
         primary ? el('span', { className: 'dh-chat', title: '右侧对话：' + (primary.title || primary.id) },
-          el('span', { className: 'light ' + normState(primary.state), 'aria-hidden': 'true' }),
           String(primary.title || primary.id).slice(0, 14),
         ) : el('span', { className: 'dh-chat off' }, '未绑定对话'),
       ),
@@ -375,7 +375,7 @@ function MainPane({ project, ui, nest }) {
         el('div', { className: 'pane-empty' },
           el('span', { className: 'pe-ico' }, '◫'),
           el('p', null, '工作区还没有打开任何窗口'),
-          el('p', { className: 'hint' }, '用右上角的按钮打开「文件管理器」/ 编辑器 / 终端 / 浏览器 / 自定义窗口；在文件管理器里点文件会自动开编辑器。'),
+          el('p', { className: 'hint' }, '用右上角的按钮打开「文件管理器」/ 编辑器 / 终端 / 浏览器 / 自定义窗口；文件管理器会直接弹系统窗口。'),
           el('div', { className: 'pe-actions' },
             PANE_TABS.map((t) => el('button', {
               key: t.id, type: 'button', className: 'btn small',
