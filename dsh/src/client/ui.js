@@ -19,7 +19,8 @@ export function el(tag, props, ...children) {
     kids.push(c)
   }
   children.forEach(push)
-  return createElement(tag, props, kids.length ? kids : undefined)
+  /* 展开成多个 child 而不是传数组：数组 child 会让 React 当成 list 要求 key */
+  return kids.length ? createElement(tag, props, ...kids) : createElement(tag, props)
 }
 
 /* ============================ 图标 ============================ */

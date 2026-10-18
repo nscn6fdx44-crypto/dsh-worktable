@@ -115,12 +115,13 @@ function AddProjectModal() {
 function EditProjectModal({ pid }) {
   useStore()
   const project = projectOf(pid)
+  /* hooks 必须在任何 early return 之前：项目被删时仍要保持调用顺序一致 */
+  const [name, setName] = useState(project ? (project.alias || project.name) : '')
+  const [path, setPath] = useState(project ? (project.path || '') : '')
+  const [icon, setIcon] = useState(project ? (project.icon || '') : '')
+  const [note, setNote] = useState(project ? (project.note || '') : '')
+  const [folder, setFolder] = useState(project ? (project.folder || '') : '')
   if (!project) return null
-  const [name, setName] = useState(project.alias || project.name)
-  const [path, setPath] = useState(project.path || '')
-  const [icon, setIcon] = useState(project.icon || '')
-  const [note, setNote] = useState(project.note || '')
-  const [folder, setFolder] = useState(project.folder || '')
 
   const save = () => {
     if (!String(name).trim()) return
