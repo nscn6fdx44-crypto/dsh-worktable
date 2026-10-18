@@ -229,7 +229,10 @@ check('侧边栏根节点带 wt-side', !!(sidebar && /wt-side/.test(sidebar.prop
 const sideText = textOf(sidebar)
 check('侧边栏有标题「工作台」', sideText.includes('工作台'))
 check('侧边栏列出项目', sideText.includes('智能小车固件') && sideText.includes('上位机面板'))
-check('状态栏显示进行中计数', /进行中/.test(sideText) && /2/.test(sideText), sideText.slice(0, 60))
+const cellOf = (root, state) => allByClass(root, /(^|\s)fb-cell(\s|$)/).find((n) => n.props['data-state'] === state)
+const cellVal = (root, state) => String(cellOf(root, state)?.props['data-count'] ?? '?')
+check('状态栏显示进行中计数', /进行中/.test(sideText) && cellVal(sidebar, 'working') === '1', '进行中=' + cellVal(sidebar, 'working'))
+check('状态框按项目统计（未绑定对话的项目记待命）', cellVal(sidebar, 'idle') === '1' && cellVal(sidebar, 'needs-you') === '0', JSON.stringify(['working', 'needs-you', 'done', 'idle'].map((k) => k + '=' + cellVal(sidebar, k))))
 check('侧边栏不再单列宿主会话', allByClass(sidebar, /(^|\s)slist(\s|$)/).length === 0 && allByClass(sidebar, /(^|\s)srow(\s|$)/).length === 0)
 check('宿主对话不再出现在侧边栏', !sideText.includes('app-alpha 会话'), sideText.slice(0, 120))
 check('状态框只有四个工作状态', allByClass(sidebar, /fb-cell/).length === 4, allByClass(sidebar, /fb-cell/).length)
@@ -241,6 +244,22 @@ check('状态框只有四格（面积缩小）', allByClass(statBox, /fb-cell/).
 check('项目列表区域可滚动（plist）', allByClass(sidebar, /(^|\s)plist(\s|$)/).length === 1)
 check('绑定项目带 🔗 标记', allByClass(sidebar, /pi-bind/).length === 1, allByClass(sidebar, /pi-bind/).length)
 check('项目状态灯数量 = 项目数', allByClass(sidebar, /(^|\s)light(\s|$)/).length >= 2, allByClass(sidebar, /(^|\s)light(\s|$)/).length)
+
+/* 改项目状态 → 状态框必须当场跟着动（不能等下一次 4s 轮询，也不能只刷灯不刷数字） */
+const clickLight = (idx) => {
+  const lights = allByClass(render(sidebarComp), /(^|\s)light(\s|$)/)
+  lights[idx].props.onClick({ stopPropagation() {} })
+}
+clickLight(0)
+let afterStatus = render(sidebarComp)
+check('改项目状态后状态框立刻刷新', cellVal(afterStatus, 'working') === '0' && cellVal(afterStatus, 'needs-you') === '1',
+  JSON.stringify(['working', 'needs-you', 'done', 'idle'].map((k) => k + '=' + cellVal(afterStatus, k))))
+check('改项目状态后项目灯也变', allByClass(afterStatus, /(^|\s)light needs-you(\s|$)/).length === 1, allByClass(afterStatus, /(^|\s)light (\S+)/).map((n) => n.props.className).join(','))
+/* 循环一圈（working → needs-you → done → idle → working），把状态还原，别影响后面的用例 */
+clickLight(0); clickLight(0); clickLight(0)
+let restored = render(sidebarComp)
+check('状态循环回原值（用例之间不互相污染）', cellVal(restored, 'working') === '1' && cellVal(restored, 'needs-you') === '0',
+  JSON.stringify(['working', 'needs-you', 'done', 'idle'].map((k) => k + '=' + cellVal(restored, k))))
 
 /* 右击 → 菜单 */
 rightClickByText(sidebar, '智能小车固件')

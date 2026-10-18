@@ -1,7 +1,7 @@
 {
   "name": "trae-usage-worktable",
   "description": "工作台 Worktable：DSH 侧边栏 + 可拖拽分栏工作区（文件浏览 / 编辑器 / 终端 / 浏览器 / 自定义窗口 / git 只读），trae-usage 复刻版",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "repository": {
     "type": "git",
     "url": "https://github.com/nscn6fdx44-crypto/trae-usage.git",

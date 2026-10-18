@@ -7,23 +7,26 @@ import { el, Icon, Light, ContextMenu, Toasts } from './ui.js'
 import {
   store, useStore, relTime, projEmoji,
   loadSessions, loadDefaults, openGrid, enterProject, openMenu, openModal,
-  stateOf, sessionsOf, toggleHidden,
+  stateOf, sessionsOf, statusCounts, toggleHidden,
 } from './core.js'
 import { ModalHost } from './modals.js'
 
-/* 四个工作状态：宿主四态（running / waiting / done / idle）的展示顺序 */
+/* 四个工作状态：按**项目**统计（项目和它的状态灯同一条口径） */
 const STAT_CELLS = [
-  { id: 'working', label: '进行中', tone: 'working', key: 'running' },
-  { id: 'needs-you', label: '待处理', tone: 'needs', key: 'waiting' },
-  { id: 'done', label: '已完成', tone: 'done', key: 'done' },
-  { id: 'idle', label: '待命', tone: 'idle', key: 'idle' },
+  { id: 'working', label: '进行中', tone: 'working' },
+  { id: 'needs-you', label: '待处理', tone: 'needs' },
+  { id: 'done', label: '已完成', tone: 'done' },
+  { id: 'idle', label: '待命', tone: 'idle' },
 ]
 
 export function WorktableSidebar() {
   useStore()
   const all = store.projects
   const visible = all.filter((p) => !p.hidden)
-  const counts = store.sessions.counts || { running: 0, waiting: 0, done: 0, idle: 0, total: 0 }
+  /* 这里必须自己算：host 的 counts 只认宿主会话，手工改的状态不会进去 */
+  const counts = statusCounts(visible)
+  /* 首帧还没有会话快照：先摆「…」，别让人把 0 当成结论 */
+  const firstLoad = store.sessions.state === 'pending'
 
   const groups = new Map()
   for (const p of visible) {
@@ -46,12 +49,12 @@ export function WorktableSidebar() {
     ),
 
     /* 状态框只记四个工作状态，2×2 紧凑排布（项目数挪到下面的列表标题上） */
-    el('div', { className: 'stat-box' },
-      STAT_CELLS.map((c) => el('div', { key: c.id, className: 'fb-cell', 'data-state': c.id },
+    el('div', { className: 'stat-box', title: '按项目统计：每个项目算它最需要关注的那个对话' },
+      STAT_CELLS.map((c) => el('div', {
+        key: c.id, className: 'fb-cell', 'data-state': c.id, 'data-count': String(counts[c.id] || 0),
+      },
         el('span', { className: 'fb-k' }, c.label),
-        el('b', { className: 'fb-v ' + c.tone },
-          store.sessions.state === 'pending' ? '…' : String(counts[c.key] || 0),
-        ),
+        el('b', { className: 'fb-v ' + c.tone }, firstLoad ? '…' : String(counts[c.id] || 0)),
       )),
     ),
 

@@ -368,6 +368,26 @@ export function stateSource(pid) {
   return primary && store.sessions.state === 'ok' ? 'bound' : ''
 }
 
+/**
+ * 状态框的四态计数 —— **按项目**统计，不是按宿主会话。
+ *
+ * 为什么不再用 host `/sessions` 返回的 `counts`：那份只认宿主会话，
+ * 手工改过的项目状态（store.status）、没绑定对话的项目、被隐藏的项目都不在里面，
+ * 而它的来源是 4s 一次的轮询快照 —— 于是「改了项目状态，状态栏纹丝不动」。
+ * 这里跟 `stateOf()` 走同一条口径：项目灯是什么色，就记到哪一格，
+ * 任何一次 emit（改状态 / 绑定对话 / 会话轮询 / 隐藏项目）都会重算。
+ */
+export function statusCounts(list) {
+  const counts = { working: 0, 'needs-you': 0, done: 0, idle: 0, total: 0 }
+  const src = Array.isArray(list) ? list : store.projects
+  for (const p of src) {
+    if (!p || p.hidden) continue
+    counts[normState(stateOf(p.id))] += 1
+    counts.total += 1
+  }
+  return counts
+}
+
 /* ============================ host API ============================ */
 
 async function request(method, path, body, { timeout = 20_000, signal } = {}) {
