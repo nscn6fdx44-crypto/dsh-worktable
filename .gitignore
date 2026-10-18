@@ -16,3 +16,14 @@ media/worktable.css
 workbench/workbench.html
 workbench/workbench.registry.json
 workbench/build/data/
+
+# 本地调试探针与上游解包参照物：一次性排障产物，不入库
+.tmp-*
+dsh/.tmp-pings.jsonl
+
+# 安装包 / 分享产物：由 `npm pack`、发布流程生成，不入库
+*.tgz
+*.genie
+
+# 本地 agent 工作目录（记忆、会话数据）
+.workbuddy/

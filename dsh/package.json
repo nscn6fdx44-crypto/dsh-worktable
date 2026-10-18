@@ -1,7 +1,7 @@
 {
   "name": "trae-usage-worktable",
-  "description": "工作台 Worktable：DeepSeek Harness 侧边栏的 agent 级项目容器（trae-usage 复刻版，P0 骨架）",
-  "version": "0.1.0",
+  "description": "工作台 Worktable：DeepSeek Harness 侧边栏的完整工作台 UI（项目列表 / 卡片网格 / 控制室会话统计，trae-usage 复刻版 MVP）",
+  "version": "0.4.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/nscn6fdx44-crypto/trae-usage.git",
@@ -39,12 +39,13 @@
       ]
     },
     "compatibility": {
-      "dsh": "0.2.0-rc.2"
+      "dsh": "0.2.0-rc.2 || 0.2.1-rc.2"
     }
   },
   "scripts": {
     "build": "node build.mjs",
-    "check": "node --check lib/index.js && node --check lib/client.js"
+    "check": "node --check lib/index.js && node --check lib/client.js",
+    "test": "node test/host-routes.mjs && node test/client-smoke.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
