@@ -1,11 +1,11 @@
-# trae-usage-worktable（DSH 插件 · 0.8.4）
+# trae-usage-worktable（DSH 插件 · 0.8.5）
 
 > DeepSeek Harness 侧边栏的完整工作台。本目录是 `nscn6fdx44-crypto/trae-usage`
 > 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的**独立实现**：
 > 同款 Cordis 双 bundle 协议、同款交互模型，代码自己写、路由前缀自带
 > （`/api/trae-worktable/*`），不与上游抢路径。
 
-## 能力（0.8.4）
+## 能力（0.8.5）
 
 | 半侧 | 文件 | 内容 |
 |---|---|---|
@@ -73,9 +73,22 @@
     - 列表：`名称 / 大小 / 修改` 三列，点表头切排序（再点一下反序）；目录永远排前面；
     - 单击选中、双击进目录、双击文件**直接在编辑器标签页里打开**；
     - 右键菜单：进入目录/在编辑器打开 · `⧉ 在系统窗口中显示` · `✎ 重命名` · `🗑 移到回收站`；
-    - 删除一律走**系统回收站**（Windows 用 `Microsoft.VisualBasic.FileIO` 的 `SendToRecycleBin`，
-      macOS 走 Finder，Linux 走 `gio trash`），不做硬删；盘符根与白名单根本身直接拒绝；
-    - 路径全部走 host 白名单，对话 cwd 以 `<项目id>~cwd` 单独登记；
+      菜单打开时会先问一次 host「这个能不能删」，被禁的项直接置灰、原因写在菜单底部；
+    - **删除**（0.8.5 修好）：一律进**系统回收站**（Windows `Microsoft.VisualBasic.FileIO`
+      的 `SendToRecycleBin`，macOS Finder，Linux `gio trash`），不做硬删。
+      成败**以磁盘为准** —— 回收站调用成功也常返回退出码 1、失败也可能返回 0，
+      所以先等子进程结束再看目标还在不在；stderr 里的 `#< CLIXML` 进度噪音会被洗掉，
+      只留真正的报错。每次删除追加一行到 `~/.dsh/worktable-delete.log`
+      （时间 | ok/fail | 耗时 | 退出码 | 路径 | 错误）；
+    - **路径权限分三档**（0.8.5 起）：
+      - **读**（list / read / stat / reveal）：不设白名单，能一路 `↑` 翻到盘符根，
+        只挡凭证目录（`.ssh` / `.aws` / `.gnupg` / `.kube` / `.dsh` / `.netrc` / `.git-credentials`）；
+      - **写**（write / mkdir / rename）：只允许工作目录 / 用户目录 / DSH_HOME / 已注册项目内；
+        在别处浏览时面板会把 `＋ 新建`、`✎ 重命名` 置灰，状态栏标「只读」；
+      - **删**：不要求白名单（回收站本身可撤销），但拒绝**磁盘根**、**系统目录**、
+        **白名单根本身**、**白名单根的祖先**（删了它等于连工作区一起端掉）；
+      - 删软链接时**不跟随最后一段**（用 `lstat` 判定存在），删的是链接本身而非它指向的目标；
+      - 对话 cwd 以 `<项目id>~cwd` 单独登记进白名单；
   - **为什么不再把资源管理器嵌进来**：`explorer.exe` 的窗口类 `CabinetWClass` 只能被 Win32
     **HWND** 用 `SetParent` 认领，而工作台面板是 Chromium 画的 HTML 矩形，**没有自己的 HWND**；
     硬挂只能盖在整个窗口上、跟不了面板布局（Win11 的多标签单进程模型还会把窗口收回）。
@@ -182,8 +195,8 @@ dsh/
 │       ├── modals.js   # 新建 / 编辑 / 绑定
 │       └── theme.css   # 全套样式（收在 .wt-scope 下）
 ├── test/
-│   ├── host-routes.mjs # 63 项：路由 / 沙箱 / 文件 / reveal / git / 托管 / 终端 / 四态判定
-│   └── client-smoke.mjs# 122 项：座位 / 侧边栏四态 / 菜单 / 让位换算 / 文件管理器 / 标签页
+│   ├── host-routes.mjs # 73 项：路由 / 沙箱 / 文件 / reveal / git / 托管 / 终端 / 四态判定
+│   └── client-smoke.mjs# 130 项：座位 / 侧边栏四态 / 菜单 / 让位换算 / 文件管理器（含右键删除）/ 标签页
 └── lib/                # 构建产物（安装前必须 build）
 ```
 
@@ -261,7 +274,7 @@ npm run build && npm pack
 
 ## 与上游的差异（有意为之）
 
-| 项 | 上游 0.4.0 | 本插件 0.8.4 |
+| 项 | 上游 0.4.0 | 本插件 0.8.5 |
 |---|---|---|
 | 右侧对话 | 宿主会话视图让位（margin + CSS 变量），可真实输入 | 给宿主中心列写 `marginLeft` 让位，右侧就是原生会话（真能输入） |
 | 终端 | node-pty + WebSocket，真 PTY | 每命令一进程 + NDJSON 流，无原生依赖 |

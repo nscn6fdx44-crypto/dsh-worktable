@@ -203,9 +203,9 @@ export const store = {
   defaults: { workspace: '', home: '', shell: '', loaded: false },
   sessions: { state: 'pending', counts: null, rows: [], at: 0, error: '', source: '' },
   /* 文件管理器：一次只列一个目录，path/parent 用于面包屑与「上一级」；pid 记住是哪个项目的树 */
-  tree: { state: 'idle', pid: '', path: '', name: '', parent: '', entries: [], total: 0, truncated: false, error: '', at: 0 },
+  tree: { state: 'idle', pid: '', path: '', name: '', parent: '', writable: true, entries: [], total: 0, truncated: false, error: '', at: 0 },
   /* 文件管理器的视图偏好（排序 / 过滤 / 选中项），纯前端 */
-  fs: { sort: 'name', dir: 1, query: '', sel: '', busy: '' },
+  fs: { sort: 'name', dir: 1, query: '', sel: '', busy: '', menu: null },
   editor: { state: 'idle', path: '', name: '', text: '', saved: '', error: '', truncated: false, binary: false, size: 0, saving: false },
   terms: {},                    // { [pid]: { id, cwd, busy, lines: [] } }
   git: { state: 'idle', repo: false, branch: '', changes: [], counts: null, error: '', log: [], branches: [] },
@@ -825,6 +825,7 @@ export async function loadTree(path, opts = {}) {
       path: data.path || target,
       name: data.name || baseName(data.path || target),
       parent: String(data.parent || ''),
+      writable: data.writable !== false,
       entries,
       total: Number(data.total) || entries.length,
       truncated: !!data.truncated,
@@ -853,6 +854,25 @@ export function setFsQuery(q) {
 
 export function selectEntry(name) {
   emit({ fs: { ...store.fs, sel: String(name || '') } })
+}
+
+/**
+ * 文件列表的右键菜单放 store 里（和侧边栏项目菜单一致），不放组件 state：
+ * 弹菜单要触发行高亮、还要异步补一条「能不能删」，走 store 才不会丢。
+ */
+export function openFsMenu(dir, row, x, y) {
+  const menu = { dir, name: row.name, isDir: !!row.dir, x, y, block: '' }
+  emit({ fs: { ...store.fs, menu } })
+  deleteBlockReason(dir, row.name).then((reason) => {
+    const cur = store.fs.menu
+    if (!cur || cur.name !== menu.name || cur.dir !== menu.dir) return
+    emit({ fs: { ...store.fs, menu: { ...cur, block: reason } } })
+  })
+}
+
+export function closeFsMenu() {
+  if (!store.fs.menu) return
+  emit({ fs: { ...store.fs, menu: null } })
 }
 
 /**
@@ -909,6 +929,20 @@ export async function fsDelete(dir, name) {
   const ok = await fsWrite('/fs/delete', { path: target }, '已移入回收站：' + name)
   if (ok) { emit({ fs: { ...store.fs, sel: '' } }); loadTree(dir, { force: true }) }
   return ok
+}
+
+/**
+ * 这个路径能不能删。返回空串 = 能删，否则返回禁止的原因。
+ * 右键菜单打开时先问一次，把「盘符根 / 工作区根 / 系统目录」这类原因直接写在菜单里，
+ * 而不是点了才弹一条 toast。查不通（老版本 host）就当能删，交给真删去报错。
+ */
+export async function deleteBlockReason(dir, name) {
+  try {
+    const data = await apiPost('/fs/deletable', { path: joinPath(dir, name) }, { timeout: 8000 })
+    return data && data.ok === true ? '' : String(data?.reason || '这个路径不能删除')
+  } catch {
+    return ''
+  }
 }
 
 /** 在系统窗口里选中这一项（文件管理器仍然是「系统那个」更好用时留的出口） */

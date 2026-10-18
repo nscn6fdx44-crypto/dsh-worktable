@@ -15,12 +15,16 @@
  *   项目静态托管   POST /project/register               GET  /site/<id>/<rel...>（prefix）
  *
  * 安全边界（与上游有意不同）
- *   1. 所有路径必须落在白名单根内：进程 cwd、用户 home、DSH_HOME、已注册项目根。
- *   2. 先 realpath 解析符号链接再判根，避免 ../ 与 symlink 逃逸。
- *   3. 凭证目录（.ssh / .aws / .gnupg / .kube）直接拒绝。
- *   4. 不把任意请求体写进包目录（上游 /ping 就这么干过）。
+ *   1. 读（list / read / stat / reveal）：不设白名单，文件管理器要能一路翻到盘符根；
+ *      只挡凭证目录（.ssh / .aws / .gnupg / .kube / .dsh）。
+ *   2. 写（write / mkdir / rename）：必须落在白名单根内 —— 进程 cwd、用户 home、
+ *      DSH_HOME、已注册项目根。
+ *   3. 删（delete）：一律进系统回收站（可撤销），不要求白名单，但拒绝磁盘根、
+ *      系统目录、白名单根本身、白名单根的祖先。
+ *   4. 先 realpath 解析符号链接再判根，避免 ../ 与 symlink 逃逸。
+ *   5. 不把任意请求体写进包目录（上游 /ping 就这么干过）。
  */
-import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync, appendFileSync } from 'node:fs'
+import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync, appendFileSync } from 'node:fs'
 import { spawn, execFile } from 'node:child_process'
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
@@ -49,7 +53,7 @@ const TERM_TIMEOUT_MS = 120_000
 const GIT_TIMEOUT_MS = 10_000
 
 /* 凭证目录：即便在 home 内也不允许读写 */
-const DENY_SEGMENTS = new Set(['.ssh', '.aws', '.gnupg', '.kube', '.password-store', '.docker/config.json'])
+const DENY_SEGMENTS = new Set(['.ssh', '.aws', '.gnupg', '.kube', '.dsh', '.netrc', '.git-credentials', '.password-store'])
 
 /* 已注册的项目根：/site 托管与文件读写白名单都靠它 */
 const PROJECT_ROOTS = new Map()
@@ -161,6 +165,8 @@ export function apply(ctx) {
       path: target,
       name: basename(target),
       parent: parent === target ? '' : parent,
+      /* 写操作只允许在白名单内，前端据此把「新建」置灰，而不是点了才报错 */
+      writable: insideRoot(target, canonicalRoots()),
       entries: rows.slice(0, MAX_DIR_ENTRIES),
       total: rows.length,
       truncated: rows.length > MAX_DIR_ENTRIES,
@@ -230,17 +236,31 @@ export function apply(ctx) {
   })})
 
   /* 删除：一律走系统回收站 / 废纸篓，不做硬删。
-     路径先过白名单，再拒绝「白名单根本身」和盘符根，免得一条请求把工作区端掉。 */
+     回收站本身就是「可以后悔」，所以不限制在白名单内（否则从盘符根翻过去就删不了），
+     只拦真正会伤人的目标：磁盘根、系统目录、白名单根本身、白名单根的祖先。 */
   register({ kind: 'exact', path: BASE + '/fs/delete', handler: guard(async (req, res) => {
     if (!allowMethod(req, res, 'POST')) return
     const body = await readJson(req, res, MAX_BODY_JSON)
     if (body === undefined) return
-    const target = await assertExisting(body?.path, 'any')
-    if (dirname(target) === target) return sendJson(res, 400, { error: '不能删除磁盘根目录' })
-    if (isProtectedRoot(target)) return sendJson(res, 403, { error: '不能删除工作区根目录：' + target })
+    const target = deleteTarget(body?.path)
+    const t0 = Date.now()
     const r = await moveToTrash(target)
+    logTrash(target, r, Date.now() - t0)
     if (!r.ok) return sendJson(res, 500, { error: '删除失败：' + msg(r.error) })
-    sendJson(res, 200, { ok: true, path: target, trash: r.trash })
+    sendJson(res, 200, { ok: true, path: target, trash: r.trash, ms: Date.now() - t0 })
+  })})
+
+  /* 这个路径能不能删（右键菜单先问一下，把禁止的原因写在菜单里，而不是点了才报错） */
+  register({ kind: 'exact', path: BASE + '/fs/deletable', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    try {
+      deleteTarget(body?.path)
+      sendJson(res, 200, { ok: true, reason: '' })
+    } catch (err) {
+      sendJson(res, 200, { ok: false, reason: msg(err?.message ?? err) })
+    }
   })})
 
   register({ kind: 'exact', path: BASE + '/fs/stat', handler: guard(async (req, res) => {
@@ -739,17 +759,52 @@ function isProtectedRoot(target) {
 }
 
 /**
+ * 把 PowerShell 的 stderr 洗成人话。
+ *
+ * Windows PowerShell 会把「Preparing modules for first use.」这类进度记录按 CLIXML
+ * 序列化进 stderr，退出码也常常不为 0。原来直接把它当错误抛给用户，
+ * 界面就显示成「删除失败：#< CLIXML <Objs Version=…」，而文件其实已经进回收站了。
+ */
+function cleanPsError(text) {
+  const raw = String(text || '')
+  if (!raw.trim()) return ''
+  const errs = [...raw.matchAll(/<S S="Error">([\s\S]*?)<\/S>/g)].map((m) => m[1])
+  let out = errs.length ? errs.join(' ') : raw
+  if (!errs.length && raw.trimStart().startsWith('#< CLIXML')) out = ''
+  return out
+    .replace(/_x000D__x000A_/g, ' ')
+    .replace(/#< CLIXML[\s\S]*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300)
+}
+
+const TRASH_TIMEOUT_MS = 12_000
+
+/**
  * 丢进系统回收站（Windows 回收站 / macOS 废纸篓 / Linux gio trash）。
  * 不用 rm / fs.rm —— 文件管理器里的删除必须是能后悔的。
+ *
+ * 成败**以磁盘为准**：回收站这条链路上退出码全不可信（成功也可能非 0，
+ * 失败也可能 0），所以先等子进程结束，再看目标还在不在。
  */
 function moveToTrash(target) {
   return new Promise((resolveP) => {
-    const done = (ok, extra) => resolveP({ ok, ...(extra || {}) })
+    let settled = false
+    let timer = 0
+    const done = (ok, extra) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      resolveP({ ok, ...(extra || {}) })
+    }
+
     let cmd
     let args
     if (process.platform === 'win32') {
       const isDir = isDirQuiet(target)
       const script = [
+        '$ProgressPreference = "SilentlyContinue"',
         '$ErrorActionPreference = "Stop"',
         'Add-Type -AssemblyName Microsoft.VisualBasic',
         '[Microsoft.VisualBasic.FileIO.FileSystem]::' + (isDir ? 'DeleteDirectory' : 'DeleteFile')
@@ -770,15 +825,28 @@ function moveToTrash(target) {
     try {
       child = spawn(cmd, args, { windowsHide: true })
     } catch (err) {
-      done(false, { error: msg(err) })
+      done(false, { error: msg(err), cmd })
       return
     }
+
     let errText = ''
+    /* stdout 也要抽干：spawn 默认 pipe，写满 64KB 会把子进程卡住，这个 Promise 就永远不 resolve */
+    try { child.stdout?.resume() } catch { /* 无 stdout */ }
     try { child.stderr?.on('data', (d) => { errText += String(d) }) } catch { /* 无 stderr */ }
-    child.on('error', (err) => done(false, { error: msg(err) }))
+
+    timer = setTimeout(() => {
+      try { child.kill() } catch { /* 已经退出 */ }
+      done(false, { error: '回收站调用超时（' + Math.round(TRASH_TIMEOUT_MS / 1000) + 's）', cmd })
+    }, TRASH_TIMEOUT_MS)
+
+    child.on('error', (err) => done(false, { error: msg(err), cmd }))
     child.on('exit', (code) => {
-      if (code === 0) done(true, { trash: true })
-      else done(false, { error: errText.trim() || ('退出码 ' + code) })
+      if (!existsSync(target)) return done(true, { trash: true, code, cmd })
+      done(false, {
+        error: cleanPsError(errText) || ('没有删掉（退出码 ' + code + '；可能被占用，或这个磁盘没有回收站）'),
+        code,
+        cmd,
+      })
     })
   })
 }
@@ -806,7 +874,29 @@ function logReveal(target, select, r) {
   } catch { /* 日志写不了不影响主流程 */ }
 }
 
-/** Windows 上 explorer.exe 的绝对路径（PATH 在打包后的 Electron 里不一定完整） */function explorerExe() {
+/**
+ * 每次「移到回收站」记一行到 ~/.dsh/worktable-delete.log。
+ * 和 reveal 那份一样，用户说「删除用不了」时能一眼看出是没调用、调用失败还是成功。
+ */
+function logTrash(target, r, ms) {
+  try {
+    const home = process.env.DSH_HOME || join(homedir(), '.dsh')
+    const file = join(home, 'worktable-delete.log')
+    try { if (statSync(file).size > REVEAL_LOG_MAX) writeFileSync(file, '') } catch { /* 首次写入 */ }
+    const parts = [
+      new Date().toISOString(),
+      r.ok ? 'ok' : 'fail',
+      ms + 'ms',
+      r.code === undefined || r.code === null ? '-' : 'exit=' + r.code,
+      target,
+      r.ok ? '' : msg(r.error),
+    ]
+    appendFileSync(file, parts.join(' | ') + '\n', 'utf8')
+  } catch { /* 日志写不了不影响主流程 */ }
+}
+
+/** Windows 上 explorer.exe 的绝对路径（PATH 在打包后的 Electron 里不一定完整） */
+function explorerExe() {
   const root = process.env.SystemRoot || process.env.windir || 'C:\\Windows'
   const exe = join(root, 'explorer.exe')
   return existsSync(exe) ? exe : 'explorer.exe'
@@ -1074,20 +1164,29 @@ function hasDeniedSegment(target) {
   return false
 }
 
-function assertSandbox(target) {
+/**
+ * 路径准入。
+ *
+ * - `read`  ：只挡凭证目录。文件管理器要能像资源管理器那样一路往上翻到盘符根，
+ *             读遍全盘不设白名单（DSH 里的 agent 本来就有同样的读权限）。
+ * - `write` ：额外要求落在白名单根内（cwd / home / DSH_HOME / 已注册项目）。
+ * - `trash` ：不要求白名单（回收站本身就是可撤销的），具体的「不能删什么」
+ *             交给 /fs/delete 里的 trashGuard 判断。
+ */
+function assertSandbox(target, mode = 'read') {
   if (typeof target !== 'string' || !target.trim()) throw httpError(400, 'path required')
   if (target.includes('\0')) throw httpError(400, 'invalid path')
   if (!isAbsolute(target)) throw httpError(400, 'path must be absolute')
   const canonical = canonicalize(target)
   if (hasDeniedSegment(canonical)) throw httpError(403, '该目录受保护：' + canonical)
-  if (!insideRoot(canonical, canonicalRoots())) {
-    throw httpError(403, '路径不在允许范围（工作目录 / 用户目录 / 已注册项目）内：' + canonical)
+  if (mode === 'write' && !insideRoot(canonical, canonicalRoots())) {
+    throw httpError(403, '写操作只允许在工作目录 / 用户目录 / 已注册项目内：' + canonical)
   }
   return canonical
 }
 
-async function assertExisting(target, kind) {
-  const real = assertSandbox(target)
+async function assertExisting(target, kind, mode = 'read') {
+  const real = assertSandbox(target, mode)
   let st
   try {
     st = statSync(real)
@@ -1100,7 +1199,71 @@ async function assertExisting(target, kind) {
 }
 
 async function assertWritable(target) {
-  return assertSandbox(target)
+  return assertSandbox(target, 'write')
+}
+
+/** 大小写不敏感的平台统一小写，用于路径比较 */
+function normPath(p) {
+  const s = String(p || '')
+  return process.platform === 'win32' ? s.toLowerCase() : s
+}
+
+/** target 是不是某个白名单根的祖先（删了它等于连工作区一起端掉） */
+function isAncestorOfRoot(target) {
+  const t = normPath(target)
+  const withSep = t.endsWith(sep) ? t : t + sep
+  for (const root of canonicalRoots()) {
+    const r = normPath(root)
+    if (r !== t && r.startsWith(withSep)) return true
+  }
+  return false
+}
+
+/** Windows 系统关键目录，永远不删 */
+function isSystemCritical(target) {
+  if (process.platform !== 'win32') return false
+  const t = normPath(target)
+  const list = [
+    process.env.SystemRoot,
+    process.env.windir,
+    process.env.ProgramFiles,
+    process.env['ProgramFiles(x86)'],
+    process.env.ProgramData,
+  ]
+  for (const p of list) {
+    if (typeof p === 'string' && p && normPath(p) === t) return true
+  }
+  return false
+}
+
+/** 删除前的闸门：只拦真正会伤到人的目标，其余一律放行到回收站 */
+function trashGuard(target) {
+  if (dirname(target) === target) return { status: 400, error: '不能删除磁盘根目录：' + target }
+  if (isSystemCritical(target)) return { status: 403, error: '不能删除系统目录：' + target }
+  if (isProtectedRoot(target)) return { status: 403, error: '不能删除工作区根目录：' + target }
+  if (isAncestorOfRoot(target)) return { status: 403, error: '不能删除包含工作目录的上级目录：' + target }
+  return null
+}
+
+/**
+ * 真正要删的那一项。
+ *
+ * 关键：**不跟随最后一段软链接**。原来走 assertExisting → canonicalize → realpathSync，
+ * 右击一个指向别处的链接会把「链接指向的目标」删掉，链接本身反而留下。
+ * 这里只解析父目录，末段保留原样，并用 lstat 判断存在（断链也能删）。
+ */
+function deleteTarget(rawPath) {
+  assertSandbox(rawPath, 'trash') /* 先跟随链接查一遍凭证目录，防止借链接摸进 .ssh */
+  const abs = resolve(rawPath)
+  const target = join(canonicalize(dirname(abs)), basename(abs))
+  try {
+    lstatSync(target)
+  } catch {
+    throw httpError(404, '路径不存在：' + target)
+  }
+  const blocked = trashGuard(target)
+  if (blocked) throw httpError(blocked.status, blocked.error)
+  return target
 }
 
 function safeJoin(root, rel) {

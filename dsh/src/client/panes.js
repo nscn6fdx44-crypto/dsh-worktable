@@ -10,6 +10,7 @@ import {
   loadTree, openFile, editText, saveFile, termExec, termKill, termClear, loadGit,
   workspaceDirOf, revealPath,
   visibleEntries, setFsSort, setFsQuery, selectEntry, fsMkdir, fsRename, fsDelete, fsReveal,
+  openFsMenu, closeFsMenu,
   joinPath, crumbsOf,
   sessionsOf, primarySession, stateOf, jumpToSession,
   openModal, siteUrlOf, setWebUrl, setCustomHtml, cycleStatus, updateProject, projectOf, toast,
@@ -121,7 +122,7 @@ export function FilesPane({ project }) {
   const [renameText, setRenameText] = useState('')
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
-  const [menu, setMenu] = useState(null)
+  const menu = view.menu || null
 
   /* 第一次进面板落到对话的工作目录；切项目（树不属于它）也跟着换 */
   useEffect(() => {
@@ -164,7 +165,7 @@ export function FilesPane({ project }) {
     setCreating(false)
     if (nm) fsMkdir(dirPath, nm)
   }
-  const startRename = (row) => { setRenaming(row.name); setRenameText(row.name); setCreating(false); setMenu(null) }
+  const startRename = (row) => { setRenaming(row.name); setRenameText(row.name); setCreating(false); closeFsMenu() }
   const commitRename = () => {
     const nm = renameText.trim()
     const from = renaming
@@ -177,7 +178,7 @@ export function FilesPane({ project }) {
   const rowKey = (e, ev) => {
     ev.preventDefault()
     selectEntry(e.name)
-    setMenu({ name: e.name, dir: e.dir, x: ev.clientX || 0, y: ev.clientY || 0 })
+    openFsMenu(dirPath, e, ev.clientX || 0, ev.clientY || 0)
   }
 
   return el('div', { className: 'pane-body files-body fx-body' },
@@ -191,7 +192,11 @@ export function FilesPane({ project }) {
       el('div', { className: 'fx-crumbs' }, ...crumbNodes),
       el('button', { type: 'button', className: 'mini-btn', title: '刷新', onClick: () => loadTree(dirPath, { force: true }) },
         busy ? '…' : '⟳'),
-      el('button', { type: 'button', className: 'mini-btn', title: '新建文件夹', onClick: startCreate }, '＋ 新建'),
+      el('button', {
+        type: 'button', className: 'mini-btn', disabled: tree.writable === false,
+        title: tree.writable === false ? '新建只允许在工作目录 / 用户目录 / 已注册项目内' : '新建文件夹',
+        onClick: startCreate,
+      }, '＋ 新建'),
       el('button', { type: 'button', className: 'mini-btn', title: '在系统资源管理器中打开这个目录', onClick: () => revealPath(dirPath) }, '⧉ 系统窗口'),
     ),
 
@@ -288,6 +293,9 @@ export function FilesPane({ project }) {
       el('span', null, (view.query ? rows.length + ' / ' + (tree.total || 0) : (tree.total || 0)) + ' 项'),
       tree.truncated ? el('span', { className: 'fx-warn' }, '只显示前 800 项') : null,
       view.sel ? el('span', { className: 'fx-sel mono', title: view.sel }, '已选 ' + view.sel) : null,
+      tree.writable === false
+        ? el('span', { className: 'fx-warn', title: '新建 / 重命名只允许在工作目录 / 用户目录 / 已注册项目内' }, '只读')
+        : null,
       rv.state === 'error'
         ? el('span', { className: 'fx-warn', title: rv.error }, '上次系统窗口打开失败')
         : null,
@@ -297,20 +305,34 @@ export function FilesPane({ project }) {
     menu
       ? el('div', {
         className: 'fx-mask',
-        onClick: () => setMenu(null),
-        onContextMenu: (ev) => { ev.preventDefault(); setMenu(null) },
+        onClick: () => closeFsMenu(),
+        onContextMenu: (ev) => { ev.preventDefault(); closeFsMenu() },
       },
         el('div', {
           className: 'fx-menu',
           style: { left: menu.x + 'px', top: menu.y + 'px' },
           onClick: (ev) => ev.stopPropagation(),
         },
-          menu.dir
-            ? el('button', { type: 'button', onClick: () => { const m = menu; setMenu(null); go(joinPath(dirPath, m.name)) } }, '📂 进入目录')
-            : el('button', { type: 'button', onClick: () => { const m = menu; setMenu(null); openFile(joinPath(dirPath, m.name), project.id) } }, '◆ 在编辑器中打开'),
-          el('button', { type: 'button', onClick: () => { const m = menu; setMenu(null); fsReveal(dirPath, m.name) } }, '⧉ 在系统窗口中显示'),
-          el('button', { type: 'button', onClick: () => startRename({ name: menu.name, dir: menu.dir }) }, '✎ 重命名'),
-          el('button', { type: 'button', className: 'danger', onClick: () => { const m = menu; setMenu(null); fsDelete(dirPath, m.name) } }, '🗑 移到回收站'),
+          menu.isDir
+            ? el('button', { type: 'button', onClick: () => { const m = menu; closeFsMenu(); go(joinPath(m.dir, m.name)) } }, '📂 进入目录')
+            : el('button', { type: 'button', onClick: () => { const m = menu; closeFsMenu(); openFile(joinPath(m.dir, m.name), project.id) } }, '◆ 在编辑器中打开'),
+          el('button', { type: 'button', onClick: () => { const m = menu; closeFsMenu(); fsReveal(m.dir, m.name) } }, '⧉ 在系统窗口中显示'),
+          el('button', {
+            type: 'button', disabled: tree.writable === false,
+            title: tree.writable === false ? '重命名只允许在工作目录 / 用户目录 / 已注册项目内' : '',
+            onClick: () => startRename({ name: menu.name, dir: menu.dir }),
+          }, '✎ 重命名'),
+          el('button', {
+            type: 'button', className: 'danger', disabled: !!menu.block,
+            title: menu.block || '移到系统回收站（可以还原）',
+            onClick: () => {
+              if (menu.block) return
+              const m = menu
+              closeFsMenu()
+              fsDelete(m.dir, m.name)
+            },
+          }, '🗑 移到回收站'),
+          menu.block ? el('p', { className: 'fx-menu-note' }, menu.block) : null,
         ),
       )
       : null,

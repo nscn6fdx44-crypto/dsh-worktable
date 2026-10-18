@@ -65,19 +65,27 @@ const fakeGitLog = { ok: true, commits: [{ hash: 'a1b2c3d', date: '2026-10-01', 
 const fakeGitBranches = { ok: true, branches: ['main'] }
 
 let lastListPath = ''
+let listCalls = 0
+let deletableBlock = ''
 const reveals = []
+const deletes = []
 globalThis.fetch = async (url, opts) => {
   const u = String(url)
   if (u.endsWith('/fs/list')) {
+    listCalls += 1
     try { lastListPath = String(JSON.parse(String(opts?.body || '{}')).path || '') } catch { lastListPath = '' }
   }
   if (u.endsWith('/fs/reveal')) {
     try { reveals.push(JSON.parse(String(opts?.body || '{}'))) } catch { /* ignore */ }
   }
+  if (u.endsWith('/fs/delete')) {
+    try { deletes.push(JSON.parse(String(opts?.body || '{}'))) } catch { /* ignore */ }
+  }
   const body = u.endsWith('/sessions') ? fakeSessions
     : u.endsWith('/defaults') ? fakeDefaults
         : u.endsWith('/fs/list') ? fakeTree
           : u.endsWith('/fs/read') ? fakeFile
+            : u.endsWith('/fs/deletable') ? (deletableBlock ? { ok: false, reason: deletableBlock } : { ok: true, reason: '' })
             : u.endsWith('/git') ? (String(opts?.body || '').includes('"log"') ? fakeGitLog : (String(opts?.body || '').includes('"branches"') ? fakeGitBranches : fakeGit))
               : { ok: true }
   return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
@@ -375,6 +383,39 @@ overlay = render(overlayComp)
 clickByLabel(overlay, '大小')
 overlay = render(overlayComp)
 check('点表头切成按大小排序', textOf(overlay).includes('大小 ↓') || textOf(overlay).includes('大小 ↑'), textOf(overlay).slice(0, 100))
+
+/* 右键菜单 → 移到回收站：这条链路原来一行测试都没有，删不掉就是这里坏的 */
+overlay = render(overlayComp)
+const menuRow = allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('main.c'))
+check('列表行响应右键', typeof menuRow.props.onContextMenu === 'function')
+const listsBeforeDelete = listCalls
+menuRow.props.onContextMenu({ preventDefault() {}, clientX: 20, clientY: 30 })
+await new Promise((r) => setTimeout(r, 30))
+overlay = render(overlayComp)
+check('右键弹出菜单', allByClass(overlay, /(^|\s)fx-menu(\s|$)/).length === 1, allByClass(overlay, /(^|\s)fx-menu(\s|$)/).length)
+const delBtn = collect(overlay).find((n) => n.props && typeof n.props.onClick === 'function' && /(^|\s)danger(\s|$)/.test(String(n.props.className || '')))
+check('菜单里有「移到回收站」', !!delBtn)
+delBtn.props.onClick()
+await new Promise((r) => setTimeout(r, 40))
+check('删除请求指向这一项', String(deletes[0]?.path || '').replace(/\\/g, '/') === 'C:/projects/smart-car/main.c', JSON.stringify(deletes[0]))
+check('删除后重刷目录', listCalls > listsBeforeDelete, listCalls - listsBeforeDelete)
+
+/* 不能删的目标（磁盘根 / 工作区根 / 系统目录）：菜单里直接写原因，按钮置灰 */
+deletableBlock = '不能删除磁盘根目录：C:\\'
+overlay = render(overlayComp)
+const drivenRow = allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('src'))
+drivenRow.props.onContextMenu({ preventDefault() {}, clientX: 20, clientY: 30 })
+await new Promise((r) => setTimeout(r, 30))
+overlay = render(overlayComp)
+const blockedBtn = collect(overlay).find((n) => n.props && /(^|\s)danger(\s|$)/.test(String(n.props.className || '')) && typeof n.props.onClick === 'function')
+const deletesBefore = deletes.length
+check('禁止删除时按钮置灰', blockedBtn && blockedBtn.props.disabled === true, blockedBtn && blockedBtn.props.disabled)
+check('菜单里写明禁止原因', textOf(overlay).includes('磁盘根目录'), textOf(overlay).slice(-120))
+if (blockedBtn && typeof blockedBtn.props.onClick === 'function') blockedBtn.props.onClick()
+await new Promise((r) => setTimeout(r, 20))
+check('置灰的删除点了也不发请求', deletes.length === deletesBefore, deletes.length - deletesBefore)
+deletableBlock = ''
+overlay = render(overlayComp)
 
 /* 编辑器：不再从文件列表点，空态直接填路径 */
 clickByLabel(overlay, '◆ 编辑器')

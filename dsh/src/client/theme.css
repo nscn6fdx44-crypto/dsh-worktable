@@ -524,6 +524,11 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 }
 .wt-scope .fx-menu button:hover { background: rgba(255,255,255,.06); color: var(--txt); }
 .wt-scope .fx-menu button.danger:hover { background: rgba(229,105,95,.16); color: #f0a0a0; }
+.wt-scope .fx-menu button[disabled] { opacity: .42; cursor: not-allowed; background: none; color: var(--txt-mute); }
+.wt-scope .fx-menu-note {
+  margin: 2px 0 0; padding: 5px 9px 3px; border-top: 1px solid var(--line);
+  font-size: 10.5px; line-height: 1.6; color: #d08b4a; max-width: 232px;
+}
 .wt-scope .btn[disabled] { opacity: .55; cursor: progress; }
 
 .wt-scope .ed-open { display: flex; gap: 6px; margin-top: 10px; width: min(420px, 100%); }

@@ -3,6 +3,7 @@
  *
  * 覆盖：health、sessions 四态、defaults、transcript；
  *      fs/list、fs/read、fs/write、fs/mkdir、fs/rename（含原子写与越界拦截）；
+ *      fs/delete / fs/deletable 的拒绝分支（盘符根、白名单根、白名单根的祖先）；
  *      fs/reveal（交给系统文件管理器，dry-run 不真弹窗）；
  *      git status/log；project/register + /site 静态托管；term/exec NDJSON 流。
  */
@@ -202,6 +203,24 @@ check('fs/delete 拒绝删除工作区根', delRoot.status === 403 && existsSync
 const delRel = await call(BASE + '/fs/delete', { path: 'some/rel' })
 check('fs/delete 拒绝相对路径', delRel.status === 400, delRel.body.slice(0, 60))
 
+/* 磁盘根：读得到（文件管理器要能一路往上翻），但绝不许删，且原因要说清楚 */
+const driveRoot = (process.env.SystemDrive || 'C:') + '\\'
+const rootList = await call(BASE + '/fs/list', { path: driveRoot })
+check('fs/list 允许盘符根（读不设白名单）', rootList.status === 200, rootList.status + ' ' + rootList.body.slice(0, 60))
+check('fs/list 报告白名单外不可写', JSON.parse(rootList.body).writable === false, rootList.body.slice(0, 40))
+check('fs/list 报告白名单内可写', lj.writable === true, 'writable=' + lj.writable)
+const delDrive = await call(BASE + '/fs/delete', { path: driveRoot })
+check('fs/delete 拒绝盘符根并说明原因', delDrive.status === 400 && delDrive.body.includes('磁盘根目录'), delDrive.body.slice(0, 80))
+const delUp = await call(BASE + '/fs/delete', { path: join(process.cwd(), '..') })
+check('fs/delete 拒绝白名单根的祖先', delUp.status === 403 && delUp.body.includes('上级目录'), delUp.body.slice(0, 80))
+
+/* 右键菜单先问「能不能删」，把禁止原因写在菜单里 */
+const canFile = await call(BASE + '/fs/deletable', { path: join(tmp, 'note.md') })
+check('fs/deletable 普通文件可删', JSON.parse(canFile.body).ok === true, canFile.body.slice(0, 60))
+const canDrive = await call(BASE + '/fs/deletable', { path: driveRoot })
+const canDriveJ = JSON.parse(canDrive.body)
+check('fs/deletable 盘符根给出原因', canDriveJ.ok === false && String(canDriveJ.reason).includes('磁盘根'), canDrive.body.slice(0, 90))
+
 const bin = await call(BASE + '/fs/read', { path: join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'notepad.exe') })
 check('fs/read 越界/二进制被拒', bin.status === 403 || bin.status === 415 || bin.status === 404, bin.status + ' ' + bin.body.slice(0, 70))
 
@@ -228,7 +247,7 @@ const revRel = await call(BASE + '/fs/reveal', { path: 'relative/dir' })
 check('fs/reveal 拒绝相对路径', revRel.status === 400, revRel.body.slice(0, 60))
 
 const revOut = await call(BASE + '/fs/reveal', { path: (process.env.SystemRoot || 'C:////Windows') + '\\System32' })
-check('fs/reveal 白名单外 → 403', revOut.status === 403, revOut.body.slice(0, 70))
+check('fs/reveal 白名单外也能打开（只读出口）', revOut.status === 200, revOut.status + ' ' + revOut.body.slice(0, 70))
 
 const ssh = await call(BASE + '/fs/list', { path: join(homedir(), '.ssh') })
 check('fs/list 拒绝凭证目录', ssh.status === 403, ssh.body.slice(0, 80))
