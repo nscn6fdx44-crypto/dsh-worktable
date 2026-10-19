@@ -16,8 +16,8 @@
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
 | 运行中的实例 | 客户端会热更，但 **host 路由必须完整重启 DSH** 才生效（`/gh/status`、`op:uninit` 在旧实例上会 401/404） |
 | 自测基线 | host **171** + client **555** 全通过（`npm test`） |
-| tag | 0.10.0 / 0.10.1 已发；`v0.10.2` 待打 |
-| Release | 0.10.0（417235810）、0.10.1（417246640）已发；`v0.10.2` 待发布，包 `trae-usage-worktable-0.10.2.tgz`（251393 字节，sha256 `aea7d199…fe34`）已打包 |
+| tag | 0.10.0 / 0.10.1 / `v0.10.2` **全部已打并推送**（0.10.2 指向 `168a493`） |
+| Release | 0.10.0（417235810）、0.10.1（417246640）、0.10.2（417267258）都已发布；0.10.2 附件 251393 字节 sha256 `aea7d199…fe34`，下载回本地逐字节校验一致 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
 
 ---
