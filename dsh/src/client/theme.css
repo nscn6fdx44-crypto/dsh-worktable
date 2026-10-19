@@ -1526,3 +1526,30 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 .wt-scope .ed-grow.del .ed-gmark { background: linear-gradient(to bottom, #e5534b 0 8px, transparent 8px); }
 .wt-scope .ed-grow.del .ed-gno { color: #c98a83; }
 .wt-scope .tag.gitmark { font-family: var(--mono); font-size: 10.5px; letter-spacing: .02em; }
+
+/* 克隆弹窗：目录浏览（0.10.3）
+   读目录不设白名单、写要求白名单，所以浏览时同时把 writable 摆出来，
+   选到不可写的位置当场提示，别等点了「克隆」才吃 400。 */
+.wt-scope .db-line { display: flex; align-items: center; gap: 6px; }
+.wt-scope .db-line input { flex: 1; min-width: 0; }
+.wt-scope .dir-browse {
+  margin: -2px 0 7px; padding: 7px 8px; display: flex; flex-direction: column; gap: 5px;
+  border: 1px solid var(--line); border-radius: 9px; background: rgba(0,0,0,.18);
+}
+.wt-scope .db-head { display: flex; align-items: center; gap: 5px; }
+.wt-scope .db-path {
+  flex: 1; min-width: 0; font-size: 10.5px; color: var(--txt-mute);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wt-scope .db-list { max-height: 168px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.wt-scope .db-row {
+  display: flex; align-items: center; gap: 7px; width: 100%; padding: 3px 6px; border-radius: 6px;
+  border: 0; background: transparent; color: var(--txt-dim); font-size: 11.5px; text-align: left; cursor: pointer;
+}
+.wt-scope .db-row:hover { background: rgba(var(--amber-rgb), .14); color: rgb(var(--amber-ink-rgb)); }
+.wt-scope .db-ico { flex: none; width: 16px; text-align: center; }
+.wt-scope .db-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wt-scope .db-note { font-size: 10.5px; line-height: 1.5; color: var(--txt-mute); padding: 2px 2px; }
+.wt-scope .db-note.bad { color: #e8734a; }
+.wt-scope .db-foot { display: flex; align-items: center; gap: 8px; }
+.wt-scope .db-foot .field-hint { margin: 0; flex: 1; min-width: 0; }

@@ -92,6 +92,8 @@ let readCase = ''
 let artifactCase = ''
 /* op=linemap 的返回：测编辑器行号栏时按需改写 */
 let fakeLineMap = { ok: true, repo: true, marks: [], adds: 0, mods: 0, dels: 0 }
+/* 目录浏览：非 null 时 /fs/list 按请求路径返回不同子树，用来验证「点进去一级」 */
+let fakeDirs = null
 globalThis.fetch = async (url, opts) => {
   const u = String(url)
   if (u.endsWith('/fs/list')) {
@@ -266,7 +268,10 @@ globalThis.fetch = async (url, opts) => {
   }
   const body = u.endsWith('/sessions') ? fakeSessions
     : u.endsWith('/defaults') ? fakeDefaults
-        : u.endsWith('/fs/list') ? fakeTree
+        : u.endsWith('/fs/list')
+          ? (fakeDirs
+            ? (fakeDirs[lastListPath] || { ok: true, path: lastListPath, name: '', parent: '', writable: true, entries: [] })
+            : fakeTree)
           : u.endsWith('/fs/read') ? fakeFile
             : u.endsWith('/fs/deletable') ? (deletableBlock ? { ok: false, reason: deletableBlock } : { ok: true, reason: '' })
             : u.endsWith('/git') ? (String(opts?.body || '').includes('"log"') ? fakeGitLog : (String(opts?.body || '').includes('"branches"') ? fakeGitBranches : fakeGit))
@@ -2146,7 +2151,67 @@ mod.openModal('ghupload', pid6)
 check('上传弹窗可打开', mod.store.modal && mod.store.modal.kind === 'ghupload', '')
 mod.openModal('clone')
 check('克隆弹窗可打开', mod.store.modal && mod.store.modal.kind === 'clone', '')
+const cloneTree = render(overlayComp)
+check('克隆弹窗有「浏览…」按钮',
+  collect(cloneTree).some((n) => n.type === 'button' && /浏览/.test(textOf(n))), '')
+check('「克隆到」仍可手打路径',
+  collect(cloneTree).some((n) => n.type === 'input' && String(n.props.placeholder || '').includes('projects')), '')
 mod.closeModal()
+
+/* ---------- ㉔ 克隆弹窗：浏览目录 ---------- */
+fakeDirs = {
+  'C:\\Users\\demo\\default-workspace': {
+    ok: true, path: 'C:\\Users\\demo\\default-workspace', name: 'default-workspace',
+    parent: 'C:\\Users\\demo', writable: true,
+    entries: [
+      { name: 'projects', dir: true, size: 0, mtime: NOW },
+      { name: 'notes.md', dir: false, size: 12, mtime: NOW },
+    ],
+  },
+  'C:\\Users\\demo\\default-workspace\\projects': {
+    ok: true, path: 'C:\\Users\\demo\\default-workspace\\projects', name: 'projects',
+    parent: 'C:\\Users\\demo\\default-workspace', writable: false,
+    entries: [{ name: 'car', dir: true, size: 0, mtime: NOW }],
+  },
+}
+const browseRoot = await mod.listMediaDir('C:\\Users\\demo\\default-workspace')
+check('浏览取到该目录的子项', browseRoot.path === 'C:\\Users\\demo\\default-workspace' && browseRoot.entries.length === 2, '')
+const onlyDirs = mod.dirOnly(browseRoot.entries)
+check('只留子目录（文件被过滤）', onlyDirs.length === 1 && onlyDirs[0].name === 'projects', JSON.stringify(onlyDirs.map((x) => x.name)))
+check('可写目录 writable 透传', browseRoot.writable === true, String(browseRoot.writable))
+const browseSub = await mod.listMediaDir('C:\\Users\\demo\\default-workspace\\projects')
+check('子目录带出上级路径（供「↑」用）', browseSub.parent === 'C:\\Users\\demo\\default-workspace', browseSub.parent)
+check('不可写目录 writable=false', browseSub.writable === false, String(browseSub.writable))
+
+const goCalls = []
+const dirView = (props) => expand({ type: mod.DirView, props: {
+  path: 'C:\\Users\\demo\\default-workspace', parent: 'C:\\Users\\demo', writable: true, state: 'ok',
+  rows: onlyDirs,
+  onGo: (p) => goCalls.push(p), onPick: (p) => goCalls.push('pick:' + p), onClose: () => goCalls.push('close'),
+  ...props,
+} })
+const dirOkTree = dirView({})
+check('目录浏览显示当前路径与子目录',
+  textOf(dirOkTree).includes('default-workspace') && textOf(dirOkTree).includes('projects'), textOf(dirOkTree).slice(0, 80))
+collect(dirOkTree).find((n) => /(^|\s)db-row(\s|$)/.test(String(n.props?.className || ''))).props.onClick()
+check('点目录行进入拼接后的绝对路径',
+  goCalls[0] === 'C:\\Users\\demo\\default-workspace\\projects', goCalls[0])
+collect(dirOkTree).find((n) => n.type === 'button' && textOf(n).trim() === '用这个目录').props.onClick()
+check('「用这个目录」回填当前路径',
+  goCalls[1] === 'pick:C:\\Users\\demo\\default-workspace', goCalls[1])
+
+const roTree = dirView({ writable: false, rows: [] })
+check('不可写位置亮警告', /不在可写白名单/.test(textOf(roTree)), textOf(roTree).slice(0, 90))
+const roPick = collect(roTree).find((n) => n.type === 'button' && textOf(n).trim() === '用这个目录')
+check('不可写位置禁用确认按钮', roPick && roPick.props.disabled === 'disabled', String(roPick && roPick.props.disabled))
+check('不可写时不再提示「当上级目录」', !textOf(roTree).includes('会用这个目录当仓库的上级目录'), '')
+
+const dirUpBtn = collect(dirView({ parent: '' })).find((n) => n.type === 'button' && textOf(n).trim() === '↑')
+check('到根时「↑」禁用', dirUpBtn && dirUpBtn.props.disabled === 'disabled', '')
+check('没有子目录时给说明', textOf(dirView({ rows: [] })).includes('没有子目录'), '')
+check('起始路径为空时给指引', textOf(dirView({ path: '', state: 'empty' })).includes('还没有起始路径'), '')
+check('列目录失败时显示原因', textOf(dirView({ state: 'error', err: '拒绝访问' })).includes('拒绝访问'), '')
+fakeDirs = null
 
 /* 克隆：读 NDJSON 拿 end.path */
 const cl = await mod.cloneRepo({ url: 'demo-user/demo', dest: '/demo/cloned' }, () => {})

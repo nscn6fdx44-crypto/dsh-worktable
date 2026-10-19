@@ -1,4 +1,4 @@
-# trae-usage-worktable（DSH 插件 · 0.10.2）
+# trae-usage-worktable（DSH 插件 · 0.10.3）
 
 > DeepSeek Harness 侧边栏的完整工作台。本目录是 `nscn6fdx44-crypto/dsh-worktable`
 > 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的**独立实现**：
@@ -16,11 +16,11 @@
 ```
 
 重开 DSH → 侧边栏出现「工作台」（托盘图标旁的 `🧰` 工作台卡片）→ 打开带 token 的网页端，
-访问 `/api/trae-worktable/health`，返回里的 `version` 应等于 `package.json` 的版本（当前 `0.10.2`）。
+访问 `/api/trae-worktable/health`，返回里的 `version` 应等于 `package.json` 的版本（当前 `0.10.3`）。
 
 分发 / 升级 / 卸载 / 排查见下方「安装」一节。
 
-## 能力（0.10.2）
+## 能力（0.10.3）
 
 | 半侧 | 文件 | 内容 |
 |---|---|---|
@@ -246,6 +246,16 @@
 
 **克隆**在总览顶栏「⑂ 克隆」或新建项目窗里，支持 `owner/repo` 简写、私有仓库（自动带令牌）、
 `--depth 1`、只取某个分支；进度是 NDJSON 实时刷的，克隆完自动建成项目并打开。
+
+**选目录**（0.10.3）：克隆窗「克隆到」右边多了「浏览…」，点开是内嵌的目录树 —— 只列子目录，
+点一行进一级，`↑` 回上级，`↻` 重列，底部「用这个目录」回填。默认从当前的「克隆到」路径开始，
+没有就退回工作目录。仍然可以直接粘路径。
+> 为什么不用系统选择框：浏览器里 `<input type=file webkitdirectory>` 只给文件名、不给绝对路径，
+> 拿不到能落盘的目录。
+>
+> 浏览时会把 `/fs/list` 返回的 `writable` 一起判断：**读目录不设白名单**（能一路翻到盘符），
+> 但**写（克隆）要求落在白名单内**（进程 cwd、用户 home、DSH_HOME、已注册项目根）。所以选到
+> 白名单外的目录会当场亮红并禁用「用这个目录」，而不是点了「克隆」才吃 400。
 
 > **证书问题**：Windows 上 schannel 的吊销检查连不上（`CRYPT_E_NO_REVOCATION_CHECK`）会让整条命令失败。
 > 退让顺序是「原样 → 只关吊销检查 → 用户勾选时关证书校验」，默认**不会**偷偷关掉校验；

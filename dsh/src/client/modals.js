@@ -11,7 +11,7 @@ import {
   createSessionInDir, jumpToSession, toast, ACCENTS, BACKDROPS, setTheme, resetTheme, store as coreStore,
   enterProject, projEmoji, switchHostSession, PROJECT_TEMPLATES, templateOf, applyTemplate,
   exportSnapshotText, importSnapshot, setSideProject,
-  joinPath, baseName,
+  joinPath, baseName, listMediaDir,
   ghLogin, ghLogout, loadGh, loadGhRepos, ghUploadRepo, cloneRepo, loadScm, scmOf, setScmInsecure,
 } from './core.js'
 import { dockAspect } from './hostdock.js'
@@ -809,6 +809,108 @@ function repoNameOf(url) {
   return tail.replace(/\.git$/i, '')
 }
 
+/**
+ * 目录浏览器的样子 —— 纯展示，数据全从 props 来（测试直接渲染它）。
+ *
+ * 为什么不用系统选择框：浏览器里 <input type=file webkitdirectory> 只给文件名、
+ * 不给绝对路径，拿不到能落盘的目录。所以只能靠 /fs/list 自己画一个。
+ *
+ * 读目录不设白名单（能一路翻到盘符），但写（克隆）必须落在白名单内 ——
+ * 所以把 /fs/list 返回的 writable 也画出来：选到不可写的位置当场提示并禁用确认，
+ * 而不是点了「克隆」才吃 400。
+ */
+export function DirView({ path, parent, rows, writable, state = 'ok', err = '', onGo, onPick, onClose }) {
+  const here = String(path || '')
+  const list = Array.isArray(rows) ? rows : []
+  const walk = (p) => { if (typeof onGo === 'function') onGo(p) }
+
+  return el('div', { className: 'dir-browse' },
+    el('div', { className: 'db-head' },
+      el('span', { className: 'mono db-path', title: here }, shortPath(here || '（未设置）', 48)),
+      el('button', {
+        type: 'button', className: 'mini-btn', title: '上一级（到根就没有了；换盘请改上面的路径再点浏览）',
+        disabled: parent ? undefined : 'disabled', onClick: () => walk(parent),
+      }, '↑'),
+      el('button', { type: 'button', className: 'mini-btn', title: '重新列一遍', onClick: () => walk(here) }, '↻'),
+      el('button', { type: 'button', className: 'mini-btn', title: '收起浏览', onClick: onClose }, '✕'),
+    ),
+
+    state === 'error'
+      ? el('div', { className: 'db-note bad' }, '列目录失败：' + err)
+      : state === 'empty'
+        ? el('div', { className: 'db-note' }, '还没有起始路径：先在「克隆到」里填一个目录，再点「浏览」；也可以把完整路径直接粘进去')
+        : state === 'loading'
+          ? el('div', { className: 'db-note' }, '读取中…')
+          : list.length
+            ? el('div', { className: 'db-list' },
+              list.slice(0, 300).map((r) => el('button', {
+                key: r.name, type: 'button', className: 'db-row', title: '进入 ' + r.name,
+                onClick: () => walk(joinPath(here, r.name)),
+              },
+                el('span', { className: 'db-ico' }, '📁'),
+                el('span', { className: 'db-name' }, r.name),
+              )),
+            )
+            : el('div', { className: 'db-note' }, '这个目录下没有子目录'),
+
+    writable === false
+      ? el('div', { className: 'db-note bad' }, '这个位置不在可写白名单内，克隆会失败；选工作目录或用户主目录下的文件夹')
+      : null,
+
+    el('div', { className: 'db-foot' },
+      el('span', { className: 'field-hint' }, writable === false ? '' : '会用这个目录当仓库的上级目录'),
+      el('button', {
+        type: 'button', className: 'btn small primary',
+        disabled: !here || writable === false ? 'disabled' : undefined,
+        onClick: () => { if (typeof onPick === 'function') onPick(here) },
+      }, '用这个目录'),
+    ),
+  )
+}
+
+/** 只留目录：克隆要的是「放到哪个文件夹」，文件没必要占位置 */
+export function dirOnly(entries) {
+  return (Array.isArray(entries) ? entries : []).filter((e) => e && e.dir)
+}
+
+/** 容器：取数 + 状态；画由 DirView 负责 */
+function DirBrowse({ start, onPick, onClose }) {
+  const [dir, setDir] = useState('')
+  const [parent, setParent] = useState('')
+  const [rows, setRows] = useState([])
+  const [state, setState] = useState('idle')
+  const [err, setErr] = useState('')
+  const [writable, setWritable] = useState(true)
+
+  const go = async (target) => {
+    const t = String(target || '').trim()
+    if (!t) return
+    setState('loading')
+    setErr('')
+    try {
+      const data = await listMediaDir(t)
+      setDir(data.path || t)
+      setParent(data.parent || '')
+      setRows(dirOnly(data.entries))
+      setWritable(data.writable !== false)
+      setState('ok')
+    } catch (e) {
+      setState('error')
+      setErr(String((e && e.message) || e))
+    }
+  }
+
+  useEffect(() => {
+    if (String(start || '').trim()) go(start)
+    else setState('empty')
+  }, [])
+
+  return el(DirView, {
+    path: dir || String(start || ''), parent, rows, writable, state, err,
+    onGo: go, onPick, onClose,
+  })
+}
+
 function CloneModal() {
   useStore()
   const gh = store.gh
@@ -822,6 +924,7 @@ function CloneModal() {
   const [error, setError] = useState('')
   const [showList, setShowList] = useState(false)
   const [q, setQ] = useState('')
+  const [browsing, setBrowsing] = useState(false)
 
   const name = repoNameOf(url)
   const dest = parent ? joinPath(parent, name) : ''
@@ -910,13 +1013,27 @@ function CloneModal() {
       : null,
     el('div', { className: 'field' },
       el('label', null, '克隆到'),
-      el('input', {
-        className: 'mono', value: parent, autoComplete: 'off',
-        placeholder: 'C://Users//你的用户名//projects',
-        onChange: (e) => setParent(e.target.value),
-      }),
+      el('div', { className: 'db-line' },
+        el('input', {
+          className: 'mono', value: parent, autoComplete: 'off',
+          placeholder: 'C://Users//你的用户名//projects',
+          onChange: (e) => setParent(e.target.value),
+        }),
+        el('button', {
+          type: 'button', className: 'mini-btn' + (browsing ? ' on' : ''),
+          title: '在磁盘上逐级浏览，选一个目录',
+          onClick: (e) => { e.preventDefault(); setBrowsing((v) => !v) },
+        }, browsing ? '收起' : '浏览…'),
+      ),
       dest ? el('div', { className: 'field-hint mono' }, '将创建：' + dest) : null,
     ),
+    browsing
+      ? el(DirBrowse, {
+        start: parent || String(store.defaults.workspace || ''),
+        onPick: (p) => { setParent(p); setBrowsing(false) },
+        onClose: () => setBrowsing(false),
+      })
+      : null,
     el('div', { className: 'field' },
       el('label', null, '选项'),
       el('label', { className: 'chk' },

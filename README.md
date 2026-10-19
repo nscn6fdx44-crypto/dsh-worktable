@@ -2,7 +2,7 @@
 
 A **DeepSeek Harness (DSH)** side-panel *worktable* plugin: turn your projects into a side-panel app drawer with a dockable split workspace — file browser, editor, real terminal, in-app browser, media viewer, notes, custom window, and full git/GitHub management — all inside DSH.
 
-> 中文说明见 [README.zh.md](README.zh.md) · 当前版本 **0.10.2**
+> 中文说明见 [README.zh.md](README.zh.md) · 当前版本 **0.10.3**
 
 Requires **DSH `0.2.0-rc.2` or `0.2.1-rc.2`** (Windows desktop).
 
@@ -17,19 +17,19 @@ The CLI lives at `<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd` — 
 **Option A — install straight from the release URL** (DSH downloads the asset itself):
 
 ```powershell
-& "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.2/trae-usage-worktable-0.10.2.tgz"
+& "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.3/trae-usage-worktable-0.10.3.tgz"
 ```
 
 **Option B — download the file and install it locally** (use this if GitHub is slow or blocked):
 
-1. Download `trae-usage-worktable-0.10.2.tgz` from the [v0.10.2 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.2) to any folder you like
-   (245.5 KB, sha256 `aea7d199ebbd0e0316bd7f2eac729e75d83526617ce80f68c005d5ce3d73fe34`)
+1. Download `trae-usage-worktable-0.10.3.tgz` from the [v0.10.3 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.3) to any folder you like
+   (247.4 KB, sha256 `9b886cb48df374a3e15e2047683ccaf2e39b2066da82562086b7aa74347bf08a`)
 2. In PowerShell — replace the path with wherever **you** saved it:
    ```powershell
-   & "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<full path to>\trae-usage-worktable-0.10.2.tgz"
+   & "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<full path to>\trae-usage-worktable-0.10.3.tgz"
    ```
 
-Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. Verify with `/api/trae-worktable/health` → `"version": "0.10.2"`.
+Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. Verify with `/api/trae-worktable/health` → `"version": "0.10.3"`.
 
 ## What's inside
 
@@ -51,8 +51,11 @@ Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. 
 - **Keyboard shortcuts**, per-project templates, and JSON import/export for your setup
 - **Drag to chat** — drop a file row or a browser URL on the top bar and it lands in the chat input as a ready-to-send block
 
-## Latest changes (0.8.48 → 0.10.2)
+## Latest changes (0.8.48 → 0.10.3)
 
+- **0.10.3** the clone dialog can **browse for a destination**: a「浏览…」button next to the path opens an inline
+  directory tree (arrow up, refresh, one-click apply). Only subdirectories are listed, and a location that is
+  readable but not writable is flagged red with the confirm button disabled.
 - **0.10.2** the editor **gutter shows git changes**: green = added, amber = modified, red stub = deleted,
   plus a `+n ~n −n` counter. Derived from `git diff -U0` against HEAD (minimal hunks), recomputed after save;
   files outside a repo simply show no markers.

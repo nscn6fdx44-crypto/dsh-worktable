@@ -57,6 +57,8 @@ export const inject = ['slots']
 export { VERSION }
 /* 让位接口出口（离线自测用）：宽度换算 + 施加/还原，不参与运行时调用 */
 export { computeDock, attachHost, applyDock, releaseDock, dockAspect } from './hostdock.js'
+/* 离线自测出口：目录浏览器的纯展示层（克隆弹窗用），数据全从 props 来 */
+export { DirView, dirOnly } from './modals.js'
 /* 离线自测出口：暴露编辑器状态与 openFile，便于断言「未保存改动不被覆盖」守卫 */
 export { store, openFile, createSessionInDir, switchHostSession, searchUrl, webGotoSmart, setTheme, resetTheme, themeStyle, themeAttrs, webHome, openSearch, moveProjectBefore, setProjectFolder,
   LAYOUTS, setLayout, setSecondTab, setSplit, setSplitB, uiOf,

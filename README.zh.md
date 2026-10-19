@@ -2,7 +2,7 @@
 
 DeepSeek Harness（DSH）侧边栏**工作台**插件：把你的项目收纳成侧边栏应用抽屉，提供可停靠的分栏工作区——文件浏览、编辑器、真 PTY 终端、内置浏览器、媒体查看、笔记、自定义窗口，以及完整的 git / GitHub 管理——全部在 DSH 内完成。
 
-> 英文说明见 [README.md](README.md) · 当前版本 **0.10.2**
+> 英文说明见 [README.md](README.md) · 当前版本 **0.10.3**
 
 需要 **DSH `0.2.0-rc.2` 或 `0.2.1-rc.2`**（Windows 桌面端）。
 
@@ -17,19 +17,19 @@ CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`�
 **方式 A —— 直接按网址装**（DSH 自己去 GitHub 下载附件）：
 
 ```powershell
-& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.2/trae-usage-worktable-0.10.2.tgz"
+& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.3/trae-usage-worktable-0.10.3.tgz"
 ```
 
 **方式 B —— 下载后装本地文件**（GitHub 慢或被墙时用）：
 
-1. 从 [v0.10.2 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.2) 把 `trae-usage-worktable-0.10.2.tgz` 下载到**你想放的任意目录**
-   （245.5 KB，sha256 `aea7d199ebbd0e0316bd7f2eac729e75d83526617ce80f68c005d5ce3d73fe34`）
+1. 从 [v0.10.3 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.3) 把 `trae-usage-worktable-0.10.3.tgz` 下载到**你想放的任意目录**
+   （247.4 KB，sha256 `9b886cb48df374a3e15e2047683ccaf2e39b2066da82562086b7aa74347bf08a`）
 2. 在 PowerShell 执行——路径换成**你自己**存放的位置：
    ```powershell
-   & "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<你下载的完整路径>\trae-usage-worktable-0.10.2.tgz"
+   & "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<你下载的完整路径>\trae-usage-worktable-0.10.3.tgz"
    ```
 
-重开 DSH —— 侧边栏即出现「工作台」面板。用 `/api/trae-worktable/health` 核对：`"version": "0.10.2"`。
+重开 DSH —— 侧边栏即出现「工作台」面板。用 `/api/trae-worktable/health` 核对：`"version": "0.10.3"`。
 
 ## 功能
 
@@ -50,8 +50,10 @@ CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`�
 - **快捷键体系**、项目模板、配置 JSON 导入导出
 - **拖到对话**——文件行或网页地址拖到顶栏，自动填成一段可发送的内容
 
-## 本版变更（0.8.48 → 0.10.2）
+## 本版变更（0.8.48 → 0.10.3）
 
+- **0.10.3** 克隆仓库**可以浏览目录**：「克隆到」右边加「浏览…」，内嵌目录树逐级点选、
+  `↑` 回上级、一键回填；只列子目录，读得到但写不了的路径当场亮红并禁用确认
 - **0.10.2** 编辑器**行号栏显示 git 改动**：新增 / 修改 / 删除三种竖条 + `+n ~n −n` 统计，
   基于 HEAD 的 `git diff -U0` 最小 hunk，保存后自动重算；文件不在仓库里就不染色
 - **0.10.1** 支持**取消初始化**（删 `.git`）：只删 `.git`，项目文件一个不动；
