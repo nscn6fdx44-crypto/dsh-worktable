@@ -10,19 +10,21 @@ Requires **DSH `0.2.0-rc.2` or `0.2.1-rc.2`** (Windows desktop).
 
 No build needed. **Fully quit DSH first** (right-click the tray icon → Exit) — otherwise the CLI refuses with `profile "desktop" is managed exclusively by the Electron application`.
 
-**Option A — install straight from the release URL:**
+The CLI lives at `<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd` — substitute your own path everywhere below (e.g. `D:\dsh\...` or `C:\Program Files\DeepSeek Harness\...`).
+
+**Option A — install straight from the release URL** (DSH downloads the asset itself):
 
 ```powershell
-& "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.8.52/trae-usage-worktable-0.8.52.tgz"
+& "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.8.52/trae-usage-worktable-0.8.52.tgz"
 ```
 
-**Option B — download and install a local file:**
+**Option B — download the file and install it locally** (use this if GitHub is slow or blocked):
 
-1. Download `trae-usage-worktable-0.8.52.tgz` from the [v0.8.52 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.8.52)
+1. Download `trae-usage-worktable-0.8.52.tgz` from the [v0.8.52 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.8.52) to any folder you like
    (128.1 KB, sha256 `d263ec9e917d764e3dd0eef0657ad61671d8a1bbe405648459644954f831da66`)
-2. In PowerShell:
+2. In PowerShell — replace the path with wherever **you** saved it:
    ```powershell
-   & "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "C:\path\to\trae-usage-worktable-0.8.52.tgz"
+   & "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<full path to>\trae-usage-worktable-0.8.52.tgz"
    ```
 
 Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. Verify with `/api/trae-worktable/health` → `"version": "0.8.52"`.
@@ -76,7 +78,7 @@ npm test           # offline self-tests (131 host + 481 client assertions)
 Developer `link` install (after fully quitting DSH):
 
 ```powershell
-& "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:<repo-root>\dsh"
+& "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:<repo-root>\dsh"
 ```
 
 The plugin source lives in the [`dsh/`](dsh) directory. Full documentation — routes, contracts, pitfalls, acceptance checklist: [`dsh/README.md`](dsh/README.md) · hand-off notes: [`dsh/HANDOFF.md`](dsh/HANDOFF.md).

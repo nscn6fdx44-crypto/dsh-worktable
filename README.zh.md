@@ -10,19 +10,21 @@ DeepSeek Harness（DSH）侧边栏**工作台**插件：把你的项目收纳成
 
 无需构建。**先完整退出 DSH**（右键托盘图标 → 退出）——否则 CLI 会报错 `profile "desktop" is managed exclusively by the Electron application`。
 
-**方式 A —— 直接按网址装：**
+CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`——下面命令里的路径**换成你自己的**（装在 D 盘是 `D:\dsh\...`，默认位置是 `C:\Program Files\DeepSeek Harness\...`）。
+
+**方式 A —— 直接按网址装**（DSH 自己去 GitHub 下载附件）：
 
 ```powershell
-& "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.8.52/trae-usage-worktable-0.8.52.tgz"
+& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.8.52/trae-usage-worktable-0.8.52.tgz"
 ```
 
-**方式 B —— 下载后装本地文件：**
+**方式 B —— 下载后装本地文件**（GitHub 慢或被墙时用）：
 
-1. 从 [v0.8.52 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.8.52) 下载 `trae-usage-worktable-0.8.52.tgz`
+1. 从 [v0.8.52 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.8.52) 把 `trae-usage-worktable-0.8.52.tgz` 下载到**你想放的任意目录**
    （128.1 KB，sha256 `d263ec9e917d764e3dd0eef0657ad61671d8a1bbe405648459644954f831da66`）
-2. 在 PowerShell 执行：
+2. 在 PowerShell 执行——路径换成**你自己**存放的位置：
    ```powershell
-   & "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "C:\路径\trae-usage-worktable-0.8.52.tgz"
+   & "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<你下载的完整路径>\trae-usage-worktable-0.8.52.tgz"
    ```
 
 重开 DSH —— 侧边栏即出现「工作台」面板。用 `/api/trae-worktable/health` 核对：`"version": "0.8.52"`。
@@ -76,7 +78,7 @@ npm test           # 离线自测（host 131 + client 481 条断言）
 开发者 `link` 安装（需先完整退出 DSH）：
 
 ```powershell
-& "D:\dsh\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:<仓库根目录>\dsh"
+& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:<仓库根目录>\dsh"
 ```
 
 插件源码位于 [`dsh/`](dsh) 目录。完整文档（路由、契约、踩坑、验收清单）见 [`dsh/README.md`](dsh/README.md)；交接说明见 [`dsh/HANDOFF.md`](dsh/HANDOFF.md)。
