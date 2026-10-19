@@ -8,6 +8,8 @@ Requires **DSH `0.2.0-rc.2` or `0.2.1-rc.2`** (Windows desktop).
 
 ## Install (from Release — recommended)
 
+> 🔰 **Not comfortable with the command line?** Follow the step-by-step walkthrough: **[INSTALL.md](INSTALL.md)** (Chinese, every step with what you should see on screen).
+
 No build needed. **Fully quit DSH first** (right-click the tray icon → Exit) — otherwise the CLI refuses with `profile "desktop" is managed exclusively by the Electron application`.
 
 The CLI lives at `<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd` — substitute your own path everywhere below (e.g. `D:\dsh\...` or `C:\Program Files\DeepSeek Harness\...`).

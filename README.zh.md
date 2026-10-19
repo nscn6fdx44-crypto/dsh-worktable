@@ -8,6 +8,8 @@ DeepSeek Harness（DSH）侧边栏**工作台**插件：把你的项目收纳成
 
 ## 安装（从 Release，推荐）
 
+> 🔰 **不想碰命令行？** 直接看手把手教程：**[INSTALL.md](INSTALL.md)**（每一步都写了「你会看到什么」）。
+
 无需构建。**先完整退出 DSH**（右键托盘图标 → 退出）——否则 CLI 会报错 `profile "desktop" is managed exclusively by the Electron application`。
 
 CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`——下面命令里的路径**换成你自己的**（装在 D 盘是 `D:\dsh\...`，默认位置是 `C:\Program Files\DeepSeek Harness\...`）。
