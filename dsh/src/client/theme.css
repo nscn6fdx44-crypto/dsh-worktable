@@ -1324,4 +1324,8 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 .wt-side .plist { min-height: 0; }
 .wt-side[data-short="1"] { overflow-y: auto; }
 .wt-side[data-short="1"] .side-projects { flex: 1 1 auto; }
-
+/* 宿主重排后的「布局变了 · 重测」提示 */
+.wt-scope .dh-main .stale-chip {
+  flex: none; margin-left: 4px; font-size: 10px; padding: 3px 7px;
+  color: #ffd9a0; border-color: rgba(232, 115, 74, .45); background: rgba(232, 115, 74, .16);
+}

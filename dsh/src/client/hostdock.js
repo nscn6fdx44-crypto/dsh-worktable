@@ -28,6 +28,21 @@ let geo = { ready: false, left: 0, top: 0, width: 0, height: 0, track: 0, max: 0
 /** 最近一次实际让位后的主区尺寸：主题小窗的取景框要跟它同比例 */
 let lastSize = { width: 0, height: 0 }
 
+/** 最近一次「算出来的宽度 > 0」的几何：宿主重排 / 预览面板抢走空间时用它顶住，避免铺满整窗 */
+let lastGood = { ready: true, left: 0, top: 0, width: 0, height: 0, track: 0, max: 0 }
+
+/**
+ * 纯函数：这次测出来的几何能不能用。
+ * 规则：能算出宽度就用新的；算不出但以前有过宽度 → 沿用旧的并标记 stale（绝不铺满整窗）。
+ */
+export function pickDock(prev, next) {
+  const p = prev || { width: 0 }
+  const n = next || { width: 0 }
+  if (n.ready && n.width > 0) return { ...n, stale: false }
+  if (p.width > 0) return { ...p, ready: true, stale: true }
+  return { ...n, ready: false, stale: false }
+}
+
 /**
  * 主区宽高比（取景框按它来，所见即所得）。
  * 还没让位过就按窗口比例 × 0.8 估算；实在拿不到退回 1.6。
@@ -90,7 +105,7 @@ function measure() {
       const sr = seat.getBoundingClientRect()
       if (sr.height > 0 && sr.left < left + applied + 8 && sr.bottom > top) top = Math.round(sr.bottom - f.top + 6)
     }
-    geo = {
+    const measured = {
       ready: true,
       left,
       top,
@@ -99,9 +114,13 @@ function measure() {
       width: applied,
       max: Math.max(0, track - MIN_CHAT),
     }
-    if (geo.width > 0 && geo.height > 0) lastSize = { width: geo.width, height: geo.height }
+    geo = pickDock(lastGood, measured)
+    if (geo.width > 0 && geo.height > 0) {
+      lastSize = { width: geo.width, height: geo.height }
+      if (!geo.stale) lastGood = { ...geo }
+    }
   } catch {
-    geo = { ...geo, ready: false }
+    geo = pickDock(lastGood, { ready: false, width: 0 })
   }
   return geo
 }
@@ -156,6 +175,16 @@ export function releaseDock() {
   }
   applied = 0
   geo = { ...geo, ready: false, width: 0 }
+  lastGood = { ready: true, left: 0, top: 0, width: 0, height: 0, track: 0, max: 0 }
+}
+
+/** 让 UI 手动重测（宿主布局变了之后） */
+export function remeasure() {
+  if (!host.ready) return geo
+  try {
+    if (host.center && host.center.style) host.center.style.marginLeft = applied ? applied + 'px' : host.saved
+  } catch { /* 只读 */ }
+  return measure()
 }
 
 /**
@@ -209,9 +238,34 @@ export function useHostDock(rootRef, active, preferred) {
       ro.observe(host.center)
     }
 
+    /* 宿主重排（开文件预览 / 换面板 / 侧边栏收起）会换掉或隐藏 centerCol：
+       只靠 resize 观察不到，这里盯 DOM 变化，节流后重新锚定 + 重测 */
+    let mo = null
+    let moTimer = 0
+    try {
+      if (typeof MutationObserver === 'function') {
+        mo = new MutationObserver(() => {
+          if (moTimer) return
+          moTimer = window.setTimeout(() => {
+            moTimer = 0
+            if (!host.frame || !host.frame.isConnected) {
+              /* frame 整个被换掉：重新找锚点 */
+              attachHost(rootRef && rootRef.current)
+            } else if (host.center && !host.center.isConnected) {
+              attachHost(rootRef && rootRef.current)
+            }
+            update()
+          }, 120)
+        })
+        mo.observe(host.frame, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'] })
+      }
+    } catch { /* 老环境 */ }
+
     return () => {
       if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('resize', onWin)
       if (ro) ro.disconnect()
+      if (mo) mo.disconnect()
+      if (moTimer && typeof window !== 'undefined') window.clearTimeout(moTimer)
       releaseDock()
       last.current.ready = false
     }

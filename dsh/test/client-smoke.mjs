@@ -1834,6 +1834,22 @@ check('卡片不再禁止收缩（没有 flex: 0 0 auto）', !/flex:\s*0 0 auto/
 check('卡片被压缩后自己滚（overflow-y: auto）', /overflow-y:\s*auto/.test(sideRule) && /min-height:\s*0/.test(sideRule), '')
 check('数据区可收缩（side-projects/plist min-height:0）', /\.wt-side \.side-projects \{[^}]*min-height:\s*0/.test(cssText) && /\.wt-side \.plist \{[^}]*min-height:\s*0/.test(cssText), '')
 
+/* ---------- ㉕ 让位宽度的「不许铺满整窗」守卫 ---------- */
+const good = { ready: true, left: 280, top: 0, width: 980, height: 900, track: 1200, max: 980 }
+const zero = { ready: true, left: 280, top: 0, width: 0, height: 900, track: 300, max: 80 }
+
+const keepGood = mod.pickDock(good, zero)
+check('测不出宽度时沿用上次区域（不铺满整窗）', keepGood.width === 980 && keepGood.stale === true && keepGood.ready === true, JSON.stringify(keepGood))
+
+const fresh = mod.pickDock(good, { ...good, width: 700 })
+check('测出新宽度就用新的且清掉 stale', fresh.width === 700 && fresh.stale === false, JSON.stringify({ w: fresh.width, s: fresh.stale }))
+
+const none = mod.pickDock({ width: 0 }, zero)
+check('从来没有过宽度时才 ready:false', none.ready === false && none.width === 0, JSON.stringify(none))
+
+const keptOnFail = mod.pickDock(good, { ready: false, width: 0 })
+check('测量抛错也沿用上次区域', keptOnFail.width === 980 && keptOnFail.stale === true, JSON.stringify({ w: keptOnFail.width, s: keptOnFail.stale }))
+
 const failed = results.filter((r) => !r)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)
 process.exit(failed.length ? 1 : 0)

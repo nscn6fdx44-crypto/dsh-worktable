@@ -11,7 +11,7 @@
 import { Component, useRef } from 'react'
 import { el, Light, Splitter, ContextMenu, Toasts } from './ui.js'
 import { ModalHost } from './modals.js'
-import { useHostDock } from './hostdock.js'
+import { useHostDock, remeasure } from './hostdock.js'
 import {
   store, useStore, STATES, normState, PANE_TABS, INFO_TAB, GRID_TABS, GRID_PID,
   fmtDuration, relTime, shortPath, projEmoji, openGrid, enterProject, closeOverlay,
@@ -342,6 +342,13 @@ function Workspace({ project, ui, geo }) {
     el('header', { className: 'dock-head' },
       el('div', { className: 'dh-main' },
         el('span', { className: 'dh-ico', 'aria-hidden': 'true' }, projEmoji(project)),
+        geo.stale
+          ? el('button', {
+            type: 'button', className: 'mini-btn stale-chip',
+            title: '宿主布局变了（开了面板 / 预览），工作台仍按上次区域显示；点一下重新测量',
+            onClick: () => remeasure(),
+          }, '布局变了 · 重测')
+          : null,
         el('b', { className: 'dh-name', title: project.path }, project.alias || project.name),
         el(Light, { pid: project.id }),
         el('span', { className: 'dh-dot', 'aria-hidden': 'true' }, '·'),

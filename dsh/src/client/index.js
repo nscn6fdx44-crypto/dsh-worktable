@@ -39,6 +39,7 @@ import {
 } from './core.js'
 import { el } from './ui.js'
 import { WorktableSidebar, sideModeOf } from './sidebar.js'
+import { pickDock, remeasure } from './hostdock.js'
 import { MainView, PaneBoundary } from './overlay.js'
 import { kindOfMediaPath, mediaRowsOf } from './panes.js'
 
@@ -59,7 +60,7 @@ export { store, openFile, createSessionInDir, switchHostSession, searchUrl, webG
   overviewProjects, setOverview, setGridTab,
   handleHotkey, HOTKEYS,
   setRunConfig, runProject, stopProject, openRunPort, hydrate, termExec,
-  setSideProject, setSideSplit, sideProjectOf, enterProject, kindOfMediaPath, mediaRowsOf, listMediaDir, sideModeOf }
+  setSideProject, setSideSplit, sideProjectOf, enterProject, kindOfMediaPath, mediaRowsOf, listMediaDir, sideModeOf, pickDock, remeasure }
 
 class SidebarBoundary extends Component {
   constructor(props) { super(props); this.state = { err: null } }
