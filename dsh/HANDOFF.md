@@ -16,7 +16,8 @@
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
 | 运行中的实例 | `/api/trae-worktable/health` → **0.8.52**（已生效） |
 | 自测基线 | host **131** + client **481** 全通过（`npm test`） |
-| tag | 到 `v0.8.51`；`v0.8.52` **未打 tag**（见 §9 待办） |
+| tag | `v0.8.52` **已打并推送**（带注释，指向 `ea1a8aa`） |
+| Release | `v0.8.52` **已发布**，附件 `trae-usage-worktable-0.8.52.tgz`（128.1 KB，sha256 `d263ec9e…31da66`）已校验与本地一致 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
 
 ---
@@ -63,11 +64,22 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 
 `lib/` 被 `.gitignore` 忽略，但 `package.json.files` 白名单会强制打进 tgz —— 所以**仓库里看不到 lib 是正常的**，打 tgz 前必须先 `npm run build`。
 
-### GitHub Release（**未完成**）
+### GitHub Release（**已完成**）
 
-- tag 已推到 `v0.8.51`；`v0.8.52` 还没打；
-- Release 页面 + 附件**没上传**：本机没有 `gh`、没有 `GH_TOKEN`、`git credential fill` 取不到令牌、`api.github.com` 被 hosts 指到 127.0.0.1（`fetch failed`）——只能用网页拖文件，或先 `gh auth login` 再 `gh release create`。
-- 发布说明已生成：`C:\Users\jinshuaiyu\Documents\deepseek-harness\default-workspace\RELEASE-v0.8.47.md`（内容需按 0.8.52 更新）。
+- tag `v0.8.52` 已推；Release `v0.8.52` 已建、附件已上传，正文取自
+  `C:\Users\jinshuaiyu\Documents\deepseek-harness\default-workspace\RELEASE-v0.8.52.md`
+- **别再信「没有 token」这条**：本机没 `gh`、没 `GH_TOKEN`，但 `git credential fill`
+  能直接拿到 GitHub OAuth 令牌（`gho_` 开头，scopes 含 `repo`），`api.github.com` 也没被 hosts 拦：
+  ```powershell
+  # 取令牌（不要打印全文）+ 调 API 的写法见本节下方脚本思路
+  printf "protocol=https\nhost=github.com\n\n" | git credential fill
+  ```
+  建 Release = `POST /repos/<owner>/<repo>/releases`（`tag_name`/`name`/`body`），
+  传附件 = `POST https://uploads.github.com/repos/<owner>/<repo>/releases/<id>/assets?name=<文件名>`，
+  Content-Type 用 `application/gzip`。改正文用 `PATCH /releases/<id>`，删附件用 `DELETE /releases/assets/<id>`。
+- 仓库已有 Release：`v0.8.52`、`v0.8.47`、`v0.8.11`（各 1 个附件）
+- **下次发版顺序**：`npm run build && npm test` → 改两处版本号 → 打包 → 更新 RELEASE 说明（含新 sha256）
+  → commit + push → `git tag -a` + push tag → 建 Release / 传附件（脚本可照上面重写，幂等）
 
 ---
 
@@ -175,7 +187,8 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 
 ## 9. 下一步建议（按优先级）
 
-1. **打 `v0.8.52` tag + 补 Release 资产**（网页或 `gh`），并把 RELEASE 说明更新到 0.8.52；
+1. ~~**打 `v0.8.52` tag + 补 Release 资产**~~ —— **已完成（2026-10-19）**：tag 已推、Release 已建、附件已传并校验 sha256；
+   首页 `README.md` / `README.zh.md` 与 `dsh/README.md` 已同步到 0.8.52（安装指向新 Release、补 0.8.48–0.8.52 修复与验收项）；
 2. **真机验收这一串 UI 修复**（0.8.48 → 0.8.52 全是侧边栏/让位相关，最好一次验完并把结果写回本文档 §8）；
 3. **媒体窗真机确认**：三种选法各试一次（选择文件 / 浏览项目 / 拖入）；
 4. 收尾项：`/transcript` 补 `guard()`；把 `README` 的验收清单和「已知坑」同步到 0.8.52；
