@@ -38,7 +38,7 @@ import {
   listMediaDir,
 } from './core.js'
 import { el } from './ui.js'
-import { WorktableSidebar } from './sidebar.js'
+import { WorktableSidebar, sideModeOf } from './sidebar.js'
 import { MainView, PaneBoundary } from './overlay.js'
 import { kindOfMediaPath, mediaRowsOf } from './panes.js'
 
@@ -59,7 +59,7 @@ export { store, openFile, createSessionInDir, switchHostSession, searchUrl, webG
   overviewProjects, setOverview, setGridTab,
   handleHotkey, HOTKEYS,
   setRunConfig, runProject, stopProject, openRunPort, hydrate, termExec,
-  setSideProject, setSideSplit, sideProjectOf, enterProject, kindOfMediaPath, mediaRowsOf, listMediaDir }
+  setSideProject, setSideSplit, sideProjectOf, enterProject, kindOfMediaPath, mediaRowsOf, listMediaDir, sideModeOf }
 
 class SidebarBoundary extends Component {
   constructor(props) { super(props); this.state = { err: null } }

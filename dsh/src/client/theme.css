@@ -1295,3 +1295,24 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 .wt-scope .mb-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wt-scope .mb-size { flex: none; font-size: 9.5px; color: var(--txt-mute); }
 
+/* ---------- 宿主侧边栏空间不足时的退化形态 ---------- */
+/* 矮（展开了会话列表，高度被压缩）：先收起状态框，把高度全给项目列表，整卡可滚 */
+.wt-side[data-short="1"] { overflow-y: auto; gap: 6px; padding: 8px 8px 6px; }
+.wt-side[data-short="1"] .stat-box { display: none; }
+.wt-side[data-short="1"] .plist { max-height: none; }
+.wt-side[data-short="1"] .brand-sub { display: none; }
+.wt-side[data-short="1"] .side-projects { min-height: 0; }
+
+/* 窄（侧边栏折叠成图标栏）：只留图标与灯，隐藏文字 */
+.wt-side[data-narrow="1"] { padding: 8px 6px 6px; }
+.wt-side[data-narrow="1"] .brand > div:nth-child(2) { display: none; }
+.wt-side[data-narrow="1"] .brand-tools { flex-wrap: wrap; }
+.wt-side[data-narrow="1"] .stat-box { grid-template-columns: repeat(2, 1fr); }
+.wt-side[data-narrow="1"] .fb-k { font-size: 8.5px; }
+.wt-side[data-narrow="1"] .nav-label .nl-tools { display: none; }
+.wt-side[data-narrow="1"] .pitem { justify-content: center; padding: 5px 4px; }
+.wt-side[data-narrow="1"] .pitem .pi-name,
+.wt-side[data-narrow="1"] .pitem .pi-bind,
+.wt-side[data-narrow="1"] .pitem .pi-arrow { display: none; }
+.wt-side[data-narrow="1"] .pgroup-title { text-align: center; font-size: 8.5px; }
+

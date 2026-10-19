@@ -3,7 +3,7 @@
  * 宿主会话不再单列一节 —— 项目列表已经承载了同样的信息，点项目即进工作区。
  * 主区没开时，右击菜单 / 小窗 / toast 暂挂在这里；主区一开就交给它，避免重复挂载。
  */
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { el, Icon, Light, ContextMenu, Toasts } from './ui.js'
 import {
   store, useStore, relTime, projEmoji,
@@ -24,6 +24,21 @@ function readDragPid(e) {
   try { return String(e.dataTransfer.getData(DRAG_PROJECT) || '') } catch { return '' }
 }
 
+/**
+ * 宿主侧边栏给的可用空间 → 工作台该怎么摆。
+ * 展开会话列表时高度会被压得很矮（这是最常见的「显示有问题」），折叠成图标栏时宽度会变窄。
+ */
+export function sideModeOf(width, height) {
+  const w = Number(width) || 0
+  const h = Number(height) || 0
+  return {
+    narrow: w > 0 && w < 200,
+    short: h > 0 && h < 340,
+    /* 卡片最大高度：留 10px 呼吸，最少给 150px（再矮就整块滚动） */
+    maxHeight: h > 0 ? Math.max(150, Math.round(h - 10)) : 0,
+  }
+}
+
 const STAT_CELLS = [
   { id: 'working', label: '进行中', tone: 'working' },
   { id: 'needs-you', label: '待处理', tone: 'needs' },
@@ -33,6 +48,42 @@ const STAT_CELLS = [
 
 export function WorktableSidebar() {
   useStore()
+  const rootRef = useRef(null)
+  const [box, setBox] = useState({ w: 0, h: 0 })
+
+  /* 宿主侧边栏（展开会话列表 / 折叠成图标栏）随时会变尺寸：量一次父容器，跟着设上限 */
+  useEffect(() => {
+    if (typeof document === 'undefined') return () => {}
+    const node = rootRef.current
+    const parent = node && node.parentElement
+    if (!parent) return () => {}
+    let raf = 0
+    const measure = () => {
+      const rect = parent.getBoundingClientRect ? parent.getBoundingClientRect() : null
+      if (!rect) return
+      setBox({ w: Math.round(rect.width), h: Math.round(rect.height) })
+    }
+    const schedule = () => {
+      if (raf) return
+      raf = typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame(() => { raf = 0; measure() })
+        : setTimeout(() => { raf = 0; measure() }, 80)
+    }
+    measure()
+    let ro = null
+    try {
+      if (typeof ResizeObserver === 'function') {
+        ro = new ResizeObserver(schedule)
+        ro.observe(parent)
+      }
+    } catch { /* 老环境 */ }
+    window.addEventListener('resize', schedule)
+    return () => {
+      window.removeEventListener('resize', schedule)
+      if (ro) ro.disconnect()
+      if (raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf)
+    }
+  }, [])
   const all = store.projects
   const visible = all.filter((p) => !p.hidden)
   /* 这里必须自己算：host 的 counts 只认宿主会话，手工改的状态不会进去 */
@@ -48,12 +99,20 @@ export function WorktableSidebar() {
     groups.get(key).push(p)
   }
 
+  const sideMode = sideModeOf(box.w, box.h)
+
   /* 整块侧边栏都是拖放区：把「宿主会话」页签里的行（或带路径的文件）拖进来就建项目 */
   return el('div', {
     className: 'wt-scope wt-side' + (store.dragOver ? ' drag-over' : ''),
     'data-ns': 'worktable',
     'data-wide': '1',
-    style: themeStyle(),
+    ref: rootRef,
+    'data-narrow': sideMode.narrow ? '1' : '0',
+    'data-short': sideMode.short ? '1' : '0',
+    style: {
+      ...themeStyle(),
+      ...(sideMode.maxHeight ? { maxHeight: sideMode.maxHeight + 'px' } : null),
+    },
     ...themeAttrs(),
     onDragEnter: (e) => { if (canDropOnWorktable(e)) { e.preventDefault(); setDragOver(true) } },
     onDragOver: (e) => {

@@ -1809,6 +1809,23 @@ check('文本/代码文件被过滤掉', !mediaNames.includes('README.md') && !m
 const svgRow = mod.mediaRowsOf([{ name: 'logo.svg', dir: false, size: 1 }, { name: 'a.txt', dir: false, size: 1 }])
 check('SVG 算可预览', svgRow.length === 1 && svgRow[0].name === 'logo.svg', JSON.stringify(svgRow.map((x) => x.name)))
 
+/* ---------- ㉓ 宿主侧边栏空间自适应 ---------- */
+const m0 = mod.sideModeOf(0, 0)
+check('没量到尺寸时不限制', m0.narrow === false && m0.short === false && m0.maxHeight === 0, JSON.stringify(m0))
+const mNarrow = mod.sideModeOf(150, 900)
+check('窄（折叠图标栏）→ narrow', mNarrow.narrow === true && mNarrow.short === false, JSON.stringify(mNarrow))
+const mShort = mod.sideModeOf(320, 240)
+check('矮（展开会话列表）→ short + 高度上限', mShort.short === true && mShort.narrow === false && mShort.maxHeight === 230, JSON.stringify(mShort))
+const mTiny = mod.sideModeOf(320, 100)
+check('极矮时保底 150px（整卡滚动）', mTiny.maxHeight === 150, JSON.stringify(mTiny))
+const mWide = mod.sideModeOf(320, 600)
+check('空间充足时不做退化', mWide.narrow === false && mWide.short === false && mWide.maxHeight === 590, JSON.stringify(mWide))
+
+const fitTree = render(sidebarComp)
+const fitRoot = allByClass(fitTree, /(^|\s)wt-side(\s|$)/)[0]
+check('根节点带 data-narrow / data-short', !!fitRoot && fitRoot.props['data-narrow'] === '0' && fitRoot.props['data-short'] === '0', fitRoot ? JSON.stringify({ n: fitRoot.props['data-narrow'], s: fitRoot.props['data-short'] }) : '')
+check('根节点仍带主题 CSS 变量', !!fitRoot && !!fitRoot.props.style['--amber-rgb'], fitRoot ? String(fitRoot.props.style['--amber-rgb']) : '')
+
 const failed = results.filter((r) => !r)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)
 process.exit(failed.length ? 1 : 0)
