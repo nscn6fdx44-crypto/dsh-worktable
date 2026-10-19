@@ -144,7 +144,11 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 /* 根层永远铺满宿主内容区，但不吃事件：只有 .wt-dock 那一块可交互，
    所以让位之后右侧的 DSH 对话照常能点能打字。 */
 .wt-root { position: absolute; inset: 0; z-index: 900; pointer-events: none; }
-.wt-root > .ctx-menu, .wt-root > .scrim, .wt-root > .toasts { pointer-events: auto; }
+/* 宿主 .overlayLayer > * { pointer-events:auto } 与上面同权重，谁后注入谁赢；
+   一旦它赢了，铺满整窗的根层就会吞掉侧边栏/对话的点击（关闭键点不动）。
+   用双类名提高权重钉死：根层永远不接事件，只有 .wt-dock 自己接。 */
+.wt-scope.wt-root { pointer-events: none; }
+.wt-root > .ctx-menu, .wt-root > .scrim, .wt-root > .toasts, .wt-root > .wt-dock { pointer-events: auto; }
 
 .wt-dock {
   position: absolute; display: flex; flex-direction: column; overflow: hidden;
@@ -219,7 +223,7 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .wt-scope .dh-chat.off { color: var(--txt-mute); border-color: var(--line); background: rgba(255,255,255,.03); }
-.wt-scope .dh-tools { display: flex; align-items: center; gap: 5px; flex: none; }
+.wt-scope .dh-tools { display: flex; align-items: center; gap: 5px; flex: none; position: relative; z-index: 6; }
 
 /* 工作台右边缘：一拖就改让位宽度，右侧 DSH 对话跟着变 */
 .wt-scope .split-handle.dock-edge {

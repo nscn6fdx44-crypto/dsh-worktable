@@ -11,7 +11,7 @@
 import { Component, useRef } from 'react'
 import { el, Light, Splitter, ContextMenu, Toasts } from './ui.js'
 import { ModalHost } from './modals.js'
-import { useHostDock, remeasure, undockedBox } from './hostdock.js'
+import { useHostDock, remeasure, undockedBox, anchorLeft } from './hostdock.js'
 import {
   store, useStore, STATES, normState, PANE_TABS, INFO_TAB, GRID_TABS, GRID_PID,
   fmtDuration, relTime, shortPath, projEmoji, openGrid, enterProject, closeOverlay,
@@ -50,7 +50,7 @@ export function MainView() {
   const vh = (typeof window !== 'undefined' && window.innerHeight) || 800
   const style = dockedFit
     ? { left: geo.left + 'px', top: geo.top + 'px', width: geo.width + 'px', height: geo.height + 'px' }
-    : undockedBox(vw, vh)
+    : undockedBox(vw, vh, anchorLeft())
 
   return el('div', {
     className: 'wt-scope wt-root',

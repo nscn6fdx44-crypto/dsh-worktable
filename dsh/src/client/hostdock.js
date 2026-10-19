@@ -134,11 +134,26 @@ export function attachHost(root) {
   if (!root || typeof root !== 'object') return false
   let node = root
   let frame = null
-  for (let i = 0; i < 6 && node; i += 1) {
+  for (let i = 0; i < 10 && node; i += 1) {
     const parent = node.parentElement
     if (!parent || typeof parent.querySelector !== 'function') break
     if (parent.querySelector('[class*="centerCol"]')) { frame = parent; break }
     node = parent
+  }
+  /* 侧边栏展开 / 预览面板抢空间时，座位渲染器会插几层包裹，往上找到的祖先可能不够深。
+     直接按「同时含有 centerCol + sidebarCol 的那一层」定位，绕开层级深度。 */
+  if (!frame) {
+    try {
+      if (typeof document !== 'undefined' && document.querySelector) {
+        const c = document.querySelector('[class*="centerCol"]')
+        let p = c && c.parentElement
+        for (let i = 0; i < 10 && p; i += 1) {
+          const hasSide = typeof p.querySelector === 'function' && p.querySelector('[class*="sidebarCol"]')
+          if (hasSide) { frame = p; break }
+          p = p.parentElement
+        }
+      }
+    } catch { /* 老环境 */ }
   }
   if (!frame) return false
   const center = frame.querySelector('[class*="centerCol"]')
@@ -180,12 +195,38 @@ export function releaseDock() {
 
 /**
  * 纯函数：没锚上宿主对话区时，工作台该占多大。
- * 绝不能是 inset:0（会盖住侧边栏和对话）——退成「按比例占左半，留出右边」。
+ * 绝不能从 x=0 铺起 —— 宿主侧边栏展开时会整块盖住它（关闭/收起键就点不到了）。
+ * @param vw 视口宽
+ * @param vh 视口高
+ * @param left 已知的宿主侧边栏右边界（px）；未知传 0
  */
-export function undockedBox(vw, vh) {
-  const w = Math.max(320, Math.round((Number(vw) || 1280) * 0.66))
+export function undockedBox(vw, vh, left = 0) {
+  const w0 = Number(vw) || 1280
+  const L = Math.max(0, Math.round(Number(left) || 0))
+  const w = Math.max(320, Math.round(w0 * 0.66))
   const h = Math.max(240, Math.round(Number(vh) || 800))
-  return { left: 0, top: 0, width: Math.min(w, 1180), height: h }
+  const room = Math.max(320, w0 - L - 12)
+  return { left: L, top: 0, width: Math.max(320, Math.min(w, 1180, room)), height: h }
+}
+
+/**
+ * 宿主侧边栏右边界（px）。降级盒子用它当起点，保证永远不盖住宿主侧边栏。
+ * 依次尝试：上次让位后的 left → 当前 geo.left → 直接量 sidebarCol。
+ */
+export function anchorLeft() {
+  if (lastGood && lastGood.left > 0) return lastGood.left
+  if (geo && geo.left > 0) return geo.left
+  try {
+    if (typeof document !== 'undefined' && document.querySelector) {
+      const col = document.querySelector('[class*="sidebarCol"]')
+      if (col && col.getBoundingClientRect) {
+        const r = col.getBoundingClientRect()
+        /* 展开约 280、折叠约 56；异常宽（如整窗）不采信 */
+        if (r.width > 0 && r.width < 420) return Math.round(r.width)
+      }
+    }
+  } catch { /* 老环境 */ }
+  return 0
 }
 
 /** 让 UI 手动重测（宿主布局变了之后） */
@@ -232,7 +273,7 @@ export function useHostDock(rootRef, active, preferred) {
       /* 锚点暂时找不到（宿主开预览 / 换面板 / 侧边栏动画中）：
          1) 有过几何就沿用上次区域，绝不铺满整窗；
          2) 同时后台重试几轮，宿主结构恢复了就自动贴回去。 */
-      const fallback = pickDock(lastGood, { ready: false, width: 0 })
+      const fallback = pickDock(lastGood, { ready: false, width: 0, left: anchorLeft() })
       last.current = { width: fallback.width, left: fallback.left, top: fallback.top, height: fallback.height, ready: fallback.ready }
       setSnap({ ...fallback })
       let tries = 0
@@ -243,7 +284,7 @@ export function useHostDock(rootRef, active, preferred) {
           update()
           return
         }
-        if (tries < 8) timer = window.setTimeout(retry, 300)
+        if (tries < 12) timer = window.setTimeout(retry, 300)
       }
       timer = window.setTimeout(retry, 300)
       return () => { if (timer) window.clearTimeout(timer) }

@@ -1869,6 +1869,16 @@ check('dock 用 is-undocked（不再 is-full）', !!dockNode && String(dockNode.
 check('dock 宽度是有界值而非铺满', !!dockNode && Number(String(dockNode.props.style.width).replace('px', '')) > 0, dockNode ? JSON.stringify(dockNode.props.style) : '')
 check('样式里有 is-undocked 规则', (styleNodes[0] && styleNodes[0].textContent || '').includes('is-undocked'), '')
 
+/* ---------- ㉗ 降级盒子必须避开宿主侧边栏（「侧边栏打开时关闭键点不动」的根因） ---------- */
+const boxSide = mod.undockedBox(1600, 1000, 280)
+check('降级盒子从侧边栏右边界起，不再 left:0', boxSide.left === 280, JSON.stringify(boxSide))
+check('降级盒子不越过窗口右边界', boxSide.left + boxSide.width <= 1600, String(boxSide.left + boxSide.width))
+const boxTight = mod.undockedBox(700, 900, 280)
+check('窄窗口：宽度不小于 320 且仍不越界', boxTight.width >= 320 && boxTight.left + boxTight.width <= 700, JSON.stringify(boxTight))
+const cssGuard = (styleNodes[0] && styleNodes[0].textContent) || ''
+check('根层 pointer-events 用双类名钉死（防宿主 .overlayLayer>* 覆盖）', cssGuard.includes('.wt-scope.wt-root'), '')
+check('dh-tools 独立层叠（关闭键不被顶栏溢出内容压住）', /\.dh-tools\s*\{[^}]*position:\s*relative/.test(cssGuard), '')
+
 const failed = results.filter((r) => !r)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)
 process.exit(failed.length ? 1 : 0)
