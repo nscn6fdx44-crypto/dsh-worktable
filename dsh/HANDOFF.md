@@ -77,6 +77,12 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
   建 Release = `POST /repos/<owner>/<repo>/releases`（`tag_name`/`name`/`body`），
   传附件 = `POST https://uploads.github.com/repos/<owner>/<repo>/releases/<id>/assets?name=<文件名>`，
   Content-Type 用 `application/gzip`。改正文用 `PATCH /releases/<id>`，删附件用 `DELETE /releases/assets/<id>`。
+- **tag 已推之后发现要补文档？** 先确认该 tag **还没发 Release / 没被别人引用**，再
+  `git tag -d` + 重新 `git tag -a` + `git push --force origin refs/tags/vX`。
+  0.8.53 就这么干过一次：另一个会话先打了 tag（指向 `c317e88`），随后文档同步提交才有，
+  于是把 tag 重指到含文档的提交，**保证「tag 里的 dsh/README.md」与「包内的 README」是同一份**。
+- **`dsh/README.md` 在 npm 包里**：它的换行会随 `core.autocrlf` 在 CRLF/LF 之间变，重打包 sha256 也会变。
+  发布前先定稿再打包，文档里写的 sha 以**实际上传的附件**为准。
 - 仓库已有 Release：`v0.8.53`、`v0.8.52`、`v0.8.47`、`v0.8.11`（各 1 个附件）
 - **首页/安装文档跟着版本走**：发版时必须一起改 —— `README.md`、`README.zh.md`、`INSTALL.md`
   里的下载 URL、版本号、sha256、大小（漏改就会出现「首页写的还是上个版本」）
