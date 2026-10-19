@@ -90,6 +90,8 @@ const customStore = []
 let readCase = ''
 /* 'missing' 时 artifact.json 读不到，用来测「没有产物不算错误」 */
 let artifactCase = ''
+/* op=linemap 的返回：测编辑器行号栏时按需改写 */
+let fakeLineMap = { ok: true, repo: true, marks: [], adds: 0, mods: 0, dels: 0 }
 globalThis.fetch = async (url, opts) => {
   const u = String(url)
   if (u.endsWith('/fs/list')) {
@@ -253,6 +255,10 @@ globalThis.fetch = async (url, opts) => {
     }
     if (req.op === 'diff') {
       const body = { ok: true, diff: '--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n', binary: false, truncated: false }
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+    }
+    if (req.op === 'linemap') {
+      const body = { ...fakeLineMap }
       return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
     }
     const body = { ok: true }
@@ -647,6 +653,29 @@ await new Promise((r) => setTimeout(r, 40))
 overlay = render(overlayComp)
 check('双击文件切到编辑器标签页', textOf(overlay).includes('README.md') && allByClass(overlay, /ed-area|editor-body/).length >= 1, textOf(overlay).slice(0, 140))
 check('编辑器正文载入文件内容', JSON.stringify(overlay).includes('固件说明') || textOf(overlay).includes('18 B'), textOf(overlay).slice(0, 120))
+
+/* ---------- ③b 编辑器行号栏：git 改动标记（0.10.2） ---------- */
+mod.setEditorView('edit')
+overlay = render(overlayComp)
+const edLines = String(mod.store.editor.text).split('\n')
+check('编辑视图左边有行号栏', allByClass(overlay, /(^|\s)ed-gutter(\s|$)/).length === 1, '')
+const growRows = allByClass(overlay, /(^|\s)ed-grow(\s|$)/)
+check('行号栏行数 = 文件行数', growRows.length === edLines.length, growRows.length + ' vs ' + edLines.length)
+
+fakeLineMap = { ok: true, repo: true, file: 'README.md', marks: [{ line: 1, kind: 'add' }, { line: 2, kind: 'del' }], adds: 1, mods: 0, dels: 1 }
+await mod.loadFileMarks(mod.store.editor.path)
+check('标记按行号写进 store',
+  mod.store.editor.markState === 'ok' && mod.store.editor.marks[0] === 'add' && mod.store.editor.marks[1] === 'del',
+  JSON.stringify(mod.store.editor.marks))
+overlay = render(overlayComp)
+const growAfter = allByClass(overlay, /(^|\s)ed-grow(\s|$)/)
+check('新增行带 add 类', growAfter.filter((n) => /(^|\s)add(\s|$)/.test(String(n.props.className))).length === 1, '')
+check('删除锚点带 del 类', growAfter.filter((n) => /(^|\s)del(\s|$)/.test(String(n.props.className))).length === 1, '')
+check('标题栏显示改动统计', textOf(overlay).includes('+1') && textOf(overlay).includes('−1'), textOf(overlay).slice(0, 160))
+
+fakeLineMap = { ok: true, repo: false, marks: [], adds: 0, mods: 0, dels: 0 }
+await mod.loadFileMarks(mod.store.editor.path)
+check('不在 git 仓库里 → markState 回到 idle（行号栏不染色）', mod.store.editor.markState === 'idle', mod.store.editor.markState)
 
 /* 大文件：413 不再是一堵墙 —— 给「只读预览」和「用系统程序打开」两条出路 */
 readCase = 'big'

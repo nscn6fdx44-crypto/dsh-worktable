@@ -2,7 +2,7 @@
 
 DeepSeek Harness（DSH）侧边栏**工作台**插件：把你的项目收纳成侧边栏应用抽屉，提供可停靠的分栏工作区——文件浏览、编辑器、真 PTY 终端、内置浏览器、媒体查看、笔记、自定义窗口，以及完整的 git / GitHub 管理——全部在 DSH 内完成。
 
-> 英文说明见 [README.md](README.md) · 当前版本 **0.10.1**
+> 英文说明见 [README.md](README.md) · 当前版本 **0.10.2**
 
 需要 **DSH `0.2.0-rc.2` 或 `0.2.1-rc.2`**（Windows 桌面端）。
 
@@ -17,19 +17,19 @@ CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`�
 **方式 A —— 直接按网址装**（DSH 自己去 GitHub 下载附件）：
 
 ```powershell
-& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.1/trae-usage-worktable-0.10.1.tgz"
+& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.2/trae-usage-worktable-0.10.2.tgz"
 ```
 
 **方式 B —— 下载后装本地文件**（GitHub 慢或被墙时用）：
 
-1. 从 [v0.10.1 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.1) 把 `trae-usage-worktable-0.10.1.tgz` 下载到**你想放的任意目录**
-   （242.5 KB，sha256 `3596d368a4c8f2c7df822df4884ba53fd6b3bbd4294b40edf0ba9845cc274c14`）
+1. 从 [v0.10.2 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.2) 把 `trae-usage-worktable-0.10.2.tgz` 下载到**你想放的任意目录**
+   （245.5 KB，sha256 `aea7d199ebbd0e0316bd7f2eac729e75d83526617ce80f68c005d5ce3d73fe34`）
 2. 在 PowerShell 执行——路径换成**你自己**存放的位置：
    ```powershell
-   & "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<你下载的完整路径>\trae-usage-worktable-0.10.1.tgz"
+   & "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<你下载的完整路径>\trae-usage-worktable-0.10.2.tgz"
    ```
 
-重开 DSH —— 侧边栏即出现「工作台」面板。用 `/api/trae-worktable/health` 核对：`"version": "0.10.1"`。
+重开 DSH —— 侧边栏即出现「工作台」面板。用 `/api/trae-worktable/health` 核对：`"version": "0.10.2"`。
 
 ## 功能
 
@@ -50,13 +50,17 @@ CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`�
 - **快捷键体系**、项目模板、配置 JSON 导入导出
 - **拖到对话**——文件行或网页地址拖到顶栏，自动填成一段可发送的内容
 
-## 本版变更（0.8.48 → 0.10.1）
+## 本版变更（0.8.48 → 0.10.2）
 
-- **0.10.1** git 从「只读」变成完整工作流：新增**源代码管理**窗（暂存 / 提交 / 推送 / 拉取 / 分支 / 标签 /
+- **0.10.2** 编辑器**行号栏显示 git 改动**：新增 / 修改 / 删除三种竖条 + `+n ~n −n` 统计，
+  基于 HEAD 的 `git diff -U0` 最小 hunk，保存后自动重算；文件不在仓库里就不染色
+- **0.10.1** 支持**取消初始化**（删 `.git`）：只删 `.git`，项目文件一个不动；
+  服务端三条硬约束（要确认 / 必须在仓库根 / `.git` 必须是目录）
+- **0.10.0** git 从「只读」变成完整工作流：新增**源代码管理**窗（暂存 / 提交 / 推送 / 拉取 / 分支 / 标签 /
   历史 / diff / 软回退）、**GitHub 登录**（自动识别本机已有凭据，也可粘令牌）、**把项目建仓上传**、
   **克隆仓库**（NDJSON 实时进度）。令牌不进 argv，0600 落盘；顺手修掉 8.3 短名被误判越界的问题。
 
-- **0.10.1** 一次补掉与上游的三处差距：**真 PTY 终端**（借宿主自带的 `node-pty`，`vim` / `top` / `ssh` / REPL 都能跑，`Ctrl+C` 真的进前台进程；借不到原生模块时降级成命令模式并写明原因）、**六种布局预设**（新增上一下二、三列、2×2）、**标签跨格拖**
+- **0.9.0** 一次补掉与上游的三处差距：**真 PTY 终端**（借宿主自带的 `node-pty`，`vim` / `top` / `ssh` / REPL 都能跑，`Ctrl+C` 真的进前台进程；借不到原生模块时降级成命令模式并写明原因）、**六种布局预设**（新增上一下二、三列、2×2）、**标签跨格拖**
 - **0.8.53** 拖文件 / 网页到会话：把文件管理器里的一行、或浏览器地址栏拖到工作台顶栏，路径（含标题）就填进右侧对话输入框，**不会自动发送**；工具条「→ 对话」「💬」一键同效
 
 0.8.48 – 0.8.52 这五个版本修的都是同一族问题——侧边栏尺寸与让位几何：

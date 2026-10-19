@@ -14,7 +14,7 @@
 import { execFile } from 'node:child_process'
 import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 
 const DEFAULT_TIMEOUT = 15_000
 const NET_TIMEOUT = 120_000
@@ -285,6 +285,101 @@ function shape({ ok, diff, error }) {
     binary,
     error: error || '',
   }
+}
+
+/* ============================ 行级改动地图（编辑器行号栏） ============================ */
+
+const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
+
+/**
+ * 把 `git diff -U0 HEAD -- <file>` 的 hunk 头翻译成「第几行是什么状态」。
+ * 只解析 hunk 头，不碰内容 —— 只需要行号，不需要文本，快且不会因为 diff 太大而卡住。
+ *
+ * 语义跟 VS Code 的行号栏一致：
+ *   add  = 纯新增（原文件这段是空的）
+ *   mod  = 替换（原来有、现在改了）
+ *   del  = 纯删除（新文件里这一行不存在，标记锚在它「原本的下一行」上）
+ */
+export function parseLineMarks(patch) {
+  const marks = []
+  let adds = 0
+  let mods = 0
+  let dels = 0
+  for (const raw of String(patch || '').split('\n')) {
+    const m = HUNK.exec(raw)
+    if (!m) continue
+    const oldCount = m[2] === undefined ? 1 : Number(m[2])
+    const newStart = Number(m[3])
+    const newCount = m[4] === undefined ? 1 : Number(m[4])
+    if (newCount === 0) {
+      /* 纯删除：锚在 newStart（表示「在这一行之前少了 oldCount 行」） */
+      marks.push({ line: Math.max(1, newStart), kind: 'del' })
+      dels += oldCount
+      continue
+    }
+    const kind = oldCount === 0 ? 'add' : 'mod'
+    for (let i = 0; i < newCount; i += 1) marks.push({ line: newStart + i, kind })
+    if (kind === 'add') adds += newCount
+    else mods += newCount
+  }
+  marks.sort((a, b) => a.line - b.line)
+  return { marks, adds, mods, dels }
+}
+
+/**
+ * 行级改动地图：`file` 传绝对路径即可，相对路径按 cwd 解释。
+ * 对比基准是 HEAD（暂存 + 未暂存合在一起），所以刚敲进去还没暂存的行也会亮。
+ */
+export async function gitLineMap(cwd, file) {
+  const target = String(file || '').trim()
+  if (!target) return { ok: false, error: '缺少文件路径' }
+  if (!(await isRepo(cwd))) return { ok: true, repo: false, marks: [], adds: 0, mods: 0, dels: 0 }
+
+  const root = await repoRoot(cwd)
+  if (!root) return { ok: true, repo: false, marks: [], adds: 0, mods: 0, dels: 0 }
+
+  const abs = resolve(cwd, target)
+  /* 两边都过一遍真实路径：git 报的是长路径，而 tmpdir 常给 8.3 短名（JINSHU~1），
+     不归一化会算出满屏 ../ 然后被误判成「文件在仓库外」 */
+  const rel = relative(realish(root), realish(abs)).split(sep).join('/')
+  if (!rel || rel === '..' || rel.startsWith('../') || /^[a-z]:/i.test(rel)) {
+    return { ok: true, repo: true, outside: true, marks: [], adds: 0, mods: 0, dels: 0 }
+  }
+
+  /* 还没被 git 认识的文件：整份都算新增 */
+  const tracked = await runGit(root, ['ls-files', '--error-unmatch', '--', rel])
+  if (!tracked.ok) {
+    let total = 0
+    try {
+      total = readFileSync(abs, 'utf8').split('\n').length
+    } catch {
+      total = 0
+    }
+    const marks = []
+    for (let i = 1; i <= total; i += 1) marks.push({ line: i, kind: 'add' })
+    return { ok: true, repo: true, untracked: true, marks, adds: total, mods: 0, dels: 0 }
+  }
+
+  const res = await runGit(root, ['diff', '-U0', '--no-color', '--no-ext-diff', 'HEAD', '--', rel])
+  if (!res.ok) {
+    /* 空仓库还没有 HEAD：全部当新增 */
+    const err = res.err || res.error || ''
+    if (/unknown revision|bad revision|does not have any commits/i.test(err)) {
+      let total = 0
+      try {
+        total = readFileSync(abs, 'utf8').split('\n').length
+      } catch {
+        total = 0
+      }
+      const marks = []
+      for (let i = 1; i <= total; i += 1) marks.push({ line: i, kind: 'add' })
+      return { ok: true, repo: true, unborn: true, marks, adds: total, mods: 0, dels: 0 }
+    }
+    return { ok: false, error: err || 'diff 失败' }
+  }
+
+  const parsed = parseLineMarks(res.out)
+  return { ok: true, repo: true, file: rel, ...parsed }
 }
 
 export async function gitRemotes(cwd) {
@@ -961,6 +1056,7 @@ export async function gitDispatch(cwd, body) {
       staged: !!body?.staged,
       commit: String(body?.commit || ''),
     })
+    case 'linemap': return gitLineMap(cwd, String(body?.file || ''))
     case 'stage': return gitStage(cwd, body?.files)
     case 'unstage': return gitUnstage(cwd, body?.files)
     case 'discard': return gitDiscard(cwd, body?.files)

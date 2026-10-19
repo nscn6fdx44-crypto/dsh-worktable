@@ -1,6 +1,6 @@
 # 交接文档 · trae-usage-worktable（工作台）
 
-> 生成时间：2026-10-19 · 版本 **0.10.1** · 分支 `dsh-plugin`（远端默认分支）
+> 生成时间：2026-10-19 · 版本 **0.10.2** · 分支 `dsh-plugin`（远端默认分支）
 > 用途：换会话/换人接手时，靠这一份 + 仓库本身恢复全部上下文。README 讲“是什么”，这份讲“现在到哪了、怎么继续”。
 
 ---
@@ -11,13 +11,13 @@
 | --- | --- |
 | 仓库目录 | `C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh`（git 顶层是上一级 `2026-10-16-23-21-22`，插件在 `dsh/` 子目录） |
 | 远端 | `https://github.com/nscn6fdx44-crypto/dsh-worktable.git` |
-| 分支 / 最近提交 | `dsh-plugin` / 0.10.1：`feat(0.10.1): 取消初始化（删 .git）` |
-| 版本 | `package.json` = `dsh.plugin.json` = **0.10.1** |
+| 分支 / 最近提交 | `dsh-plugin` / 0.10.2：`feat(0.10.2): 编辑器行号栏 git 改动标记` |
+| 版本 | `package.json` = `dsh.plugin.json` = **0.10.2** |
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
 | 运行中的实例 | 客户端会热更，但 **host 路由必须完整重启 DSH** 才生效（`/gh/status`、`op:uninit` 在旧实例上会 401/404） |
-| 自测基线 | host **166** + client **548** 全通过（`npm test`） |
-| tag | `v0.10.0` 已发（`88c22f9`）；`v0.10.1` **已打并推送**（带注释，指向 `d71172e`） |
-| Release | 都已发布：`v0.10.0`（id 417235810）、`v0.10.1`（id 417246640）；后者附件 `trae-usage-worktable-0.10.1.tgz`（248340 字节，sha256 `3596d368…4c14`）下载回本地逐字节校验一致 |
+| 自测基线 | host **171** + client **555** 全通过（`npm test`） |
+| tag | 0.10.0 / 0.10.1 已发；`v0.10.2` 待打 |
+| Release | 0.10.0（417235810）、0.10.1（417246640）已发；`v0.10.2` 待发布，包 `trae-usage-worktable-0.10.2.tgz`（251393 字节，sha256 `aea7d199…fe34`）已打包 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
 
 ---
@@ -27,14 +27,14 @@
 ```powershell
 cd C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh
 git pull --ff-only            # 可能有别的会话也在改同一个仓库（见 §11）
-npm run build && npm test     # 基线必须 166 / 548 全绿，否则先别改
+npm run build && npm test     # 基线必须 171 / 555 全绿，否则先别改
 ```
 
 要读的三处（按顺序，读这三处就能接上）：
 
 1. `src/client/core.js`（约 2860 行）—— 唯一的状态源（store / 所有动作 / 路由调用）
 2. `src/client/overlay.js` + `src/client/hostdock.js` —— 主区渲染 + **让位机制**（最容易被改坏的部位）
-3. `test/client-smoke.mjs` —— 548 条断言就是行为规格书
+3. `test/client-smoke.mjs` —— 555 条断言就是行为规格书
 
 ---
 
@@ -106,8 +106,8 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 | `src/client/ui.js` | ~197 | 基础件：`el`、`Icon`、`Light`、`Splitter`、`ContextMenu`、`Toasts` |
 | `src/client/render.js` | ~464 | 纯函数：`viewKindOf`、Markdown 渲染、代码高亮、格式化 |
 | `src/client/theme.css` | ~1342 | 全部样式（`.wt-scope` 作用域，CSS 变量控制主题） |
-| `test/client-smoke.mjs` | ~1884 | 客户端离线自测：stub React / document / fetch，**548 条断言** |
-| `test/host-routes.mjs` | ~626 | host 路由自测：fake webServer / sessionController，**166 条断言** |
+| `test/client-smoke.mjs` | ~1884 | 客户端离线自测：stub React / document / fetch，**555 条断言** |
+| `test/host-routes.mjs` | ~626 | host 路由自测：fake webServer / sessionController，**171 条断言** |
 
 ---
 
@@ -196,11 +196,13 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 
 ## 9. 下一步建议（按优先级）
 
-0. **0.10.0 / 0.10.1 真机验收（只有这一条必须人点）**：重启 DSH 后 → 项目里开「⑂ 源代码管理」→
+0. **0.10.x 真机验收（只有这一条必须人点）**：重启 DSH 后 → 项目里开「⑂ 源代码管理」→
    改个文件看它进「未暂存的改动」→ 行内 ＋ 暂存 → 写说明提交 → 「推送」→ GitHub 条应自动认出本机账号
    （来源 git-credential）→ 「克隆」能列出仓库 → 总览「⑂ 克隆」填 owner/repo 能实时刷进度。
    **再验一条 0.10.1 的**：分支视图底部危险区 → 点「删除 .git（取消初始化）」→ 按钮应变成
    「再点一次确认删除 .git」→ 再点 → 面板变回「还不是 git 仓库」，项目文件一个没少。
+   **再看一眼 0.10.2 的行号栏**：编辑视图左边应有行号；改一行字 → 该行竖条变琥珀色、标题栏
+   `+0 ~1 −0`；在中间插一行 → 只有新行是绿色；把某段整段删掉 → 留下一条红色短线。
    **未验证项**：`/gh/upload`（会真的在你账号下建仓库，第一次用请自己确认仓库名与可见性）。
 1. ~~0.9.0 真机验收~~：重启 DSH 后看终端工具条 `PTY` 徽标是否点亮 →
    `python` 进 REPL 能交互 → `Ctrl+C` 退 REPL 但 shell 还在 → 切标签页再切回输出还在 →
@@ -209,7 +211,7 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 
 1. ~~**打 tag + 补 Release 资产**~~ —— **0.8.52 / 0.8.53 / 0.9.0 / 0.10.x 都已发**：
    tag 已推、Release 已建、附件已传并下载回来校验 sha256 一致；首页 `README.md` / `README.zh.md` /
-   `INSTALL.md` 与 `dsh/README.md` 已同步到 0.10.1（安装指向新 Release）；
+   `INSTALL.md` 与 `dsh/README.md` 已同步到 0.10.2（安装指向新 Release）；
 2. **旧功能真机验收（可延后）**：0.8.48 → 0.8.52 是一族（侧边栏 / 让位），0.8.53 是拖到会话；
    重点两条：① 展开宿主侧边栏后工作台的关闭键点得动；② 文件/网页拖到顶栏后输入框里出现【文件】/【网页】块；
 3. **媒体窗确认**：三种选法各试一次（选择文件 / 浏览项目 / 拖入）；

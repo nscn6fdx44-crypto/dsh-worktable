@@ -2,7 +2,7 @@
 
 A **DeepSeek Harness (DSH)** side-panel *worktable* plugin: turn your projects into a side-panel app drawer with a dockable split workspace — file browser, editor, real terminal, in-app browser, media viewer, notes, custom window, and full git/GitHub management — all inside DSH.
 
-> 中文说明见 [README.zh.md](README.zh.md) · 当前版本 **0.10.1**
+> 中文说明见 [README.zh.md](README.zh.md) · 当前版本 **0.10.2**
 
 Requires **DSH `0.2.0-rc.2` or `0.2.1-rc.2`** (Windows desktop).
 
@@ -17,19 +17,19 @@ The CLI lives at `<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd` — 
 **Option A — install straight from the release URL** (DSH downloads the asset itself):
 
 ```powershell
-& "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.1/trae-usage-worktable-0.10.1.tgz"
+& "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.2/trae-usage-worktable-0.10.2.tgz"
 ```
 
 **Option B — download the file and install it locally** (use this if GitHub is slow or blocked):
 
-1. Download `trae-usage-worktable-0.10.1.tgz` from the [v0.10.1 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.1) to any folder you like
-   (242.5 KB, sha256 `3596d368a4c8f2c7df822df4884ba53fd6b3bbd4294b40edf0ba9845cc274c14`)
+1. Download `trae-usage-worktable-0.10.2.tgz` from the [v0.10.2 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.2) to any folder you like
+   (245.5 KB, sha256 `aea7d199ebbd0e0316bd7f2eac729e75d83526617ce80f68c005d5ce3d73fe34`)
 2. In PowerShell — replace the path with wherever **you** saved it:
    ```powershell
-   & "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<full path to>\trae-usage-worktable-0.10.1.tgz"
+   & "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<full path to>\trae-usage-worktable-0.10.2.tgz"
    ```
 
-Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. Verify with `/api/trae-worktable/health` → `"version": "0.10.1"`.
+Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. Verify with `/api/trae-worktable/health` → `"version": "0.10.2"`.
 
 ## What's inside
 
@@ -51,14 +51,19 @@ Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. 
 - **Keyboard shortcuts**, per-project templates, and JSON import/export for your setup
 - **Drag to chat** — drop a file row or a browser URL on the top bar and it lands in the chat input as a ready-to-send block
 
-## Latest changes (0.8.48 → 0.10.1)
+## Latest changes (0.8.48 → 0.10.2)
 
-- **0.10.1** git goes from read-only to a complete workflow: a dedicated **Source Control** pane (staged / unstaged /
+- **0.10.2** the editor **gutter shows git changes**: green = added, amber = modified, red stub = deleted,
+  plus a `+n ~n −n` counter. Derived from `git diff -U0` against HEAD (minimal hunks), recomputed after save;
+  files outside a repo simply show no markers.
+- **0.10.1** **un-initialize a repo** (delete `.git`): only `.git` is removed, project files stay untouched.
+  Three server-side guards — explicit confirm, must be the repo root, `.git` must be a directory.
+- **0.10.0** git goes from read-only to a complete workflow: a dedicated **Source Control** pane (staged / unstaged /
   untracked, inline diff, commit, push, branch & tag management, history with soft reset), **GitHub sign-in**
   (auto-detects credentials git already has, or paste a token), **create a repo from a project and push**, and
   **clone** with live NDJSON progress. Tokens never appear in argv and are stored 0600.
 
-- **0.10.1** three gaps against upstream closed at once: **real PTY terminal** (borrows the host's own `node-pty`, so `vim` / `top` / `ssh` / REPLs work and `Ctrl+C` reaches the foreground process; degrades to command mode with a readable reason if the native module is missing), **six layout presets** (adds top-row + two, three columns, and 2×2), and **drag tabs across panes**
+- **0.9.0** three gaps against upstream closed at once: **real PTY terminal** (borrows the host's own `node-pty`, so `vim` / `top` / `ssh` / REPLs work and `Ctrl+C` reaches the foreground process; degrades to command mode with a readable reason if the native module is missing), **six layout presets** (adds top-row + two, three columns, and 2×2), and **drag tabs across panes**
 - **0.8.53** drag & drop into the conversation: drag a file from the file browser, or a URL from the browser address bar, onto the workbench top bar — the path/URL plus a heading is filled into the DSH chat input (**not auto-sent**); toolbar buttons 「→ 对话」/「💬」 do the same in one click
 
 The 0.8.48 – 0.8.52 releases in this range fix the same family of bugs — sidebar sizing and host hand-off geometry:

@@ -893,6 +893,7 @@ export function EditorPane({ project }) {
   /* 只看到片段时不进渲染预览：半截 Markdown 渲染出来只会误导 */
   const view = (canPreview && !readonly && ed.view === 'preview') ? 'preview' : 'edit'
   const area = useRef(null)
+  const gutter = useRef(null)
   const [openPath, setOpenPath] = useState('')
   const doOpen = () => {
     const p = openPath.trim()
@@ -983,22 +984,43 @@ export function EditorPane({ project }) {
       ? el('div', { className: 'ed-preview ed-md', dangerouslySetInnerHTML: { __html: previewOf(ed, kind) } })
       : el('pre', { className: 'ed-preview ed-pre' }, el('code', { dangerouslySetInnerHTML: { __html: previewOf(ed, kind) } }))
   } else {
-    body = el('textarea', {
-      ref: area,
-      className: 'ed-area mono',
-      spellCheck: false,
-      readOnly: readonly,
-      value: ed.text,
-      onChange: (e) => editText(e.target.value),
-      onKeyDown: (e) => {
-        if (e.key === 'Tab') {
-          e.preventDefault()
-          const t = e.target
-          const at = t.selectionStart
-          editText(ed.text.slice(0, at) + '  ' + ed.text.slice(t.selectionEnd))
-        }
-      },
-    })
+    /* ---------- 原文编辑：左侧行号栏带 git 改动标记 ---------- */
+    const lines = String(ed.text || '').split('\n')
+    const marks = Array.isArray(ed.marks) ? ed.marks : []
+    /* 几万个 DOM 节点比「没有标记」更糟：超长文件不画行号栏，只留纯编辑区 */
+    const showGutter = lines.length <= 8000
+    body = el('div', { className: 'ed-code' },
+      showGutter
+        ? el('div', { className: 'ed-gutter mono', ref: gutter, 'aria-hidden': 'true' },
+          lines.map((_, i) => {
+            const kind = marks[i] || ''
+            return el('div', { key: 'g' + i, className: 'ed-grow' + (kind ? ' ' + kind : '') },
+              el('span', { className: 'ed-gmark' }),
+              el('span', { className: 'ed-gno' }, String(i + 1)),
+            )
+          }))
+        : null,
+      el('textarea', {
+        ref: area,
+        className: 'ed-area mono',
+        spellCheck: false,
+        readOnly: readonly,
+        value: ed.text,
+        /* 行号栏跟着纵向滚，横向滚动不动它 */
+        onScroll: (e) => {
+          if (gutter.current) gutter.current.scrollTop = e.target.scrollTop
+        },
+        onChange: (e) => editText(e.target.value),
+        onKeyDown: (e) => {
+          if (e.key === 'Tab') {
+            e.preventDefault()
+            const t = e.target
+            const at = t.selectionStart
+            editText(ed.text.slice(0, at) + '  ' + ed.text.slice(t.selectionEnd))
+          }
+        },
+      }),
+    )
   }
 
   return el('div', { className: 'pane-body editor-body' },
@@ -1009,6 +1031,14 @@ export function EditorPane({ project }) {
       readonly
         ? el('span', { className: 'tag warn', title: '只读预览：文件太大，编辑器只读了一段' }, ed.tail ? '只读 · 结尾' : '只读 · 开头')
         : ed.truncated ? el('span', { className: 'tag' }, '已截断') : null,
+
+      /* 行级改动统计：跟行号栏的彩色竖条对应得上 */
+      ed.markState === 'ok' && (ed.markAdds || ed.markMods || ed.markDels)
+        ? el('span', {
+          className: 'tag gitmark',
+          title: '相对 HEAD 的行级改动（已暂存 + 未暂存合在一起）',
+        }, ['+' + ed.markAdds, '~' + ed.markMods, '−' + ed.markDels].join(' '))
+        : null,
 
       /* 预览 / 编辑：只对 Markdown 与代码出现 */
       canPreview && ed.state === 'ok' && !readonly

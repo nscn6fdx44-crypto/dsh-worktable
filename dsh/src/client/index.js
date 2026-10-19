@@ -41,6 +41,7 @@ import {
   scmFetch, scmPull, scmPush, scmCheckout, scmBranchOp, scmTagOp, scmReset, scmInit, scmUninit,
   scmDiff, scmShowCommit, scmClearDiff, scmSetView, scmOf,
   loadGh, ghLogin, ghLogout, loadGhRepos, ghUploadRepo, cloneRepo,
+  loadFileMarks, setEditorView, editText,
   fileUrlOf, chatTextForFile, chatTextForUrl, readChatDrop, sendToChat, sendPathToChat, sendUrlToChat,
 } from './core.js'
 import { el } from './ui.js'
@@ -73,6 +74,8 @@ export { store, openFile, createSessionInDir, switchHostSession, searchUrl, webG
   scmFetch, scmPull, scmPush, scmCheckout, scmBranchOp, scmTagOp, scmReset, scmInit, scmUninit,
   scmDiff, scmShowCommit, scmClearDiff, scmSetView, scmOf,
   loadGh, ghLogin, ghLogout, loadGhRepos, ghUploadRepo, cloneRepo,
+  /* 编辑器行号栏的改动标记（离线自测出口） */
+  loadFileMarks, setEditorView, editText,
   fileUrlOf, chatTextForFile, chatTextForUrl, readChatDrop, sendToChat, sendPathToChat, sendUrlToChat }
 
 class SidebarBoundary extends Component {

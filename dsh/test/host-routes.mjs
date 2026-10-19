@@ -420,6 +420,38 @@ check('git 显示提交内容', gshow.ok === true && gshow.diff.includes('a.txt'
 const gmsg = await call(BASE + '/git', { path: repoDir, op: 'commit', message: '' })
 check('git 空提交说明被拒', gmsg.status === 400 && /提交说明不能为空/.test(gmsg.body), gmsg.body.slice(0, 60))
 
+/* 行级改动地图（编辑器行号栏）：只解析 hunk 头，翻译成行号 */
+writeFileSync(join(repoDir, 'a.txt'), 'hello\nworld\nagain\n', 'utf8')
+const lm1 = JSON.parse((await call(BASE + '/git', { path: repoDir, op: 'linemap', file: join(repoDir, 'a.txt') })).body)
+check('linemap 只给「真新增」的行打 add（-U0 的最小 hunk）',
+  lm1.ok === true && lm1.adds === 2 && lm1.mods === 0 &&
+  lm1.marks.length === 2 && lm1.marks[0].line === 2 && lm1.marks[1].line === 3 &&
+  lm1.marks.every((m) => m.kind === 'add'),
+  JSON.stringify(lm1.marks))
+
+/* 先把这次追加提交掉，好让下一条只测「改一行」 */
+await call(BASE + '/git', { path: repoDir, op: 'stage', files: ['a.txt'] })
+await call(BASE + '/git', { path: repoDir, op: 'commit', message: '补两行' })
+writeFileSync(join(repoDir, 'a.txt'), 'HELLO\nworld\nagain\n', 'utf8')
+const lm1b = JSON.parse((await call(BASE + '/git', { path: repoDir, op: 'linemap', file: join(repoDir, 'a.txt') })).body)
+check('linemap 改掉的行打 mod', lm1b.mods === 1 && lm1b.marks[0].line === 1 && lm1b.marks[0].kind === 'mod',
+  JSON.stringify(lm1b.marks))
+
+writeFileSync(join(repoDir, 'brand.txt'), 'x\ny\n', 'utf8')
+const lm2 = JSON.parse((await call(BASE + '/git', { path: repoDir, op: 'linemap', file: join(repoDir, 'brand.txt') })).body)
+check('linemap 未跟踪文件整份算新增',
+  lm2.ok === true && lm2.untracked === true && lm2.adds === 3 && lm2.marks.every((m) => m.kind === 'add'),
+  'adds=' + lm2.adds + ' marks=' + JSON.stringify(lm2.marks))
+
+writeFileSync(join(repoDir, 'a.txt'), '', 'utf8')
+const lm3 = JSON.parse((await call(BASE + '/git', { path: repoDir, op: 'linemap', file: join(repoDir, 'a.txt') })).body)
+check('linemap 整份清空报 del（锚在第 1 行）',
+  lm3.ok === true && lm3.dels > 0 && lm3.marks[0].kind === 'del', JSON.stringify(lm3.marks))
+
+writeFileSync(join(tmp, 'outside.txt'), 'x\n', 'utf8')
+const lm4 = JSON.parse((await call(BASE + '/git', { path: repoDir, op: 'linemap', file: join(tmp, 'outside.txt') })).body)
+check('linemap 文件在仓库外 → outside:true 且不报错', lm4.ok === true && lm4.outside === true, JSON.stringify(lm4).slice(0, 100))
+
 /* 取消初始化（删 .git）：三条硬约束都得拦住 */
 const gun0 = await call(BASE + '/git', { path: repoDir, op: 'uninit' })
 check('git uninit 不带确认 → 400', gun0.status === 400 && /显式确认/.test(gun0.body), gun0.body.slice(0, 60))

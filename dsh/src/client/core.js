@@ -115,8 +115,14 @@ export function baseName(p) {
   return parts.length ? parts[parts.length - 1] : p
 }
 
-export function shortPath(p, max = 42) {
-  const s = String(p ?? '')
+/** 取所在目录（保留原分隔符风格）；拿不到就返回空 */
+export function dirName(p) {
+  const s = String(p || '')
+  const cut = Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/'))
+  return cut > 0 ? s.slice(0, cut) : ''
+}
+
+export function shortPath(p, max = 42) {  const s = String(p ?? '')
   if (s.length <= max) return s
   return '…' + s.slice(s.length - max + 1)
 }
@@ -240,6 +246,8 @@ export const store = {
     /* kind 决定正文怎么画（markdown / code / image / pdf / video / audio / text）；
        view 是用户的看法（preview 渲染 / edit 原文），媒体类没有 preview/edit 之分 */
     kind: 'text', view: 'edit', mediaUrl: '',
+    /* 行号栏的 git 改动标记（0.10.2）：marks[i] 对应第 i+1 行，值是 'add' / 'mod' / 'del' */
+    marks: [], markState: 'idle', markAdds: 0, markMods: 0, markDels: 0, markNote: '',
   },
   terms: {},                    // { [pid]: { id, cwd, busy, lines: [] } }
   git: { state: 'idle', repo: false, branch: '', changes: [], counts: null, error: '', log: [], branches: [] },
@@ -2297,6 +2305,7 @@ export async function openFile(path, pid, opts = {}) {
         text: '', saved: '', error: '', errorCode: 0, binary: false,
         partial: false, truncated: false, tail: false, size: 0,
         mediaUrl: rawUrl(target),
+        marks: [], markState: 'idle', markAdds: 0, markMods: 0, markDels: 0, markNote: '',
       },
     })
     if (pid) openTab(pid, 'editor')
@@ -2314,6 +2323,7 @@ export async function openFile(path, pid, opts = {}) {
     editor: {
       ...store.editor, state: 'loading', path: target, name, kind,
       error: '', errorCode: 0, binary: false, partial: false, mediaUrl: '',
+      marks: [], markState: 'idle', markAdds: 0, markMods: 0, markDels: 0, markNote: '',
     },
   })
   if (pid) openTab(pid, 'editor')
@@ -2350,6 +2360,10 @@ export async function openFile(path, pid, opts = {}) {
       },
     })
     setEditorTabTitle(pid, data.name || name)
+    /* 行号栏标记：文件读进来之后再算，失败不影响编辑 */
+    loadFileMarks(store.editor.path).catch(() => {})
+    /* 行号栏标记：文件读进来之后再算，失败不影响编辑 */
+    loadFileMarks(store.editor.path).catch(() => {})
   } catch (err) {
     if (token !== fileToken) return
     const info = err?.data || {}
@@ -2409,9 +2423,60 @@ export async function saveFile() {
     emit({ editor: { ...store.editor, saved: store.editor.text, saving: false, size: new Blob([store.editor.text]).size } })
     treeCache.delete(store.tree.path)
     toast('已保存 ' + ed.name, 'ok')
+    /* 存完行号栏的改动标记要重算：刚写的行可能变成「已修改」，也可能整体归零 */
+    loadFileMarks(store.editor.path).catch(() => {})
   } catch (err) {
     emit({ editor: { ...store.editor, saving: false } })
     toast('保存失败：' + String(err?.message ?? err), 'warn')
+  }
+}
+
+/* ---------------- 编辑器行号栏的 git 改动标记（0.10.2） ---------------- */
+
+/**
+ * 给当前打开的文件算一份「行级改动地图」。
+ *
+ * 为什么不是整份 diff：编辑器只需要知道「第几行是什么颜色」，
+ * 让 host 把 hunk 头翻成行号，前端就不用解析 patch，几千行的文件也不会卡。
+ * 文件不在任何仓库里是正常情况（markState 回到 idle，行号栏不显示任何标记）。
+ */
+export async function loadFileMarks(path) {
+  const target = String(path || '')
+  if (!target) return null
+  if (store.editor.path !== target) return null
+  const dir = dirName(target)
+  if (!dir) return null
+  emit({ editor: { ...store.editor, markState: 'loading' } })
+  try {
+    const out = await apiPost('/git', { path: dir, op: 'linemap', file: target }, { timeout: 20_000 })
+    if (store.editor.path !== target) return null
+    if (out?.ok === false) {
+      emit({ editor: { ...store.editor, marks: [], markState: 'error', markNote: String(out.error || '') } })
+      return out
+    }
+    /* 行数按当前文本算：host 给的是 HEAD 对新文件的行号，两边可能差一两行（比如末尾没换行） */
+    const total = String(store.editor.text || '').split('\n').length
+    const marks = new Array(Math.max(total, 0)).fill('')
+    for (const m of out.marks || []) {
+      const idx = Number(m.line) - 1
+      if (idx >= 0 && idx < marks.length) marks[idx] = m.kind
+    }
+    emit({
+      editor: {
+        ...store.editor,
+        marks,
+        markState: out.repo === false || out.outside ? 'idle' : 'ok',
+        markAdds: Number(out.adds) || 0,
+        markMods: Number(out.mods) || 0,
+        markDels: Number(out.dels) || 0,
+        markNote: out.outside ? '文件不在仓库里' : '',
+      },
+    })
+    return out
+  } catch (err) {
+    if (store.editor.path !== target) return null
+    emit({ editor: { ...store.editor, marks: [], markState: 'error', markNote: String(err?.message ?? err) } })
+    return null
   }
 }
 

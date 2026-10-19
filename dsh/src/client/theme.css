@@ -598,7 +598,7 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 .wt-scope .ed-area {
   flex: 1; min-height: 0; width: 100%; resize: none; outline: 0;
   padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
-  background: rgba(0,0,0,.34); color: #dfe4ea; font-size: 12px; line-height: 1.65;
+  background: rgba(0,0,0,.34); color: #dfe4ea; font-size: 12px; line-height: 18px;
   white-space: pre; overflow: auto; tab-size: 2;
 }
 .wt-scope .ed-area:focus { border-color: rgba(var(--amber-rgb),.42); }
@@ -1498,3 +1498,31 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 }
 .wt-scope .scm-danger .hint { margin: 6px 0 0; font-size: 11px; line-height: 1.55; color: var(--txt-mute); }
 .wt-scope .scm-danger .mini-btn.danger { background: rgba(232,115,74,.10); }
+
+/* 编辑器行号栏 + git 改动标记（0.10.2）
+   行高必须和 .ed-area 完全一致（18px），否则滚动时逐行错位；
+   横向滚动只发生在 textarea 自己身上，行号栏不动。 */
+.wt-scope .ed-code {
+  flex: 1; min-height: 0; display: flex; overflow: hidden;
+  border-radius: 10px; border: 1px solid var(--line); background: rgba(0,0,0,.34);
+}
+.wt-scope .ed-code .ed-area { flex: 1; min-width: 0; border: 0; border-radius: 0; background: transparent; }
+.wt-scope .ed-code .ed-area:focus { border: 0; }
+.wt-scope .ed-gutter {
+  flex: none; width: 56px; overflow: hidden; padding: 10px 0;
+  border-right: 1px solid var(--line); background: rgba(0,0,0,.22);
+  user-select: none;
+}
+.wt-scope .ed-grow {
+  display: flex; align-items: stretch; height: 18px; line-height: 18px;
+  font-size: 11px; color: #4d5561;
+}
+.wt-scope .ed-gmark { flex: none; width: 3px; background: transparent; }
+.wt-scope .ed-gno { flex: 1; text-align: right; padding-right: 7px; }
+.wt-scope .ed-grow.add .ed-gmark { background: #3fb950; }
+.wt-scope .ed-grow.add .ed-gno { color: #6fb67a; }
+.wt-scope .ed-grow.mod .ed-gmark { background: #d29922; }
+.wt-scope .ed-grow.mod .ed-gno { color: #c9a45c; }
+.wt-scope .ed-grow.del .ed-gmark { background: linear-gradient(to bottom, #e5534b 0 8px, transparent 8px); }
+.wt-scope .ed-grow.del .ed-gno { color: #c98a83; }
+.wt-scope .tag.gitmark { font-family: var(--mono); font-size: 10.5px; letter-spacing: .02em; }
