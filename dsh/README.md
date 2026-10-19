@@ -1,4 +1,4 @@
-# trae-usage-worktable（DSH 插件 · 0.9.0）
+# trae-usage-worktable（DSH 插件 · 0.10.0）
 
 > DeepSeek Harness 侧边栏的完整工作台。本目录是 `nscn6fdx44-crypto/dsh-worktable`
 > 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的**独立实现**：
@@ -16,15 +16,15 @@
 ```
 
 重开 DSH → 侧边栏出现「工作台」（托盘图标旁的 `🧰` 工作台卡片）→ 打开带 token 的网页端，
-访问 `/api/trae-worktable/health`，返回里的 `version` 应等于 `package.json` 的版本（当前 `0.9.0`）。
+访问 `/api/trae-worktable/health`，返回里的 `version` 应等于 `package.json` 的版本（当前 `0.10.0`）。
 
 分发 / 升级 / 卸载 / 排查见下方「安装」一节。
 
-## 能力（0.9.0）
+## 能力（0.10.0）
 
 | 半侧 | 文件 | 内容 |
 |---|---|---|
-| host | `src/index.js` → `lib/index.js` | 会话快照 / 文件读写 / 命令执行 / git 只读 / 项目静态托管 |
+| host | `src/index.js` + `src/git.js` + `src/pty.js` → `lib/index.js` | 会话快照 / 文件读写 / 命令执行 / 真 PTY / git 读写 + GitHub / 项目静态托管 |
 | client | `src/client/*` → `lib/client.js` | 侧边栏工作台 + 总览 / 工作区（同一套让位外壳，右侧始终是宿主对话）|
 
 ### 侧边栏（`sidebar.footer.action`，常驻）
@@ -218,6 +218,39 @@
 已知边界：Windows 上走 ConPTY，个别旧版本可能丢输出（`useConpty` 已默认打开）；
 `backlog` 只留输出、不保留滚动语义，切回来看到的是「最近 240KB 重放」，不是逐像素复原的屏幕。
 
+### 源代码管理 / GitHub（0.10.0）
+
+工作区多了 **⑂ 源代码管理** 标签页（和文件管理器平级，不是上游那种左栏）。一件事走完：
+看改动 → 暂存 → 写说明 → 提交 → 推。
+
+| 区 | 能做什么 |
+|---|---|
+| 头部 | 当前分支（点击进分支视图）、`↑ahead ↓behind`、取回 / 拉取 / 推送 / 刷新 |
+| GitHub 条 | 已登录显示账号 + 「上传仓库」「克隆」；未登录显示「登录 GitHub」 |
+| 提交区 | 说明 + 「提交」「提交并推送」「全部暂存」；暂存为空时按钮置灰 |
+| 三段改动 | 暂存的改动 / 未暂存的改动 / 未跟踪的文件；行内 `＋` 暂存、`－` 取消暂存、`↺` 丢弃（**两步确认**） |
+| diff | 点任一行在底部展开，`+` 绿 `-` 红；截断到 3000 行，二进制只报标记 |
+| 历史 | 最近 20 条 + 「回退」（`reset --soft`，改动回到工作区，两步确认） |
+| 分支 / 标签 / 远程 | 切换、新建并切换、删除、检出远程分支、打标签、看 origin 地址 |
+
+**GitHub 登录**有两种落法：
+
+1. **本机已有凭据就不用登录** —— 打开窗格时按「界面保存的令牌 → 环境变量 `GH_TOKEN` / `GITHUB_TOKEN` →
+   `gh auth token` → `git credential fill`」依次探测，探测到就直接显示账号
+   （本机实测走的就是最后一条：Git Credential Manager 里那份 `gho_` 令牌）。
+2. **粘令牌** —— `ghp_` / `github_pat_` 都行，存到 `~/.dsh/worktable-github.json`（0600）。
+   可选「同时写进系统凭据管理器」，让内置终端里的 `git push` 也免密。
+
+**上传仓库**按四步走，每步失败都会把 git 的原话回显：`git init`（已是仓库则跳过）→ 没有提交就「初始提交」→
+在 GitHub 建同名仓库并设 origin（已有 origin 则沿用，不重复建）→ `push -u origin <当前分支>`。
+
+**克隆**在总览顶栏「⑂ 克隆」或新建项目窗里，支持 `owner/repo` 简写、私有仓库（自动带令牌）、
+`--depth 1`、只取某个分支；进度是 NDJSON 实时刷的，克隆完自动建成项目并打开。
+
+> **证书问题**：Windows 上 schannel 的吊销检查连不上（`CRYPT_E_NO_REVOCATION_CHECK`）会让整条命令失败。
+> 退让顺序是「原样 → 只关吊销检查 → 用户勾选时关证书校验」，默认**不会**偷偷关掉校验；
+> 勾选开关在克隆窗和「分支 → 远程」里，勾一次会记住，推送 / 拉取一起生效。
+
 ### 让位与侧边栏稳定性（0.8.48 – 0.8.52）
 
 连续五个版本修的是同一族问题，建议一起验收：
@@ -276,7 +309,14 @@
 | POST | `/term/input` | `{ id, data }` → 写进 PTY（键盘输入，单次 ≤64KB）；会话不在 → 409 |
 | POST | `/term/resize` | `{ id, cols, rows }` → `pty.resize()`；cols 20–400 / rows 6–200 |
 | POST | `/term/kill` | `{ id }` → 终止当前命令；有 PTY 会话时连同 shell 一起收掉 |
-| POST | `/git` | `{ path, op:'status'|'log'|'branches' }` → **只读**，`status` 解析 `-z` porcelain |
+| POST | `/git` | `{ path, op }` → 一个入口跑全部 git 操作，op 见下表 |
+| POST | `/git/clone` | `{ url, dest, depth?, branch?, insecure? }` → **NDJSON 进度流**（clone 走 stderr，逐行推 `{t:'out',line}`，结束推 `{t:'end',ok,path}`） |
+| GET | `/gh/status` | `{ loggedIn, source, login, name, avatar, scopes, repoScope }` —— **不回传令牌**；来源按「界面登录 → 环境变量 → gh CLI → 系统凭据」顺序探测 |
+| POST | `/gh/login` | `{ token, remember?, writeCredential? }` → 校验令牌（`GET /user`）后存到 `~/.dsh/worktable-github.json`（0600） |
+| POST | `/gh/logout` | 清掉本插件保存的令牌（不动系统凭据管理器） |
+| GET | `/gh/repos?q=&page=` | `{ ok, repos:[{name,fullName,private,cloneUrl,description,branch,updatedAt}] }` |
+| POST | `/gh/create` | `{ name, private?, description?, org? }` → 建远程仓库 |
+| POST | `/gh/upload` | `{ path, name, private?, description?, branch? }` → init（无仓库时）→ 首次提交（无提交时）→ 建远程仓库 → push -u；返回 `{ steps[], remote, branch, repo }` |
 | POST | `/project/register` | `{ id, root }` → 登记项目根，供静态托管与路径白名单使用 |
 | GET | `/site/<项目id>/<相对路径>` | 前缀路由，托管项目目录；目录回退 `index.html`，拦截路径穿越；404/403 返回**中文 HTML 说明页**（不是 JSON，iframe 里才看得懂） |
 | POST | `/web/probe` | `{ url }` 或 `{ urls:[…] }`（≤8）→ `{ results:[{ok,status,ms,title,contentType,frameable,frameReason,error}] }`；只收 http/https，3.5s 超时，自签证书放行 |
@@ -285,6 +325,23 @@
 | POST | `/custom/get` | `{ id }` → `{ item }`，没有则 404 |
 | POST | `/custom/save` | `{ id?, name?, kind:'html'\|'url', body, pid? }` → 新建时由**宿主发号**，同 id 覆盖；`url` 型会归一成 `http(s)://` 并挡掉 `javascript:`；正文上限 512KB |
 | POST | `/custom/delete` | `{ id }` → `{ ok }` |
+
+`/git` 支持的 `op`（除 `status` 外都要求目录落在可写白名单内）：
+
+| op | 参数 | 作用 |
+|---|---|---|
+| `status` | — | 分支 / 改动 / 计数 / 领先落后 + 顺带带 **log / branches / tags / remotes**（一次往返拿全） |
+| `log` | `limit, ref?` | 提交历史（短 hash / 日期 / 标题 / 作者 / 父提交数） |
+| `branches` `tags` `remotes` | — | 本地+远程分支 / 标签 / 远程地址 |
+| `diff` | `file?, staged?, commit?` | 工作区、暂存区或某个提交的 diff（未跟踪文件按「全新增」合成；二进制只报标记） |
+| `stage` `unstage` `discard` | `files[]`（空数组 = 全部） | 暂存 / 取消暂存 / 丢弃（未跟踪走 `git clean`，界面必须二次确认） |
+| `commit` | `message, all?, amend?` | 提交；空说明直接拒 |
+| `fetch` `pull` `push` | `remote?, branch?, rebase?, tags?, insecure?` | 网络操作，120s 超时；`push` 没上游时自动 `-u` |
+| `checkout` | `target, create?, startPoint?` | 切分支 / 建分支；`origin/x` 建同名跟踪分支，不会落到 detached HEAD |
+| `branch` | `action:'list'\|'delete'\|'rename', name, force?, renameTo?` | 分支管理 |
+| `tag` | `action:'create'\|'delete', name, message?, target?` | 标签管理（带说明用 `-a`） |
+| `reset` | `commit, mode:'soft'\|'mixed'\|'hard'` | 回退；界面只暴露 soft（改动回到工作区） |
+| `init` `remote` | `branch?` / `name, url` | 初始化仓库 / 设置远程 |
 
 ### 多项目并排（0.8.44）
 
@@ -469,7 +526,14 @@ localStorage（统一 `wt.` 前缀）：
 | `wt.termHistory` | 终端命令历史（最近 80 条） |
 | `wt.bindings`、`wt.layouts` | 0.4.0 旧格式，**首次加载自动迁移**进 `wt.projects[].sessions` 与 `wt.ui.v2` |
 
-项目元数据只在浏览器里，删项目不动磁盘。**唯一的磁盘写入**是编辑器保存与 `mkdir/rename`。
+项目元数据只在浏览器里，删项目不动磁盘。磁盘写入只有三类：编辑器保存、`mkdir/rename`、git 操作本身。
+
+另外两个**不在项目目录里**的文件：
+
+| 文件 | 内容 |
+|---|---|
+| `~/.dsh/worktable-custom.json` | 自定义窗口库（HTML / 网址条目） |
+| `~/.dsh/worktable-github.json` | GitHub 令牌（0600，只存令牌与账号名；退出登录会清空） |
 
 ## 安全边界（与上游有意不同）
 
@@ -477,7 +541,12 @@ localStorage（统一 `wt.` 前缀）：
 2. 先 `realpath` 解析符号链接再判根（逐级回退到第一个存在的祖先），挡 `../` 与 symlink 逃逸；
 3. `.ssh` / `.aws` / `.gnupg` / `.kube` / `.password-store` 一律拒绝；
 4. 不再把任意请求体写进插件目录（上游 `/ping` 就这么干过，本版已删除该路由）；
-5. 命令用 `spawn(file, args)` 而非 `exec`，不拼 shell 字符串；`git` 用 `execFile` 且只暴露只读 op。
+5. 命令用 `spawn(file, args)` 而非 `exec`，不拼 shell 字符串；`git` 用 `execFile`，
+   子命令走**白名单分发**（客户端只传 `op`，不拼命令行），文件路径一律放在 `--` 之后；
+   改仓库的 `op` 要求目录落在可写白名单内。
+6. **GitHub 令牌不进 argv**：只通过环境变量 `WT_GH_TOKEN` + 一次性的 `credential.helper` 交给 git，
+   进程表里看不到；`/gh/status` 只回账号信息、从不回令牌；
+   `gh/logout` 只清本插件的文件，不动系统凭据管理器。
 
 已知取舍：终端默认走**真 PTY**（见上文）；只有宿主里借不到 node-pty 时才降级成
 「每条命令一个进程 + host 记 cwd」——降级模式下 `cd` 仍生效、环境变量继承、单条命令可中断，
@@ -651,6 +720,13 @@ package/lib/index.js     package/lib/client.js     package/README.md    package/
     不再压住会话列表；侧边栏的关闭/收起键**点得动**（0.8.48 – 0.8.52 的验收点）；
 12. **在宿主里打开一个文件预览**（触发重排）：工作台贴回原来的区域，不铺满整窗、
     也不从 `x=0` 盖住侧边栏；dock 头部出现「布局变了 · 重测」时点一下能贴回去。
+13. **源代码管理**：点「⑂ 源代码管理」→ 顶部出现分支名与 `↑↓` → 改一个文件后刷新，
+    改动出现在「未暂存的改动」→ 行内 `＋` 把它挪到「暂存的改动」→ 写说明点「提交」→ 历史里出现这条；
+14. **GitHub**：打开同一窗格，GitHub 条应自动认出本机账号（如本机 git 登录过）；
+    没有就点「登录 GitHub」粘一个 `ghp_` 令牌 → 回来应显示账号名；点「克隆」能列出仓库；
+15. **推送**：`推送` 按钮在有改动时能推到远端（第一次会自动建上游），失败会把 git 原话弹出来；
+16. **上传仓库**：点「上传仓库」→ 填名字选私有 → 建仓并上传 → 弹窗里逐步列出 init / 提交 / 建仓 / 推送；
+17. **克隆**：总览点「⑂ 克隆」→ 填 `owner/repo` → 选目录 → 进度实时刷 → 完成后自动打开成项目。
 
 ## 已知坑（真机踩过，逐条可复现）
 
@@ -701,6 +777,8 @@ package/lib/index.js     package/lib/client.js     package/README.md    package/
 |---|---|---|
 | 右侧对话 | 宿主会话视图让位（margin + CSS 变量），可真实输入 | 给宿主中心列写 `marginLeft` 让位，右侧就是原生会话（真能输入） |
 | 终端 | node-pty + WebSocket，真 PTY | 同样真 PTY，但**借宿主的 node-pty + HTTP NDJSON 双通道**（不用自己装原生模块、不注册 WS upgrade）；借不到时降级为每命令一进程 |
+| 版本控制 | 只读（status / log / branches） | **读写齐全**：暂存 / 提交 / 推送 / 拉取 / 分支 / 标签 / 回退 / diff + GitHub 登录 / 建仓上传 / 克隆 |
+| GitHub 账号 | 不管 | 自动识别本机已有凭据（gh CLI / 凭据管理器）+ 粘令牌登录；令牌 0600 落盘、不进 argv |
 | 文件安全 | 任意绝对路径 | 根白名单 + realpath + 凭证目录拒绝 |
 | 文件管理 | 单栏递归树，无删除 / 重命名 / 元信息 | 目录一屏 + 面包屑 + 排序 + 搜索 + 回收站删除 + 系统窗口 |
 | 文件预览 | markdown-it + highlight.js + pdf/img（1.4 MB bundle） | 自写零依赖渲染器（十几 KB）：md / 高亮 / pdf / 图片 / 音视频，语义近似 |

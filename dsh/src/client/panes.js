@@ -19,13 +19,18 @@ import {
   joinPath, crumbsOf,
   sessionsOf, primarySession, stateOf, jumpToSession, runProject, stopProject, openRunPort,
   ARTIFACT_FILE, loadArtifacts, openArtifact, sendArtifactToChat,
-  openModal, siteUrlOf, cycleStatus, updateProject, projectOf, toast, listMediaDir,
+  openModal, siteUrlOf, cycleStatus, updateProject, projectOf, toast, listMediaDir, openTab,
   dragFilePayload, dragUrlPayload, sendPathToChat, sendUrlToChat, sendToChat,
   webSync, webGoto, webGotoSmart, webSearch, webSetEngine, SEARCH_ENGINES, webHome, webCloseHome,
   webBack, webForward, webReload, webLoaded, webProbe,
   webSetViewport, webOpenExternal, webSetMore,
   loadCustom, openCustom, newCustomDraft, editCustom, setCustomView, saveCustom,
   deleteCustom, buildCustomPrompt, fillHostInput, setCustomPrompt, setCustomRequirement,
+  /* 源代码管理 / GitHub */
+  scmOf, loadScm, scmStage, scmUnstage, scmDiscard, scmSetMessage, scmCommit,
+  scmFetch, scmPull, scmPush, scmCheckout, scmBranchOp, scmTagOp, scmReset, scmInit,
+  scmDiff, scmShowCommit, scmClearDiff, scmSetView, setScmInsecure,
+  loadGh, loadGhRepos, ghUploadRepo,
 } from './core.js'
 
 /* ============================ 文件 / 项目信息（标签页） ============================ */
@@ -131,6 +136,7 @@ export function InfoPane({ project }) {
 
     el('div', { className: 'sec-head' },
       el('span', null, 'Git'),
+      el('button', { type: 'button', className: 'mini-btn', title: '打开源代码管理窗（暂存 / 提交 / 推送 / 分支）', onClick: () => openTab(project.id, 'scm') }, '⑂ 管理'),
       el('button', { type: 'button', className: 'mini-btn', onClick: () => loadGit(project.id) }, git.state === 'loading' ? '读取中…' : '刷新'),
     ),
     git.state === 'error'
@@ -166,6 +172,402 @@ export function InfoPane({ project }) {
             : null,
         ),
   )
+}
+
+/* ============================ 源代码管理（0.10.0） ============================ */
+
+const SCM_VIEWS = [
+  { id: 'changes', label: '改动' },
+  { id: 'history', label: '历史' },
+  { id: 'branches', label: '分支' },
+]
+
+/** 状态码 → 语义（暂存 / 未暂存 / 未跟踪 / 冲突） */
+function codeKind(code) {
+  const c = String(code || '')
+  if (c === '??') return 'new'
+  if (c[0] === 'U' || c[1] === 'U' || c === 'AA' || c === 'DD') return 'conflict'
+  return 'tracked'
+}
+
+function splitChanges(changes) {
+  const staged = []
+  const unstaged = []
+  const untracked = []
+  for (const c of changes || []) {
+    if (c.code === '??') untracked.push(c)
+    else {
+      if (c.code[0] !== ' ') staged.push(c)
+      if (c.code[1] !== ' ') unstaged.push(c)
+    }
+  }
+  return { staged, unstaged, untracked }
+}
+
+/**
+ * 源代码管理窗。
+ *
+ * 和上游「源代码管理」窗的取舍差别：这里**不做工作区多根 / 索引勾选树**，
+ * 只做单个仓库的一条直线 —— 看改动 → 暂存 → 写说明 → 提交 → 推。
+ * 每一步都能失败并原样显示 git 的 stderr，不吞错。
+ */
+export function ScmPane({ project }) {
+  useStore()
+  const scm = scmOf(project.id)
+  const gh = store.gh
+  const [draft, setDraft] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [newBranch, setNewBranch] = useState('')
+  const [newTag, setNewTag] = useState('')
+  const [uploadOpen, setUploadOpen] = useState(false)
+
+  /* 进窗格就拉一次；切项目也跟着换 */
+  useEffect(() => { loadScm(project.id) }, [project.id])
+  useEffect(() => { if (store.gh.state === 'idle') loadGh() }, [])
+
+  const busy = !!scm.busy
+  const view = scm.view || 'changes'
+  const groups = splitChanges(scm.changes)
+  const counts = scm.counts || { staged: 0, unstaged: 0, untracked: 0, total: 0, conflicts: 0 }
+  const pid = project.id
+
+  const doCommit = (push) => {
+    const text = draft.trim()
+    if (!text) { toast('先写提交说明', 'warn'); return }
+    scmCommit(pid, { message: text, push }).then((out) => { if (out) setDraft('') })
+  }
+
+  /* 两步确认：第一次点把按钮变成「确认?」，3 秒后自动撤销 */
+  const ask = (key) => {
+    setConfirm(key)
+    setTimeout(() => setConfirm((cur) => (cur === key ? '' : cur)), 4000)
+  }
+
+  const head = el('div', { className: 'scm-head' },
+    el('button', {
+      type: 'button', className: 'mini-btn scm-branch',
+      title: '分支：' + (scm.branch || '—') + (scm.upstream ? '（跟踪 ' + scm.upstream + '）' : '（无上游）'),
+      onClick: () => scmSetView(pid, view === 'branches' ? 'changes' : 'branches'),
+    }, '⑂ ' + (scm.branch || '—')),
+    (scm.ahead || scm.behind)
+      ? el('span', { className: 'scm-sync mono', title: '与上游的差距' },
+        (scm.ahead ? '↑' + scm.ahead : ''), (scm.behind ? '↓' + scm.behind : ''))
+      : null,
+    el('span', { className: 'scm-spacer' }),
+    el('button', { type: 'button', className: 'mini-btn', disabled: busy, title: '从远程取回新提交（不改工作区）', onClick: () => scmFetch(pid) }, '取回'),
+    el('button', { type: 'button', className: 'mini-btn', disabled: busy, title: '拉取（pull）', onClick: () => scmPull(pid) }, '拉取'),
+    el('button', { type: 'button', className: 'mini-btn primary', disabled: busy, title: '推送（push）—— 第一次会自动建上游', onClick: () => scmPush(pid) }, scm.ahead ? '推送 ↑' + scm.ahead : '推送'),
+    el('button', { type: 'button', className: 'mini-btn', disabled: busy, title: '重新读取状态', onClick: () => loadScm(pid) }, '↻'),
+  )
+
+  const tabs = el('div', { className: 'scm-tabs' },
+    SCM_VIEWS.map((v) => el('button', {
+      key: v.id, type: 'button',
+      className: 'scm-tab' + (view === v.id ? ' on' : ''),
+      onClick: () => scmSetView(pid, v.id),
+    }, v.label,
+      v.id === 'changes' && counts.total ? el('span', { className: 'scm-badge' }, String(counts.total)) : null,
+      v.id === 'history' && scm.log.length ? el('span', { className: 'scm-badge' }, String(scm.log.length)) : null,
+    )),
+  )
+
+  /* ---------- 未登录 / 未初始化 ---------- */
+
+  if (scm.state === 'loading' && !scm.repo) {
+    return el('div', { className: 'pane-body scm-body' }, head,
+      el('div', { className: 'pane-empty' }, el('span', { className: 'pe-ico' }, '⑂'), el('p', null, '正在读取仓库状态…')))
+  }
+
+  if (!scm.repo) {
+    return el('div', { className: 'pane-body scm-body' }, head,
+      el('div', { className: 'pane-empty' },
+        el('span', { className: 'pe-ico' }, '⑂'),
+        el('p', null, '这个目录还不是 git 仓库'),
+        scm.error ? el('p', { className: 'hint' }, scm.error) : null,
+        el('div', { className: 'pe-actions' },
+          el('button', { type: 'button', className: 'btn small primary', disabled: busy, onClick: () => scmInit(pid) }, '在这里初始化仓库'),
+          el('button', { type: 'button', className: 'btn small', onClick: () => openModal('clone') }, '克隆一个仓库'),
+        ),
+        el('p', { className: 'hint' }, '初始化后用「上传仓库」可以把整个项目推到 GitHub。'),
+      ),
+    )
+  }
+
+  /* ---------- 主体 ---------- */
+
+  const ghBar = el('div', { className: 'scm-gh' },
+    gh.loggedIn
+      ? [
+        el('span', { className: 'scm-gh-ico', 'aria-hidden': 'true' }, '●'),
+        el('b', null, gh.login || 'GitHub'),
+        el('span', { className: 'wt-mute' }, gh.source === 'git-credential' ? '（用本机 git 已登录的账号）' : (gh.source === 'stored' ? '' : '（来自 ' + gh.source + '）')),
+        el('span', { className: 'scm-spacer' }),
+        el('button', { type: 'button', className: 'mini-btn', onClick: () => setUploadOpen((v) => !v) }, uploadOpen ? '收起' : '上传仓库'),
+        el('button', { type: 'button', className: 'mini-btn', onClick: () => openModal('clone') }, '克隆'),
+      ]
+      : [
+        el('span', { className: 'scm-gh-ico off', 'aria-hidden': 'true' }, '○'),
+        el('span', null, gh.state === 'loading' ? '正在识别 GitHub 账号…' : '未登录 GitHub'),
+        el('span', { className: 'wt-mute' }, '本地提交推送照常可用，登录后才能建仓 / 列仓库'),
+        el('span', { className: 'scm-spacer' }),
+        el('button', { type: 'button', className: 'mini-btn primary', onClick: () => openModal('ghlogin') }, '登录 GitHub'),
+      ],
+  )
+
+  const uploadPanel = uploadOpen && gh.loggedIn
+    ? el('div', { className: 'scm-upload' },
+      el('p', { className: 'wt-mute' }, '把当前项目推到 GitHub：没仓库就 init、没提交就提交一次、没 origin 就建远程仓库。'),
+      el('button', { type: 'button', className: 'btn small primary', disabled: busy, onClick: () => openModal('ghupload', pid) }, '开始上传…'),
+      scm.remote ? el('p', { className: 'mono wt-mute' }, '当前 origin：' + scm.remote) : null,
+    )
+    : null
+
+  const diff = scm.diff && (scm.diff.state !== 'idle')
+    ? el('div', { className: 'scm-diff' },
+      el('div', { className: 'scm-diff-head' },
+        el('span', { className: 'mono' }, scm.diff.file || ''),
+        el('span', { className: 'scm-spacer' }),
+        scm.diff.file && !scm.diff.file.startsWith('commit:') && scm.selStaged
+          ? el('button', { type: 'button', className: 'mini-btn', onClick: () => scmUnstage(pid, [scm.diff.file]) }, '取消暂存')
+          : null,
+        scm.diff.file && scm.sel
+          ? el('button', { type: 'button', className: 'mini-btn', onClick: () => scmClearDiff(pid) }, '✕')
+          : null,
+      ),
+      scm.diff.state === 'loading'
+        ? el('p', { className: 'wt-mute' }, '读取中…')
+        : scm.diff.state === 'error'
+          ? el('p', { className: 'wt-bad' }, scm.diff.error || '读取失败')
+          : scm.diff.binary
+            ? el('p', { className: 'wt-mute' }, '二进制文件，不做文本预览')
+            : scm.diff.text
+              ? el('div', { className: 'scm-diff-body mono' }, diffLines(scm.diff.text))
+              : el('p', { className: 'wt-mute' }, '没有差异'),
+    )
+    : null
+
+  return el('div', { className: 'pane-body scm-body' },
+    head,
+    ghBar,
+    uploadPanel,
+    scm.error ? el('p', { className: 'scm-error' }, scm.error) : null,
+    tabs,
+
+    view === 'changes' ? el('div', { className: 'scm-scroll' },
+      el('div', { className: 'scm-commit' },
+        el('textarea', {
+          className: 'scm-msg',
+          placeholder: '提交说明（第一行是标题）',
+          rows: 2,
+          value: draft,
+          onChange: (e) => setDraft(e.target.value),
+        }),
+        el('div', { className: 'scm-commit-actions' },
+          el('button', {
+            type: 'button', className: 'btn small primary',
+            disabled: busy || !counts.staged,
+            title: counts.staged ? '提交暂存的 ' + counts.staged + ' 项' : '先暂存一些改动',
+            onClick: () => doCommit(false),
+          }, busy === 'commit' ? '提交中…' : '提交'),
+          el('button', { type: 'button', className: 'btn small', disabled: busy || !counts.staged, onClick: () => doCommit(true) }, '提交并推送'),
+          el('span', { className: 'scm-spacer' }),
+          counts.unstaged || counts.untracked
+            ? el('button', { type: 'button', className: 'mini-btn', disabled: busy, onClick: () => scmStage(pid, []) }, '全部暂存')
+            : null,
+        ),
+      ),
+
+      groups.staged.length ? scmSection('暂存的改动', groups.staged, {
+        key: 'staged', pid, staged: true, scm,
+        action: { label: '全部取消暂存', run: () => scmUnstage(pid, []) },
+      }) : null,
+      groups.unstaged.length ? scmSection('未暂存的改动', groups.unstaged, {
+        key: 'unstaged', pid, staged: false, scm, confirm, ask,
+      }) : null,
+      groups.untracked.length ? scmSection('未跟踪的文件', groups.untracked, {
+        key: 'untracked', pid, staged: false, scm, confirm, ask,
+      }) : null,
+
+      !counts.total
+        ? el('div', { className: 'pane-empty', style: { padding: '18px 12px' } },
+          el('span', { className: 'pe-ico' }, '✓'),
+          el('p', null, '工作区干净，没有待提交的改动'),
+          scm.upstream ? el('p', { className: 'hint mono' }, scm.branch + ' → ' + scm.upstream) : null,
+        )
+        : null,
+
+      scm.log.length
+        ? el('div', { className: 'scm-recent' },
+          el('div', { className: 'scm-sec-head' },
+            el('span', null, '最近提交'),
+            el('button', { type: 'button', className: 'mini-btn', onClick: () => scmSetView(pid, 'history') }, '全部 ›'),
+          ),
+          scm.log.slice(0, 4).map((c) => el('div', { key: c.hash, className: 'scm-commit-row', title: c.subject, onClick: () => scmShowCommit(pid, c.hash) },
+            el('span', { className: 'gc-hash mono' }, c.hash),
+            el('span', { className: 'gc-sub' }, c.subject),
+            el('span', { className: 'gc-date mono' }, c.date),
+          )),
+        )
+        : null,
+    ) : null,
+
+    view === 'history' ? el('div', { className: 'scm-scroll' },
+      scm.log.length
+        ? scm.log.map((c) => el('div', { key: c.hash, className: 'scm-commit-row', title: c.subject, onClick: () => scmShowCommit(pid, c.hash) },
+          el('span', { className: 'gc-hash mono' }, c.hash),
+          el('span', { className: 'gc-sub' }, c.subject),
+          el('span', { className: 'gc-date mono' }, c.date),
+          el('button', {
+            type: 'button',
+            className: 'mini-btn scm-ghost',
+            title: '把当前分支回退到这个提交（--soft，改动会回到工作区）',
+            onClick: (e) => {
+              e.stopPropagation()
+              if (confirm === 'reset:' + c.hash) { scmReset(pid, c.hash, 'soft'); setConfirm('') }
+              else ask('reset:' + c.hash)
+            },
+          }, confirm === 'reset:' + c.hash ? '确认回退?' : '回退'),
+        ))
+        : el('p', { className: 'wt-mute' }, '还没有提交'),
+    ) : null,
+
+    view === 'branches' ? el('div', { className: 'scm-scroll' },
+      el('div', { className: 'scm-sec-head' }, el('span', null, '本地分支'), el('span', { className: 'scm-count' }, String(scm.branches.length))),
+      scm.branches.map((b) => el('div', { key: b.name, className: 'scm-branch-row' + (b.current ? ' on' : '') },
+        el('span', { className: 'mono' }, (b.current ? '● ' : '○ ') + b.name),
+        el('span', { className: 'gc-hash mono' }, b.hash),
+        el('span', { className: 'scm-spacer' }),
+        b.current ? null : el('button', { type: 'button', className: 'mini-btn', disabled: busy, onClick: () => scmCheckout(pid, b.name) }, '切换'),
+        b.current ? null : el('button', {
+          type: 'button', className: 'mini-btn',
+          disabled: busy,
+          onClick: () => (confirm === 'delbr:' + b.name ? (scmBranchOp(pid, 'delete', b.name), setConfirm('')) : ask('delbr:' + b.name)),
+        }, confirm === 'delbr:' + b.name ? '确认删除?' : '删除'),
+      )),
+      el('div', { className: 'scm-newline' },
+        el('input', {
+          className: 'scm-input mono', placeholder: '新分支名', value: newBranch,
+          onChange: (e) => setNewBranch(e.target.value),
+        }),
+        el('button', {
+          type: 'button', className: 'mini-btn', disabled: busy || !newBranch.trim(),
+          onClick: () => { scmCheckout(pid, newBranch.trim(), { create: true }); setNewBranch('') },
+        }, '新建并切换'),
+      ),
+
+      scm.remoteBranches.length ? el('div', { className: 'scm-sec-head' }, el('span', null, '远程分支'), el('span', { className: 'scm-count' }, String(scm.remoteBranches.length))) : null,
+      scm.remoteBranches.map((b) => el('div', { key: b.name, className: 'scm-branch-row' },
+        el('span', { className: 'mono wt-mute' }, b.name),
+        el('span', { className: 'scm-spacer' }),
+        el('button', { type: 'button', className: 'mini-btn', disabled: busy, onClick: () => scmCheckout(pid, b.name) }, '检出'),
+      )),
+
+      el('div', { className: 'scm-sec-head' }, el('span', null, '标签'), el('span', { className: 'scm-count' }, String(scm.tags.length))),
+      scm.tags.length
+        ? scm.tags.map((t) => el('div', { key: t.name, className: 'scm-branch-row' },
+          el('span', { className: 'tag gold' }, t.name),
+          el('span', { className: 'gc-hash mono' }, t.hash),
+          el('span', { className: 'scm-spacer' }),
+          el('button', {
+            type: 'button', className: 'mini-btn',
+            disabled: busy,
+            onClick: () => (confirm === 'deltag:' + t.name ? (scmTagOp(pid, 'delete', t.name), setConfirm('')) : ask('deltag:' + t.name)),
+          }, confirm === 'deltag:' + t.name ? '确认删除?' : '删除'),
+        ))
+        : el('p', { className: 'wt-mute' }, '还没有标签'),
+      el('div', { className: 'scm-newline' },
+        el('input', {
+          className: 'scm-input mono', placeholder: '新标签名，例如 v1.0.0', value: newTag,
+          onChange: (e) => setNewTag(e.target.value),
+        }),
+        el('button', {
+          type: 'button', className: 'mini-btn', disabled: busy || !newTag.trim(),
+          onClick: () => { scmTagOp(pid, 'create', newTag.trim()); setNewTag('') },
+        }, '打标签'),
+      ),
+
+      el('div', { className: 'scm-sec-head' }, el('span', null, '远程')),
+      scm.remotes.length
+        ? scm.remotes.map((r) => el('div', { key: r.name, className: 'scm-branch-row' },
+          el('span', { className: 'mono' }, r.name),
+          el('span', { className: 'mono wt-mute scm-remote-url', title: r.url }, r.url),
+        ))
+        : el('p', { className: 'wt-mute' }, '还没配置远程仓库'),
+      el('label', { className: 'chk' },
+        el('input', {
+          type: 'checkbox', checked: store.scm.insecure === true,
+          onChange: (e) => setScmInsecure(e.target.checked),
+        }),
+        el('span', null, '跳过证书校验（本机吊销检查连不上时用）'),
+      ),
+    ) : null,
+
+    diff,
+  )
+}
+
+/** 一段改动列表。staged 决定行内按钮是「暂存」还是「取消暂存」 */
+function scmSection(title, items, opts) {
+  const { pid, staged, scm, confirm, ask } = opts
+  const action = opts.action || null
+  return el('div', { className: 'scm-sec' },
+    el('div', { className: 'scm-sec-head' },
+      el('span', null, title),
+      el('span', { className: 'scm-count' }, String(items.length)),
+      el('span', { className: 'scm-spacer' }),
+      action ? el('button', { type: 'button', className: 'mini-btn', disabled: !items.length, onClick: action.run }, action.label) : null,
+      !staged && !action
+        ? el('button', { type: 'button', className: 'mini-btn', onClick: () => scmStage(pid, items.map((c) => c.file)) }, '全部暂存')
+        : null,
+    ),
+    items.map((c) => {
+      const active = scm.sel === c.file && (staged ? scm.selStaged : !scm.selStaged)
+      const key = 'dis:' + c.file
+      return el('div', {
+        key: c.file,
+        className: 'scm-file' + (active ? ' on' : ''),
+        title: c.from ? c.from + ' → ' + c.file : c.file,
+        onClick: () => scmDiff(pid, c.file, { staged }),
+      },
+        el('span', { className: 'scm-code mono ' + codeKind(c.code) }, c.code.trim() || '·'),
+        el('span', { className: 'scm-file-name' }, c.file),
+        el('span', { className: 'scm-file-actions' },
+          staged
+            ? el('button', { type: 'button', className: 'mini-btn', title: '取消暂存', onClick: (e) => { e.stopPropagation(); scmUnstage(pid, [c.file]) } }, '－')
+            : el('button', { type: 'button', className: 'mini-btn', title: '暂存', onClick: (e) => { e.stopPropagation(); scmStage(pid, [c.file]) } }, '＋'),
+          el('button', {
+            type: 'button',
+            className: 'mini-btn',
+            title: '丢弃这个文件的改动（不可恢复）',
+            onClick: (e) => {
+              e.stopPropagation()
+              if (confirm === key) { scmDiscard(pid, [c.file]); ask(''); }
+              else if (ask) ask(key)
+            },
+          }, confirm === key ? '确认?' : '↺'),
+        ),
+      )
+    }),
+  )
+}
+
+/** diff 上色：只看行首，不做行内 diff（够用且不会误判） */
+function diffLines(text) {
+  const lines = String(text || '').split('\n').slice(0, 3000)
+  return lines.map((line, i) => {
+    const cls = line.startsWith('+++') || line.startsWith('---')
+      ? 'dl-meta'
+      : line.startsWith('@@')
+        ? 'dl-hunk'
+        : line.startsWith('+')
+          ? 'dl-add'
+          : line.startsWith('-')
+            ? 'dl-del'
+            : line.startsWith('diff ') || line.startsWith('index ')
+              ? 'dl-meta'
+              : ''
+    return el('div', { key: i, className: 'dl ' + cls }, line || ' ')
+  })
 }
 
 /* ============================ 文件管理器（面板内自绘） ============================ */

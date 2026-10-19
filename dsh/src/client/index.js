@@ -37,6 +37,10 @@ import {
   setSideProject, setSideSplit, sideProjectOf,
   enterProject,
   listMediaDir,
+  loadScm, loadGit, scmStage, scmUnstage, scmDiscard, scmSetMessage, scmCommit,
+  scmFetch, scmPull, scmPush, scmCheckout, scmBranchOp, scmTagOp, scmReset, scmInit,
+  scmDiff, scmShowCommit, scmClearDiff, scmSetView, scmOf,
+  loadGh, ghLogin, ghLogout, loadGhRepos, ghUploadRepo, cloneRepo,
   fileUrlOf, chatTextForFile, chatTextForUrl, readChatDrop, sendToChat, sendPathToChat, sendUrlToChat,
 } from './core.js'
 import { el } from './ui.js'
@@ -64,6 +68,11 @@ export { store, openFile, createSessionInDir, switchHostSession, searchUrl, webG
   handleHotkey, HOTKEYS,
   setRunConfig, runProject, stopProject, openRunPort, hydrate, termExec, termRun, termCtrlC,
   setSideProject, setSideSplit, sideProjectOf, enterProject, kindOfMediaPath, mediaRowsOf, listMediaDir, sideModeOf, pickDock, remeasure, undockedBox,
+  /* 源代码管理 / GitHub（离线自测出口） */
+  loadScm, loadGit, scmStage, scmUnstage, scmDiscard, scmSetMessage, scmCommit,
+  scmFetch, scmPull, scmPush, scmCheckout, scmBranchOp, scmTagOp, scmReset, scmInit,
+  scmDiff, scmShowCommit, scmClearDiff, scmSetView, scmOf,
+  loadGh, ghLogin, ghLogout, loadGhRepos, ghUploadRepo, cloneRepo,
   fileUrlOf, chatTextForFile, chatTextForUrl, readChatDrop, sendToChat, sendPathToChat, sendUrlToChat }
 
 class SidebarBoundary extends Component {

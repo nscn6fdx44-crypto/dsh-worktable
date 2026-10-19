@@ -30,6 +30,7 @@ const LS = {
   dockVer: 'wt.dockVer',
   overview: 'wt.overview',
   gridTab: 'wt.gridTab',
+  gitInsecure: 'wt.git.insecure',
   side: 'wt.side',
 }
 
@@ -58,6 +59,7 @@ export function normState(raw) {
  */
 export const PANE_TABS = [
   { id: 'files', label: '文件管理器', icon: '🗂' },
+  { id: 'scm', label: '源代码管理', icon: '⑂' },
   { id: 'editor', label: '编辑器', icon: '◆' },
   { id: 'term', label: '终端', icon: '›_' },
   { id: 'web', label: '浏览器', icon: '◍' },
@@ -241,6 +243,22 @@ export const store = {
   },
   terms: {},                    // { [pid]: { id, cwd, busy, lines: [] } }
   git: { state: 'idle', repo: false, branch: '', changes: [], counts: null, error: '', log: [], branches: [] },
+  /* 源代码管理窗（0.10.0）：一个仓库的完整读写视图 —— 暂存 / 提交 / 推送 / 分支 / 标签 / 历史 */
+  scm: {
+    pid: '', state: 'idle', repo: false, error: '',
+    branch: '', detached: false, unborn: false, head: '', ahead: 0, behind: 0, upstream: '', remote: '',
+    changes: [], counts: null, log: [], branches: [], remoteBranches: [], tags: [], remotes: [],
+    sel: '', selStaged: false,
+    diff: { state: 'idle', file: '', text: '', error: '', binary: false, truncated: false },
+    msg: '', busy: '', view: 'changes', note: '',
+    /* 本机 git 证书吊销检查失败时的退路（默认关；只影响推送/拉取/克隆） */
+    insecure: false,
+  },
+  /* GitHub 账号：全局一份，不分项目 */
+  gh: {
+    state: 'idle', loggedIn: false, login: '', name: '', avatar: '', scopes: '', source: '', profile: '',
+    error: '', repos: [], reposState: 'idle', reposError: '', q: '', page: 1, hasMore: false,
+  },
   /* 浏览器窗格：地址栏历史 + 加载态 + 视口 + 探测结果（探测能提前知道「能不能嵌」） */
   web: {
     pid: '', defaultUrl: '', url: '', state: 'idle', error: '',
@@ -368,6 +386,7 @@ export function hydrate() {
     overview,
     gridTab: GRID_TABS.some((t) => t.id === readLS(LS.gridTab, '')) ? readLS(LS.gridTab, '') : 'projects',
     side: sideClean,
+    scm: { ...store.scm, insecure: readLS(LS.gitInsecure, false) === true },
   })
 }
 
@@ -2534,37 +2553,383 @@ export async function termKill(pid) {
   termAppend(pid, { kind: 'sys', text: '[已请求终止]' })
 }
 
-/* ============================ git ============================ */
+/* ============================ git / GitHub ============================ */
 
-export async function loadGit(pid) {
+const EMPTY_SCM = {
+  pid: '', state: 'idle', repo: false, error: '',
+  branch: '', detached: false, unborn: false, head: '', ahead: 0, behind: 0, upstream: '', remote: '',
+  changes: [], counts: null, log: [], branches: [], remoteBranches: [], tags: [], remotes: [],
+  sel: '', selStaged: false, diff: { state: 'idle', file: '', text: '', error: '', binary: false, truncated: false },
+  msg: '', busy: '', view: 'changes', note: '',
+}
+
+const EMPTY_GH = {
+  state: 'idle', loggedIn: false, login: '', name: '', avatar: '', scopes: '', source: '', profile: '',
+  error: '', repos: [], reposState: 'idle', reposError: '', q: '', page: 1, hasMore: false,
+}
+
+export function scmOf(pid) {
+  if (store.scm && store.scm.pid === pid) return store.scm
+  return { ...EMPTY_SCM, pid }
+}
+
+function scmPatch(pid, patch) {
+  emit({ scm: { ...scmOf(pid), ...patch, pid } })
+}
+
+function emptyDiff() {
+  return { state: 'idle', file: '', text: '', error: '', binary: false, truncated: false }
+}
+
+/** 一次拿全 status + 历史 + 分支 + 标签（host 的 status 已经把后三个带上了） */
+export async function loadScm(pid, { quiet = false } = {}) {
   const project = projectOf(pid)
-  if (!project?.path) { emit({ git: { state: 'idle', repo: false, branch: '', changes: [], counts: null, error: '未设置项目路径', log: [], branches: [] } }); return }
-  emit({ git: { ...store.git, state: 'loading', error: '' } })
+  if (!project?.path) {
+    scmPatch(pid, { ...EMPTY_SCM, pid, state: 'ok', error: '这个项目还没设置目录' })
+    return
+  }
+  if (!quiet) scmPatch(pid, { state: 'loading', error: '' })
   try {
-    const status = await apiPost('/git', { path: project.path, op: 'status' }, { timeout: 15_000 })
-    if (!status?.repo) {
+    const st = await apiPost('/git', { path: project.path, op: 'status' }, { timeout: 25_000 })
+    if (!st?.repo) {
+      scmPatch(pid, {
+        ...EMPTY_SCM, pid, state: 'ok', repo: false,
+        error: String(st?.error || ''),
+      })
+      /* 项目信息窗也要跟着显示「不是仓库」 */
       emit({ git: { state: 'ok', repo: false, branch: '', changes: [], counts: null, error: '', log: [], branches: [] } })
       return
     }
-    const [log, branches] = await Promise.all([
-      apiPost('/git', { path: project.path, op: 'log', limit: 15 }).catch(() => ({ commits: [] })),
-      apiPost('/git', { path: project.path, op: 'branches' }).catch(() => ({ branches: [] })),
-    ])
+    const changes = Array.isArray(st.changes) ? st.changes : []
+    const keepSel = store.scm?.pid === pid ? store.scm.sel : ''
+    const selStillExists = keepSel && changes.some((c) => c.file === keepSel)
+    scmPatch(pid, {
+      state: 'ok',
+      repo: true,
+      error: '',
+      branch: String(st.branch || ''),
+      detached: !!st.detached,
+      unborn: !!st.unborn,
+      head: String(st.head || ''),
+      ahead: Number(st.ahead) || 0,
+      behind: Number(st.behind) || 0,
+      upstream: String(st.upstream || ''),
+      remote: String(st.remote || ''),
+      changes,
+      counts: st.counts || { staged: 0, unstaged: 0, untracked: 0, total: 0 },
+      log: Array.isArray(st.log) ? st.log : [],
+      branches: Array.isArray(st.branches) ? st.branches : [],
+      remoteBranches: Array.isArray(st.remoteBranches) ? st.remoteBranches : [],
+      tags: Array.isArray(st.tags) ? st.tags : [],
+      remotes: Array.isArray(st.remotes) ? st.remotes : [],
+      sel: selStillExists ? keepSel : '',
+      diff: selStillExists ? (store.scm?.diff || emptyDiff()) : emptyDiff(),
+    })
     emit({
       git: {
         state: 'ok',
         repo: true,
-        branch: String(status.branch || ''),
-        changes: Array.isArray(status.changes) ? status.changes : [],
-        counts: status.counts || { staged: 0, unstaged: 0, untracked: 0, total: 0 },
+        branch: String(st.branch || ''),
+        changes,
+        counts: st.counts || { staged: 0, unstaged: 0, untracked: 0, total: 0 },
         error: '',
-        log: Array.isArray(log?.commits) ? log.commits : [],
-        branches: Array.isArray(branches?.branches) ? branches.branches : [],
+        log: (Array.isArray(st.log) ? st.log : []).slice(0, 15),
+        branches: (Array.isArray(st.branches) ? st.branches : []).map((b) => b.name),
       },
     })
   } catch (err) {
-    emit({ git: { state: 'error', repo: false, branch: '', changes: [], counts: null, error: String(err?.message ?? err), log: [], branches: [] } })
+    const text = String(err?.message ?? err)
+    scmPatch(pid, { state: 'error', error: text })
+    emit({ git: { state: 'error', repo: false, branch: '', changes: [], counts: null, error: text, log: [], branches: [] } })
   }
+}
+
+/** 兼容旧入口：项目信息窗里的「刷新 Git」 */
+export async function loadGit(pid) {
+  return loadScm(pid)
+}
+
+/** 跑一个写操作：统一置忙、失败 toast、成功后重读状态 */
+async function scmAct(pid, op, body = {}, { label = '', reload = true, timeout = 60_000 } = {}) {
+  const project = projectOf(pid)
+  if (!project?.path) return null
+  scmPatch(pid, { busy: op, note: '' })
+  try {
+    const payload = { path: project.path, op, ...body }
+    /* 网络操作带上用户的「跳过证书校验」选择（默认 false） */
+    if (op === 'push' || op === 'pull' || op === 'fetch') payload.insecure = store.scm.insecure === true
+    const out = await apiPost('/git', payload, { timeout })
+    if (out?.ok === false && out?.error) throw new Error(out.error)
+    if (reload) {
+      await loadScm(pid, { quiet: true })
+      scmPatch(pid, { busy: '' })
+    } else scmPatch(pid, { busy: '' })
+    if (label) toast(label, 'ok')
+    return out
+  } catch (err) {
+    const text = String(err?.message ?? err)
+    toast((op === 'push' || op === 'pull' || op === 'fetch' ? '网络操作失败：' : '') + text, 'bad')
+    scmPatch(pid, { busy: '' })
+    if (reload) loadScm(pid, { quiet: true })
+    return null
+  }
+}
+
+export function scmStage(pid, files) {
+  return scmAct(pid, 'stage', { files: files || [] })
+}
+
+export function scmUnstage(pid, files) {
+  return scmAct(pid, 'unstage', { files: files || [] })
+}
+
+export async function scmDiscard(pid, files) {
+  const list = Array.isArray(files) ? files : [files]
+  if (!list.length) return null
+  return scmAct(pid, 'discard', { files: list }, { label: '已丢弃 ' + list.length + ' 个文件的改动' })
+}
+
+export function scmSetMessage(pid, text) {
+  scmPatch(pid, { msg: String(text ?? '') })
+}
+
+/** 提交；push=true 时紧接着推一次，适合「改完就想同步」的场景 */
+export async function scmCommit(pid, { all = false, amend = false, push = false, message = '' } = {}) {
+  const scm = scmOf(pid)
+  const text = String(message || scm.msg || '').trim()
+  if (!text && !amend) { toast('先写提交说明', 'warn'); return null }
+  const out = await scmAct(pid, 'commit', { message: text, all, amend })
+  if (!out) return null
+  scmPatch(pid, { msg: '' })
+  toast('已提交', 'ok')
+  if (push) await scmPush(pid)
+  return out
+}
+
+export function scmFetch(pid) {
+  return scmAct(pid, 'fetch', {}, { timeout: 130_000 })
+}
+
+export function scmPull(pid) {
+  return scmAct(pid, 'pull', { remote: 'origin' }, { label: '已拉取', timeout: 130_000 })
+}
+
+export function scmPush(pid) {
+  return scmAct(pid, 'push', { remote: 'origin' }, { label: '已推送', timeout: 130_000 })
+}
+
+export function scmCheckout(pid, target, { create = false } = {}) {
+  return scmAct(pid, 'checkout', { target, create }, { label: '已切换：' + target })
+}
+
+export function scmBranchOp(pid, action, name, extra = {}) {
+  return scmAct(pid, 'branch', { action, name, ...extra }, { label: action === 'delete' ? '分支已删除' : '分支操作完成' })
+}
+
+export function scmTagOp(pid, action, name, extra = {}) {
+  return scmAct(pid, 'tag', { action, name, ...extra }, { label: action === 'delete' ? '标签已删除' : '标签已创建' })
+}
+
+export async function scmReset(pid, commit, mode = 'soft') {
+  return scmAct(pid, 'reset', { commit, mode }, { label: '已回退到 ' + commit })
+}
+
+export function scmInit(pid) {
+  return scmAct(pid, 'init', {}, { label: '已初始化仓库' })
+}
+
+export async function scmDiff(pid, file, { staged = false } = {}) {
+  const project = projectOf(pid)
+  if (!project?.path || !file) return
+  scmPatch(pid, { sel: file, selStaged: staged, diff: { ...emptyDiff(), state: 'loading', file } })
+  try {
+    const out = await apiPost('/git', { path: project.path, op: 'diff', file, staged }, { timeout: 25_000 })
+    scmPatch(pid, {
+      diff: {
+        state: 'ok', file,
+        text: String(out?.diff || ''),
+        error: String(out?.error || ''),
+        binary: !!out?.binary,
+        truncated: !!out?.truncated,
+      },
+    })
+  } catch (err) {
+    scmPatch(pid, { diff: { ...emptyDiff(), state: 'error', file, error: String(err?.message ?? err) } })
+  }
+}
+
+export async function scmShowCommit(pid, hash) {
+  const project = projectOf(pid)
+  if (!project?.path || !hash) return
+  scmPatch(pid, { sel: 'commit:' + hash, diff: { ...emptyDiff(), state: 'loading', file: hash } })
+  try {
+    const out = await apiPost('/git', { path: project.path, op: 'diff', commit: hash }, { timeout: 25_000 })
+    scmPatch(pid, {
+      diff: {
+        state: 'ok', file: hash, text: String(out?.diff || ''),
+        error: String(out?.error || ''), binary: false, truncated: !!out?.truncated,
+      },
+    })
+  } catch (err) {
+    scmPatch(pid, { diff: { ...emptyDiff(), state: 'error', file: hash, error: String(err?.message ?? err) } })
+  }
+}
+
+export function scmClearDiff(pid) {
+  scmPatch(pid, { sel: '', diff: emptyDiff() })
+}
+
+export function scmSetView(pid, view) {
+  scmPatch(pid, { view })
+}
+
+/** 「跳过证书校验」开关（写 localStorage，只在本机的推送/拉取/克隆生效） */
+export function setScmInsecure(on) {
+  const v = !!on
+  writeLS(LS.gitInsecure, v)
+  emit({ scm: { ...store.scm, insecure: v } })
+  return v
+}
+
+/* ---------- GitHub 账号 ---------- */
+
+function ghPatch(patch) {
+  emit({ gh: { ...EMPTY_GH, ...store.gh, ...patch } })
+}
+
+export async function loadGh({ quiet = false } = {}) {
+  if (!quiet) ghPatch({ state: 'loading', error: '' })
+  try {
+    const st = await apiGet('/gh/status', { timeout: 20_000 })
+    ghPatch({
+      state: 'ok',
+      loggedIn: !!st?.loggedIn,
+      login: String(st?.login || ''),
+      name: String(st?.name || ''),
+      avatar: String(st?.avatar || ''),
+      scopes: String(st?.scopes || ''),
+      source: String(st?.source || ''),
+      profile: String(st?.profile || ''),
+      error: String(st?.error || ''),
+    })
+    return st
+  } catch (err) {
+    ghPatch({ state: 'error', error: String(err?.message ?? err) })
+    return null
+  }
+}
+
+export async function ghLogin(token, { remember = true, writeCredential = false } = {}) {
+  ghPatch({ state: 'loading', error: '' })
+  try {
+    const out = await apiPost('/gh/login', { token, remember, writeCredential }, { timeout: 25_000 })
+    await loadGh({ quiet: true })
+    toast('已登录 GitHub：' + (out?.login || ''), 'ok')
+    return out
+  } catch (err) {
+    const text = String(err?.message ?? err)
+    ghPatch({ state: 'ok', error: text })
+    toast('登录失败：' + text, 'bad')
+    return null
+  }
+}
+
+export async function ghLogout() {
+  try { await apiPost('/gh/logout', {}, { timeout: 15_000 }) } catch { /* 忽略 */ }
+  ghPatch({ ...EMPTY_GH, state: 'ok' })
+  toast('已退出 GitHub（本机 git 里的凭据未动）', 'ok')
+}
+
+export async function loadGhRepos({ q = '', page = 1 } = {}) {
+  ghPatch({ reposState: 'loading', reposError: '', q })
+  try {
+    const out = await apiGet('/gh/repos?q=' + encodeURIComponent(q) + '&page=' + page, { timeout: 25_000 })
+    ghPatch({ reposState: 'ok', repos: Array.isArray(out?.repos) ? out.repos : [], hasMore: !!out?.hasMore, page })
+    return out
+  } catch (err) {
+    ghPatch({ reposState: 'error', reposError: String(err?.message ?? err), repos: [] })
+    return null
+  }
+}
+
+/**
+ * 上传当前项目到 GitHub：建仓 + 首推。
+ * @returns {Promise<{ok:boolean, remote?:string, repo?:any, error?:string}|null>}
+ */
+export async function ghUploadRepo(pid, { name = '', private: isPrivate = true, description = '', branch = '' } = {}) {
+  const project = projectOf(pid)
+  if (!project?.path) { toast('这个项目还没设置目录', 'warn'); return null }
+  scmPatch(pid, { busy: 'upload' })
+  try {
+    const out = await apiPost('/gh/upload', {
+      path: project.path, name: name || project.name, private: isPrivate, description, branch,
+      insecure: store.scm.insecure === true,
+    }, { timeout: 180_000 })
+    await loadScm(pid, { quiet: true })
+    scmPatch(pid, { busy: '' })
+    toast('已上传到 GitHub：' + (out?.repo?.fullName || out?.remote || ''), 'ok')
+    return out
+  } catch (err) {
+    scmPatch(pid, { busy: '' })
+    toast('上传失败：' + String(err?.message ?? err), 'bad')
+    return null
+  }
+}
+
+/** 克隆：NDJSON 进度流，onLine 回调给界面刷日志 */
+export async function cloneRepo({ url, dest, depth = 0, branch = '', insecure = null }, onLine) {
+  const res = await fetch(API + '/git/clone', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/x-ndjson' },
+    body: JSON.stringify({
+      url, dest, depth, branch,
+      insecure: insecure === null ? store.scm.insecure === true : !!insecure,
+    }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => null)
+    throw new Error((data && data.error) || ('HTTP ' + res.status))
+  }
+  const reader = res.body?.getReader?.()
+  if (!reader) {
+    const text = await res.text()
+    return parseCloneTail(text)
+  }
+  const decoder = typeof TextDecoder === 'function' ? new TextDecoder('utf-8') : null
+  let buffer = ''
+  let end = null
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder ? decoder.decode(value, { stream: true }) : String(value)
+    let at
+    while ((at = buffer.indexOf('\n')) !== -1) {
+      const row = buffer.slice(0, at)
+      buffer = buffer.slice(at + 1)
+      if (!row.trim()) continue
+      let ev = null
+      try { ev = JSON.parse(row) } catch { continue }
+      if (ev.t === 'out' && ev.line) onLine && onLine(ev.line)
+      if (ev.t === 'end') end = ev
+    }
+  }
+  if (!end) throw new Error('克隆连接中断')
+  if (!end.ok) throw new Error(end.error || '克隆失败')
+  return end
+}
+
+function parseCloneTail(text) {
+  let end = null
+  for (const line of String(text || '').split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const ev = JSON.parse(line)
+      if (ev.t === 'end') end = ev
+    } catch { /* 非 JSON 行 */ }
+  }
+  if (!end) throw new Error('克隆失败')
+  if (!end.ok) throw new Error(end.error || '克隆失败')
+  return end
 }
 
 /* ============================ 浏览器 ============================ */

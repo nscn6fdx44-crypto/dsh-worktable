@@ -12,7 +12,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, symlinkSync
 import { createServer } from 'node:http'
 import { Writable } from 'node:stream'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 
 const routes = new Map()
 const BASE = '/api/trae-worktable'
@@ -356,8 +356,72 @@ const glj = JSON.parse(gitLog.body)
 check('git log 200 + 提交', gitLog.status === 200 && glj.commits.length > 0, 'commits=' + (glj.commits || []).length)
 check('git log 字段完整', !glj.commits.length || (glj.commits[0].hash && glj.commits[0].subject))
 
-const gitBad = await call(BASE + '/git', { path: process.cwd(), op: 'push' })
-check('git 拒绝写操作 op', gitBad.status === 400, gitBad.body.slice(0, 60))
+/* status 顺带把历史 / 分支 / 标签 / 远程一起带回来（一次往返拿全） */
+check('git status 带 log/branches/tags/remotes',
+  Array.isArray(gj.log) && Array.isArray(gj.branches) && Array.isArray(gj.tags) && Array.isArray(gj.remotes))
+
+/* 未知 op 必须在路由层拦下，不能落到真 git（以前这条用例传的是 push，会真去连网） */
+const gitBad = await call(BASE + '/git', { path: process.cwd(), op: 'frobnicate' })
+check('git 未知 op → 400', gitBad.status === 400 && /未知 op/.test(gitBad.body), gitBad.body.slice(0, 60))
+
+/* 写操作要求目录在白名单根内：系统目录读得、写不得 */
+const gitOutside = await call(BASE + '/git', { path: process.platform === 'win32' ? 'C:\\Windows' : '/etc', op: 'commit', message: 'x' })
+check('git 写操作限制在白名单内', gitOutside.status === 403, gitOutside.status + ' ' + gitOutside.body.slice(0, 60))
+
+/* GitHub 账号状态：只报「是谁」，不回传令牌 */
+const ghRes = await call(BASE + '/gh/status', undefined, 'GET')
+const ghJson = JSON.parse(ghRes.body)
+check('/gh/status 200', ghRes.status === 200, ghRes.body.slice(0, 80))
+check('/gh/status 不泄漏令牌', ghJson.token === undefined && !/gh[opsu]_[\w]{20,}/.test(ghRes.body), 'keys=' + Object.keys(ghJson).join(','))
+check('/gh/status 字段完整', typeof ghJson.loggedIn === 'boolean' && typeof ghJson.source === 'string')
+
+/* 克隆参数校验：参数注入与空地址都要挡 */
+const cloneInject = await call(BASE + '/git/clone', { url: '--upload-pack=calc.exe', dest: join(tmp, 'x1') })
+check('/git/clone 拒绝参数注入', cloneInject.status === 400 && /不合法/.test(cloneInject.body), cloneInject.body.slice(0, 60))
+const cloneNoDest = await call(BASE + '/git/clone', { url: 'owner/repo' })
+check('/git/clone 缺目录 → 400', cloneNoDest.status === 400, cloneNoDest.body.slice(0, 60))
+const cloneOutside = await call(BASE + '/git/clone', { url: 'owner/repo', dest: process.platform === 'win32' ? 'C:\\Windows\\wt-clone' : '/etc/wt-clone' })
+check('/git/clone 目标超出白名单 → 403', cloneOutside.status === 403, cloneOutside.status + ' ' + cloneOutside.body.slice(0, 60))
+
+/* 空仓库端到端：init → status → stage → commit → tag → show */
+const repoDir = join(tmpdir(), 'wt-git-e2e-' + Date.now())
+mkdirSync(repoDir, { recursive: true })
+writeFileSync(join(repoDir, 'a.txt'), 'hello\n', 'utf8')
+const gi = await call(BASE + '/git', { path: repoDir, op: 'init', branch: 'main' })
+check('git init 新建仓库', gi.status === 200 && JSON.parse(gi.body).ok === true, gi.body.slice(0, 60))
+
+const gs0 = JSON.parse((await call(BASE + '/git', { path: repoDir, op: 'status' })).body)
+check('git 空仓库也报分支名', gs0.repo === true && gs0.branch === 'main' && gs0.unborn === true, gs0.branch + ' unborn=' + gs0.unborn)
+check('git 未跟踪文件进 changes', gs0.counts.untracked === 1 && gs0.changes[0].code === '??', JSON.stringify(gs0.counts))
+
+const gadd = await call(BASE + '/git', { path: repoDir, op: 'stage' })
+check('git 全部暂存', gadd.status === 200 && JSON.parse(gadd.body).ok === true)
+
+const gs1 = JSON.parse((await call(BASE + '/git', { path: repoDir, op: 'status' })).body)
+check('git 暂存后 staged=1', gs1.counts.staged === 1 && gs1.counts.untracked === 0, JSON.stringify(gs1.counts))
+
+const gc = await call(BASE + '/git', { path: repoDir, op: 'commit', message: '初始提交' })
+check('git 提交成功', gc.status === 200 && JSON.parse(gc.body).ok === true, gc.body.slice(0, 80))
+
+const gs2 = JSON.parse((await call(BASE + '/git', { path: repoDir, op: 'status' })).body)
+check('git 提交后工作区干净', gs2.counts.total === 0 && gs2.log.length === 1, JSON.stringify(gs2.counts) + ' log=' + gs2.log.length)
+
+const gtag = await call(BASE + '/git', { path: repoDir, op: 'tag', name: 'v0.0.1' })
+const gs3 = JSON.parse((await call(BASE + '/git', { path: repoDir, op: 'status' })).body)
+check('git 打标签', gtag.status === 200 && gs3.tags.some((t) => t.name === 'v0.0.1'), gs3.tags.map((t) => t.name).join(','))
+
+const gbr = await call(BASE + '/git', { path: repoDir, op: 'checkout', target: 'dev', create: true })
+const gs4 = JSON.parse((await call(BASE + '/git', { path: repoDir, op: 'status' })).body)
+check('git 新建并切换分支', gbr.status === 200 && gs4.branch === 'dev', gs4.branch)
+
+const gshow = JSON.parse((await call(BASE + '/git', { path: repoDir, op: 'diff', commit: 'HEAD' })).body)
+check('git 显示提交内容', gshow.ok === true && gshow.diff.includes('a.txt'), String(gshow.diff).slice(0, 60))
+
+const gmsg = await call(BASE + '/git', { path: repoDir, op: 'commit', message: '' })
+check('git 空提交说明被拒', gmsg.status === 400 && /提交说明不能为空/.test(gmsg.body), gmsg.body.slice(0, 60))
+
+rmSync(repoDir, { recursive: true, force: true })
+
 
 /* ============================ 静态托管 ============================ */
 

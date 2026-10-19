@@ -25,7 +25,7 @@ import {
   runProject, stopProject, openRunPort,
   setSideProject, setSideSplit, sideProjectOf, readChatDrop, dropToChat, setChatDropHover,
 } from './core.js'
-import { InfoPane, FilesPane, EditorPane, TermPane, WebPane, CustomPane, MediaPane, NotesPane } from './panes.js'
+import { InfoPane, FilesPane, ScmPane, EditorPane, TermPane, WebPane, CustomPane, MediaPane, NotesPane } from './panes.js'
 
 export function MainView() {
   useStore()
@@ -150,6 +150,7 @@ function Overview({ ui, geo }) {
       ),
       el('div', { className: 'dh-tools' },
         el('button', { type: 'button', className: 'mini-btn', title: '重新读取宿主会话', onClick: () => { loadSessions() } }, '↻'),
+        el('button', { type: 'button', className: 'mini-btn', title: '从 GitHub 克隆一个仓库', onClick: () => openModal('clone') }, '⑂ 克隆'),
         el('button', { type: 'button', className: 'mini-btn', title: '新建项目', onClick: () => openModal('add') }, '＋ 新建'),
         el('button', { type: 'button', className: 'mini-btn', title: '关闭工作台 (Esc)', onClick: closeOverlay }, '✕'),
       ),
@@ -711,6 +712,7 @@ export class PaneBoundary extends Component {
 
 function renderPane(kind, project) {
   if (kind === 'files') return el(FilesPane, { project })
+  if (kind === 'scm') return el(ScmPane, { project })
   if (kind === 'info') return el(InfoPane, { project })
   if (kind === 'term') return el(TermPane, { project })
   if (kind === 'web') return el(WebPane, { project })

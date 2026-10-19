@@ -13,7 +13,10 @@
  *                  GET  /fs/raw（图片 / PDF / 音视频原始字节，内嵌预览用）
  *                  POST /fs/reveal（系统文件管理器）      POST /fs/open（系统默认程序）
  *   命令           POST /term/exec（NDJSON 流）          POST /term/kill
- *   版本控制       POST /git（只读：status / log / branches）
+ *   版本控制       POST /git（op = status/log/branches/tags/diff/stage/unstage/discard/
+ *                          commit/fetch/pull/push/checkout/branch/tag/reset/init/remote）
+ *                  POST /git/clone（NDJSON 进度流）
+ *   GitHub 账号    GET  /gh/status      POST /gh/login  /gh/logout /gh/repos /gh/create /gh/upload
  *   项目静态托管   POST /project/register               GET  /site/<id>/<rel...>（prefix）
  *   浏览器窗格     POST /web/probe（活没活 / 能不能 iframe 嵌）  POST /web/open（系统浏览器）
  *   自定义窗口库   POST /custom/list  /custom/get  /custom/save  /custom/delete
@@ -32,12 +35,16 @@
  *      拒绝任何跨域 Origin —— 防 CSRF，尤其挡住恶意网页 drive-by 调 /term/exec。
  */
 import { closeSync, createReadStream, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync, appendFileSync } from 'node:fs'
-import { spawn, execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
 import { loadPty, shellSpec, openSession, getSession, peekSession, closeSession, listSessions } from './pty.js'
+import {
+  gitDispatch, normalizeCloneUrl, cloneRepo, resolveToken,
+  ghStatus, ghLogin, ghRepos, ghCreateRepo, ghUpload, clearStore,
+} from './git.js'
 
 export const name = 'trae-usage-worktable'
 export const inject = ['webServer']
@@ -66,6 +73,10 @@ const MAX_BODY_JSON = 64 * 1024
 const MAX_TERM_OUTPUT = 512 * 1024
 const TERM_TIMEOUT_MS = 120_000
 const GIT_TIMEOUT_MS = 10_000
+/* 会改动仓库 / 工作区的 git 操作：要求目录落在可写白名单内 */const GIT_WRITE_OPS = new Set([
+  'stage', 'unstage', 'discard', 'commit', 'fetch', 'pull', 'push',
+  'checkout', 'branch', 'tag', 'reset', 'init', 'remote',
+])
 /* 探测本地开发服务器：超时要短（3.5s 已经比「人觉得卡了」长） */
 const PROBE_TIMEOUT_MS = 3_500
 /* 探测时最多读多少响应体（只为了抠 <title>，不是下载页面） */
@@ -718,18 +729,125 @@ export function apply(ctx) {
     sendJson(res, 200, { ok: true, cols, rows })
   })})
 
-  /* ---------- git（只读） ---------- */
+  /* ---------- git（读写） ---------- */
 
   register({ kind: 'exact', path: BASE + '/git', handler: guard(async (req, res) => {
     if (!allowMethod(req, res, 'POST')) return
     const body = await readJson(req, res, MAX_BODY_JSON)
     if (body === undefined) return
-    const cwd = await assertExisting(body?.path, 'dir')
     const op = String(body?.op || 'status')
-    if (op === 'status') return sendJson(res, 200, await gitStatus(cwd))
-    if (op === 'log') return sendJson(res, 200, await gitLog(cwd, clampInt(body?.limit, 1, 50, 15)))
-    if (op === 'branches') return sendJson(res, 200, await gitBranches(cwd))
-    return sendJson(res, 400, { error: '未知 op：' + op })
+    /* 读操作只要不是凭证目录；改仓库的操作（暂存/提交/推送/切换…）一律要求在白名单根内 */
+    const cwd = await assertExisting(body?.path, 'dir', GIT_WRITE_OPS.has(op) ? 'write' : 'read')
+    const out = await gitDispatch(cwd, body)
+    /* 「不是 git 仓库」是正常状态（200 + repo:false），不当作错误 */
+    sendJson(res, out.ok === false ? 400 : 200, out)
+  })})
+
+  /* 克隆：流式返回进度，超时按 10 分钟算（大仓库） */
+  register({ kind: 'exact', path: BASE + '/git/clone', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const url = normalizeCloneUrl(body?.url)
+    if (!url.ok) return sendJson(res, 400, { error: url.error })
+    const dest = String(body?.dest || '').trim()
+    if (!dest) return sendJson(res, 400, { error: '请选择克隆到哪个目录' })
+    /* 目标目录可以还不存在，但它的父目录必须存在且在可写白名单内 */
+    let target
+    try {
+      target = await assertWritable(dest)
+    } catch (err) {
+      return sendJson(res, err.status || 400, { error: msg(err) })
+    }
+    if (existsSync(target)) {
+      const entries = safe(() => readdirSync(target)) || []
+      if (entries.length) return sendJson(res, 400, { error: '目标目录已存在且不是空的：' + target })
+    } else {
+      try {
+        mkdirSync(dirname(target), { recursive: true })
+      } catch (err) {
+        return sendJson(res, 400, { error: '建不了上级目录：' + msg(err) })
+      }
+    }
+    res.writeHead(200, {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-accel-buffering': 'no',
+    })
+    const timer = setTimeout(() => { try { res.end() } catch { /* 已结束 */ } }, 11 * 60_000)
+    const send = (obj) => { try { res.write(JSON.stringify(obj) + '\n') } catch { /* 客户端断了 */ } }
+    resolveToken().then(({ token }) => {
+      cloneRepo({
+        url: url.url,
+        dest: target,
+        token,
+        depth: clampInt(body?.depth, 0, 50, 0),
+        branch: String(body?.branch || ''),
+        insecure: !!body?.insecure,
+      }, (ev) => {
+        send(ev)
+        if (ev.t === 'end') {
+          clearTimeout(timer)
+          try { res.end() } catch { /* 已结束 */ }
+        }
+      })
+    })
+    req.on('close', () => clearTimeout(timer))
+  })})
+
+  /* ---------- GitHub 账号 ---------- */
+
+  register({ kind: 'exact', path: BASE + '/gh/status', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'GET', 'POST')) return
+    sendJson(res, 200, await ghStatus({ fresh: true }))
+  })})
+
+  register({ kind: 'exact', path: BASE + '/gh/login', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const out = await ghLogin(body?.token, {
+      remember: body?.remember !== false,
+      writeCredential: !!body?.writeCredential,
+    })
+    sendJson(res, out.ok ? 200 : 400, out)
+  })})
+
+  register({ kind: 'exact', path: BASE + '/gh/logout', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    clearStore()
+    sendJson(res, 200, { ok: true })
+  })})
+
+  register({ kind: 'exact', path: BASE + '/gh/repos', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'GET', 'POST')) return
+    const body = req.method === 'POST' ? (await readJson(req, res, MAX_BODY_JSON)) : {}
+    if (body === undefined) return
+    const out = await ghRepos({ q: String(body?.q || ''), page: clampInt(body?.page, 1, 50, 1) })
+    sendJson(res, out.ok ? 200 : 400, out)
+  })})
+
+  register({ kind: 'exact', path: BASE + '/gh/create', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const out = await ghCreateRepo({
+      name: String(body?.name || ''),
+      private: body?.private !== false,
+      description: String(body?.description || ''),
+      org: String(body?.org || ''),
+    })
+    sendJson(res, out.ok ? 200 : 400, out)
+  })})
+
+  /* 上传本地仓库：init → 首次提交 → 建远程 → push -u */
+  register({ kind: 'exact', path: BASE + '/gh/upload', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const cwd = await assertExisting(body?.path, 'dir', 'write')
+    const out = await ghUpload({ ...body, path: cwd })
+    sendJson(res, out.ok ? 200 : 400, out)
   })})
 
   /* ---------- 项目静态托管 ---------- */
@@ -1526,73 +1644,7 @@ function customMeta(item) {
 }
 
 /* ============================ git ============================ */
-
-function runGit(cwd, args) {
-  return new Promise((resolveP) => {
-    execFile('git', args, { cwd, timeout: GIT_TIMEOUT_MS, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
-      (err, stdout, stderr) => resolveP({
-        ok: !err,
-        code: typeof err?.code === 'number' ? err.code : (err ? -1 : 0),
-        out: String(stdout || ''),
-        err: String(stderr || (err && !stdout ? msg(err) : '')),
-      }))
-  })
-}
-
-async function gitStatus(cwd) {
-  const inside = await runGit(cwd, ['rev-parse', '--is-inside-work-tree'])
-  if (!inside.ok || !inside.out.includes('true')) {
-    return { ok: false, repo: false, error: inside.err || '不是 git 仓库' }
-  }
-  const [branch, porcelain] = await Promise.all([
-    runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']),
-    runGit(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
-  ])
-  const changes = []
-  const parts = porcelain.out.split('\0')
-  for (let i = 0; i < parts.length; i += 1) {
-    const row = parts[i]
-    if (!row || row.length < 3) continue
-    const code = row.slice(0, 2)
-    const file = row.slice(3)
-    if (code[0] === 'R' || code[0] === 'C') {
-      // -z 模式下重命名是「新路径\0旧路径」，旧路径在下一段
-      const from = parts[i + 1] || ''
-      i += 1
-      changes.push({ code, file, from })
-    } else {
-      changes.push({ code, file })
-    }
-  }
-  const staged = changes.filter((c) => c.code[0] !== ' ' && c.code[0] !== '?').length
-  const unstaged = changes.filter((c) => c.code[1] !== ' ' && c.code[0] !== '?').length
-  const untracked = changes.filter((c) => c.code === '??').length
-  return {
-    ok: true,
-    repo: true,
-    branch: branch.out.trim() || '(detached)',
-    ahead: 0,
-    changes,
-    counts: { staged, unstaged, untracked, total: changes.length },
-    at: Date.now(),
-  }
-}
-
-async function gitLog(cwd, limit) {
-  const res = await runGit(cwd, ['log', '-n', String(limit), '--date=short', '--pretty=format:%h%x1f%ad%x1f%s%x1f%an'])
-  if (!res.ok) return { ok: false, commits: [], error: res.err }
-  const commits = res.out.split('\n').filter(Boolean).map((line) => {
-    const [hash, date, subject, author] = line.split('\x1f')
-    return { hash, date, subject, author }
-  })
-  return { ok: true, commits }
-}
-
-async function gitBranches(cwd) {
-  const res = await runGit(cwd, ['branch', '--format=%(refname:short)'])
-  if (!res.ok) return { ok: false, branches: [], error: res.err }
-  return { ok: true, branches: res.out.split('\n').filter(Boolean) }
-}
+/* 实现在 src/git.js（含 GitHub 账号 / 克隆 / 上传），这里只保留分发与路径校验。 */
 
 /* ============================ 终端 ============================ */
 
@@ -1701,12 +1753,24 @@ function sanitize(text) {
 
 /* ============================ 路径沙箱 ============================ */
 
+/**
+ * realpath 的 Windows 友好版：优先用 native 实现。
+ * JS 那份只做字符串层面的 .. / 符号链接展开，**不会把 8.3 短名（JINSHU~1）还原成长名**，
+ * 于是「白名单里是 C:\Users\jinshuaiyu，请求走的是 C:\Users\JINSHU~1」就会被误判成越界。
+ */
+function realPath(p) {
+  try {
+    if (typeof realpathSync.native === 'function') return realpathSync.native(p)
+  } catch { /* 落到 JS 实现再试一次 */ }
+  return realpathSync(p)
+}
+
 function canonicalRoots() {
   const list = [process.cwd(), homedir(), process.env.DSH_HOME, ...PROJECT_ROOTS.values()]
   const out = []
   for (const item of list) {
     if (typeof item !== 'string' || !item) continue
-    try { out.push(realpathSync(item)) } catch { /* 不存在就跳过 */ }
+    try { out.push(realPath(item)) } catch { /* 不存在就跳过 */ }
   }
   return out
 }
@@ -1718,7 +1782,7 @@ function canonicalize(target) {
   const rest = []
   for (let depth = 0; depth < 64; depth += 1) {
     try {
-      return join(realpathSync(probe), ...rest.reverse())
+      return join(realPath(probe), ...rest.reverse())
     } catch {
       const parent = dirname(probe)
       if (parent === probe) return abs
@@ -1907,10 +1971,11 @@ function httpError(status, message) {
   return err
 }
 
-function allowMethod(req, res, method) {
+function allowMethod(req, res, ...methods) {
+  const list = methods.length ? methods : ['GET']
   const actual = String(req?.method || 'GET').toUpperCase()
-  if (actual === method || (method === 'GET' && actual === 'HEAD')) return true
-  sendJson(res, 405, { error: '仅支持 ' + method })
+  if (list.includes(actual) || (list.includes('GET') && actual === 'HEAD')) return true
+  sendJson(res, 405, { error: '仅支持 ' + list.join(' / ') })
   return false
 }
 

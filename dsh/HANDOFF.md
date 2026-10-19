@@ -1,6 +1,6 @@
 # 交接文档 · trae-usage-worktable（工作台）
 
-> 生成时间：2026-10-19 · 版本 **0.8.53** · 分支 `dsh-plugin`（远端默认分支）
+> 生成时间：2026-10-19 · 版本 **0.10.0** · 分支 `dsh-plugin`（远端默认分支）
 > 用途：换会话/换人接手时，靠这一份 + 仓库本身恢复全部上下文。README 讲“是什么”，这份讲“现在到哪了、怎么继续”。
 
 ---
@@ -11,13 +11,13 @@
 | --- | --- |
 | 仓库目录 | `C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh`（git 顶层是上一级 `2026-10-16-23-21-22`，插件在 `dsh/` 子目录） |
 | 远端 | `https://github.com/nscn6fdx44-crypto/dsh-worktable.git` |
-| 分支 / 最近提交 | `dsh-plugin` / 0.9.0 一个提交：`feat(0.9.0): 真 PTY 终端 + 六种布局 + 标签跨格拖` |
-| 版本 | `package.json` = `dsh.plugin.json` = **0.9.0** |
+| 分支 / 最近提交 | `dsh-plugin` / 0.10.0：`feat(0.10.0): 源代码管理窗 + GitHub 登录 / 上传 / 克隆` |
+| 版本 | `package.json` = `dsh.plugin.json` = **0.10.0** |
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
-| 运行中的实例 | `/api/trae-worktable/health` → 重启前仍是 **0.8.52**；PTY 是 host 侧改动，**必须完整重启 DSH** 才生效 |
-| 自测基线 | host **140** + client **518** 全通过（`npm test`） |
-| tag | `v0.9.0` **已打并推送**（带注释，指向 `8e3d8a5`） |
-| Release | `v0.9.0` **已发布**，附件 `trae-usage-worktable-0.9.0.tgz`（224018 字节，sha256 `ec7fc69e…b955e1`）下载回本地逐字节校验一致 |
+| 运行中的实例 | 客户端会热更，但 **host 路由必须完整重启 DSH** 才生效（`/gh/status` 在旧实例上会是 401/404） |
+| 自测基线 | host **159** + client **545** 全通过（`npm test`） |
+| tag | `v0.10.0` 待打（提交后打 tag 并推送） |
+| Release | `v0.10.0` 待发布；包 `trae-usage-worktable-0.10.0.tgz`（247070 字节，sha256 `89211334…040b`）已打包 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
 
 ---
@@ -196,7 +196,11 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 
 ## 9. 下一步建议（按优先级）
 
-0. **0.9.0 真机验收（只有这一条必须人点）**：重启 DSH 后看终端工具条 `PTY` 徽标是否点亮 →
+0. **0.10.0 真机验收（只有这一条必须人点）**：重启 DSH 后 → 项目里开「⑂ 源代码管理」→
+   改个文件看它进「未暂存的改动」→ 行内 ＋ 暂存 → 写说明提交 → 「推送」→ GitHub 条应自动认出本机账号
+   （来源 git-credential）→ 「克隆」能列出仓库 → 总览「⑂ 克隆」填 owner/repo 能实时刷进度。
+   **未验证项**：`/gh/upload`（会真的在你账号下建仓库，第一次用请自己确认仓库名与可见性）。
+1. ~~0.9.0 真机验收~~：重启 DSH 后看终端工具条 `PTY` 徽标是否点亮 →
    `python` 进 REPL 能交互 → `Ctrl+C` 退 REPL 但 shell 还在 → 切标签页再切回输出还在 →
    切「▤ 上一下二 / ▥ 三列 / ▦ 四格」每格都有内容 → 拖标签跨格互换。
    顺手看一眼 `GET /api/trae-worktable/term/mode` 的 `ok/from`，能直接看出用的是哪份 node-pty；

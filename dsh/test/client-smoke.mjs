@@ -67,6 +67,10 @@ const fakeJs = { path: 'C:\\projects\\smart-car\\app.js', name: 'app.js', size: 
 const fakeGit = { ok: true, repo: true, branch: 'main', changes: [{ code: ' M', file: 'main.c' }], counts: { staged: 0, unstaged: 1, untracked: 0, total: 1 } }
 const fakeGitLog = { ok: true, commits: [{ hash: 'a1b2c3d', date: '2026-10-01', subject: '整理构建脚本', author: 'demo' }] }
 const fakeGitBranches = { ok: true, branches: ['main'] }
+/* 源代码管理：记录每次 op，登录态可切换 */
+const gitOps = []
+let ghLoggedIn = false
+let ghStatusError = ''
 
 const sessionCreates = []
 let lastListPath = ''
@@ -204,6 +208,55 @@ globalThis.fetch = async (url, opts) => {
     if (idx !== -1) customStore.splice(idx, 1)
     const body = { ok: true, id: req.id }
     return { ok: true, status: 200, json: async () => body, text: async () => '{}' }
+  }
+  /* ---------- 源代码管理 / GitHub 的桩 ---------- */
+  if (u.endsWith('/gh/status')) {
+    const body = ghLoggedIn
+      ? { loggedIn: true, source: 'stored', login: 'demo-user', name: 'Demo', avatar: '', scopes: 'repo', error: '' }
+      : { loggedIn: false, source: '', login: '', scopes: '', error: ghStatusError }
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+  }
+  if (u.endsWith('/gh/repos')) {
+    const body = { ok: true, repos: [{ name: 'demo', fullName: 'demo-user/demo', private: true, cloneUrl: 'https://github.com/demo-user/demo.git', updatedAt: '2026-10-01T00:00:00Z' }] }
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+  }
+  if (u.endsWith('/gh/login')) {
+    ghLoggedIn = true
+    const body = { ok: true, login: 'demo-user', scopes: 'repo' }
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+  }
+  if (u.endsWith('/git/clone')) {
+    const nd = '{"t":"out","line":"Cloning into…"}\n' + JSON.stringify({ t: 'end', ok: true, path: '/demo/cloned' }) + '\n'
+    return { ok: true, status: 200, text: async () => nd }
+  }
+  if (u.endsWith('/git')) {
+    let req = {}
+    try { req = JSON.parse(String(opts?.body || '{}')) } catch { /* ignore */ }
+    gitOps.push(req)
+    if (req.op === 'status') {
+      const body = {
+        ok: true, repo: true, branch: 'main', detached: false, unborn: false, head: 'a1b2c3d',
+        ahead: 2, behind: 1, upstream: 'origin/main', remote: 'https://github.com/demo-user/demo.git',
+        changes: [
+          { code: 'M ', file: 'staged.js' },
+          { code: ' M', file: 'dirty.js' },
+          { code: '??', file: 'brand-new.txt' },
+        ],
+        counts: { staged: 1, unstaged: 1, untracked: 1, conflicts: 0, total: 3 },
+        log: fakeGitLog.commits,
+        branches: [{ name: 'main', hash: 'a1b2c3d', current: true }, { name: 'dev', hash: 'e4f5g6h', current: false }],
+        remoteBranches: [{ name: 'origin/main', hash: 'a1b2c3d' }],
+        tags: [{ name: 'v1.0.0', hash: 'a1b2c3d', date: '2026-10-01' }],
+        remotes: [{ name: 'origin', url: 'https://github.com/demo-user/demo.git', push: '' }],
+      }
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+    }
+    if (req.op === 'diff') {
+      const body = { ok: true, diff: '--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n', binary: false, truncated: false }
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+    }
+    const body = { ok: true }
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
   }
   const body = u.endsWith('/sessions') ? fakeSessions
     : u.endsWith('/defaults') ? fakeDefaults
@@ -1977,6 +2030,85 @@ check('网页地址可拖拽', !!wbUrl && wbUrl.props.draggable === 'true' && ty
 check('浏览器有「发到对话」按钮', allByClass(webTree, /(^|\s)wb-to-chat(\s|$)/).length === 1, '')
 const head = allByClass(webTree, /(^|\s)dock-head(\s|$)/)[0]
 check('顶栏是拖放接收区', !!head && typeof head.props.onDrop === 'function' && typeof head.props.onDragOver === 'function', '')
+
+/* ---------- ⑨ 源代码管理 / GitHub ---------- */
+
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+
+await mod.loadScm(pid6)
+const scm0 = mod.scmOf(pid6)
+check('scm 读到仓库状态', scm0.repo === true && scm0.branch === 'main', scm0.branch)
+check('scm 三段计数正确', scm0.counts.staged === 1 && scm0.counts.unstaged === 1 && scm0.counts.untracked === 1, JSON.stringify(scm0.counts))
+check('scm 带 log / branches / tags / remotes',
+  scm0.log.length === 1 && scm0.branches.length === 2 && scm0.tags.length === 1 && scm0.remotes.length === 1)
+check('scm 记下上游与领先落后', scm0.ahead === 2 && scm0.behind === 1 && scm0.upstream === 'origin/main', scm0.ahead + '/' + scm0.behind)
+
+mod.openTab(pid6, 'scm')
+const scmTree = render(overlayComp)
+check('源代码管理是独立标签页', textOf(scmTree).includes('源代码管理'), '')
+check('scm 头显示分支与同步差距', textOf(scmTree).includes('⑂ main') && textOf(scmTree).includes('↑2'), '')
+check('scm 三段分组都渲染', textOf(scmTree).includes('暂存的改动') && textOf(scmTree).includes('未暂存的改动') && textOf(scmTree).includes('未跟踪的文件'), '')
+check('scm 有提交输入框与提交按钮',
+  allByClass(scmTree, /(^|\s)scm-msg(\s|$)/).length === 1 && collect(scmTree).some((n) => textOf(n).trim() === '提交'), '')
+check('scm 顶栏有取回/拉取/推送', textOf(scmTree).includes('取回') && textOf(scmTree).includes('拉取') && textOf(scmTree).includes('推送'), '')
+check('scm 改动行可点开 diff', allByClass(scmTree, /(^|\s)scm-file(\s|$)/).length === 3, String(allByClass(scmTree, /(^|\s)scm-file(\s|$)/).length))
+
+await mod.scmStage(pid6, ['dirty.js'])
+check('暂存发 op=stage 且带上文件',
+  gitOps.some((o) => o.op === 'stage' && Array.isArray(o.files) && o.files.includes('dirty.js')), 'ops=' + gitOps.map((o) => o.op).join(','))
+
+await mod.scmUnstage(pid6, ['staged.js'])
+check('取消暂存发 op=unstage', gitOps.some((o) => o.op === 'unstage' && o.files.includes('staged.js')), '')
+
+await mod.scmCommit(pid6, { message: '这次改了什么' })
+check('提交发 op=commit + 说明', gitOps.some((o) => o.op === 'commit' && o.message === '这次改了什么'), '')
+
+await mod.scmPush(pid6)
+check('推送发 op=push', gitOps.some((o) => o.op === 'push' && o.remote === 'origin'), '')
+await mod.scmPush(pid6) /* 空说明提交不该发请求：下面单独验 */
+
+const commitCountBefore = gitOps.filter((o) => o.op === 'commit').length
+await mod.scmCommit(pid6, { message: '   ' })
+check('空提交说明不发请求', gitOps.filter((o) => o.op === 'commit').length === commitCountBefore, '')
+
+await mod.scmDiff(pid6, 'dirty.js')
+check('diff 结果写进 store', mod.store.scm.diff.state === 'ok' && mod.store.scm.diff.text.includes('+new'), mod.store.scm.diff.state)
+const scmTree2 = render(overlayComp)
+check('diff 面板渲染出来', allByClass(scmTree2, /(^|\s)scm-diff(\s|$)/).length === 1 && textOf(scmTree2).includes('+new'), '')
+
+mod.scmSetView(pid6, 'branches')
+const scmBrTree = render(overlayComp)
+check('分支视图列出本地/远程/标签',
+  textOf(scmBrTree).includes('本地分支') && textOf(scmBrTree).includes('远程分支') && textOf(scmBrTree).includes('标签'), '')
+mod.scmSetView(pid6, 'history')
+const scmHiTree = render(overlayComp)
+check('历史视图列出提交并可回退', textOf(scmHiTree).includes('整理构建脚本') && textOf(scmHiTree).includes('回退'), '')
+mod.scmSetView(pid6, 'changes')
+
+/* GitHub 账号 */
+await mod.loadGh()
+check('未登录时 gh.loggedIn=false', mod.store.gh.state === 'ok' && mod.store.gh.loggedIn === false, mod.store.gh.error)
+const ghBarTree = render(overlayComp)
+check('未登录时显示「登录 GitHub」', textOf(ghBarTree).includes('未登录 GitHub') && textOf(ghBarTree).includes('登录 GitHub'), '')
+
+await mod.ghLogin('ghp_abcdefghijklmnopqrstuvwxyz012345')
+check('登录后 gh.loggedIn=true 且有 login', mod.store.gh.loggedIn === true && mod.store.gh.login === 'demo-user', mod.store.gh.login)
+const ghBarTree2 = render(overlayComp)
+check('登录后显示账号与「上传仓库」', textOf(ghBarTree2).includes('demo-user') && textOf(ghBarTree2).includes('上传仓库'), '')
+
+mod.openModal('ghlogin', pid6)
+check('登录弹窗可打开', mod.store.modal && mod.store.modal.kind === 'ghlogin', JSON.stringify(mod.store.modal || null))
+mod.openModal('ghupload', pid6)
+check('上传弹窗可打开', mod.store.modal && mod.store.modal.kind === 'ghupload', '')
+mod.openModal('clone')
+check('克隆弹窗可打开', mod.store.modal && mod.store.modal.kind === 'clone', '')
+mod.closeModal()
+
+/* 克隆：读 NDJSON 拿 end.path */
+const cl = await mod.cloneRepo({ url: 'demo-user/demo', dest: '/demo/cloned' }, () => {})
+check('克隆流读到结束事件与落盘路径', cl && cl.ok === true && cl.path === '/demo/cloned', JSON.stringify(cl || null))
 
 const failed = results.filter((r) => !r)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)

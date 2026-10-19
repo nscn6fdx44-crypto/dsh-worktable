@@ -2,7 +2,7 @@
  * 小窗：新建项目 / 编辑项目 / 管理对话绑定。
  * 全部只写 localStorage（项目元数据），不动磁盘。
  */
-import { useState, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { el, Modal, Light } from './ui.js'
 import {
   store, useStore, STATES, normState,
@@ -11,6 +11,8 @@ import {
   createSessionInDir, jumpToSession, toast, ACCENTS, BACKDROPS, setTheme, resetTheme, store as coreStore,
   enterProject, projEmoji, switchHostSession, PROJECT_TEMPLATES, templateOf, applyTemplate,
   exportSnapshotText, importSnapshot, setSideProject,
+  joinPath, baseName,
+  ghLogin, ghLogout, loadGh, loadGhRepos, ghUploadRepo, cloneRepo, loadScm, scmOf, setScmInsecure,
 } from './core.js'
 import { dockAspect } from './hostdock.js'
 
@@ -28,6 +30,9 @@ export function ModalHost() {
   if (modal.kind === 'search') return el(SearchModal)
   if (modal.kind === 'data') return el(DataModal)
   if (modal.kind === 'side') return el(SideModal)
+  if (modal.kind === 'ghlogin') return el(GhLoginModal)
+  if (modal.kind === 'ghupload') return el(GhUploadModal, { pid: modal.pid })
+  if (modal.kind === 'clone') return el(CloneModal)
   return null
 }
 
@@ -606,5 +611,332 @@ function BindModal({ pid }) {
         })
         : el('div', { className: 'empty' }, state === 'pending' ? '读取中…' : '宿主没有返回任何会话'),
     ),
+  )
+}
+
+/* ---------- GitHub ---------- */
+
+const TOKEN_URL = 'https://github.com/settings/tokens/new?scopes=repo,workflow&description=trae-usage-worktable'
+
+/**
+ * 登录 GitHub。
+ *
+ * 只支持「粘贴令牌」一种方式：device flow 需要一个第三方 OAuth App 的 client_id，
+ * 借用别家的不合适，自己申请一个又得每个用户去注册。令牌这条路最稳、离线可用，
+ * 而且本机已经登录过 git 的用户根本不用走这一步（/gh/status 会自动识别）。
+ */
+function GhLoginModal() {
+  useStore()
+  const gh = store.gh
+  const [token, setToken] = useState('')
+  const [remember, setRemember] = useState(true)
+  const [writeCredential, setWriteCredential] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const submit = async () => {
+    if (busy || !token.trim()) return
+    setBusy(true)
+    const out = await ghLogin(token.trim(), { remember, writeCredential })
+    setBusy(false)
+    if (out) { setToken(''); closeModal() }
+  }
+
+  const foot = gh.loggedIn
+    ? [
+      el('button', { key: 'c', type: 'button', className: 'btn', onClick: closeModal }, '关闭'),
+      el('button', {
+        key: 'o', type: 'button', className: 'btn',
+        onClick: async () => { await ghLogout(); closeModal() },
+      }, '退出登录'),
+    ]
+    : [
+      el('button', { key: 'c', type: 'button', className: 'btn', onClick: closeModal }, '取消'),
+      el('button', {
+        key: 's', type: 'button', className: 'btn primary',
+        disabled: busy || !token.trim(), onClick: submit,
+      }, busy ? '校验中…' : '登录'),
+    ]
+
+  if (gh.loggedIn) {
+    return el(Modal, {
+      title: 'GitHub 账号',
+      subtitle: '当前已登录。令牌只存在本机，界面上不会再显示它。',
+      foot,
+    },
+      el('div', { className: 'gh-me' },
+        gh.avatar ? el('img', { className: 'gh-avatar', src: gh.avatar, alt: '' }) : el('span', { className: 'gh-avatar ph' }, '●'),
+        el('div', null,
+          el('b', null, gh.login || ''),
+          el('p', { className: 'wt-mute' }, '来源：' + (gh.source === 'stored' ? '本插件保存的令牌' : gh.source === 'git-credential' ? '本机 git 已登录的凭据' : gh.source || '—')),
+          el('p', { className: 'wt-mute mono' }, '权限：' + (gh.scopes || '未知（细粒度令牌不返回 scopes）')),
+        ),
+      ),
+      el('p', { className: 'field-hint' }, '退出登录只会清掉本插件保存的令牌，不会动本机 git / 凭据管理器里的账号。'),
+    )
+  }
+
+  return el(Modal, {
+    title: '登录 GitHub',
+    subtitle: '登录后才能建仓库、列仓库、上传项目。纯本地提交推送不需要登录。',
+    foot,
+  },
+    el('div', { className: 'field' },
+      el('label', null, 'Personal Access Token'),
+      el('input', {
+        className: 'mono', value: token, autoComplete: 'off', type: 'password',
+        placeholder: 'ghp_… / github_pat_…',
+        onChange: (e) => setToken(e.target.value),
+        onKeyDown: (e) => { if (e.key === 'Enter') submit() },
+      }),
+      el('div', { className: 'field-hint' },
+        '到 ',
+        el('a', { href: TOKEN_URL, target: '_blank', rel: 'noreferrer' }, 'github.com/settings/tokens'),
+        ' 新建一个令牌，勾 ',
+        el('code', null, 'repo'),
+        '（要推 Actions 工作流再加 ',
+        el('code', null, 'workflow'),
+        '）。它只会存进本机的 DSH 配置目录（权限 0600）。',
+      ),
+    ),
+    el('div', { className: 'field' },
+      el('label', null, '选项'),
+      el('label', { className: 'chk' },
+        el('input', { type: 'checkbox', checked: remember, onChange: (e) => setRemember(e.target.checked) }),
+        el('span', null, '记住令牌（下次启动自动登录）'),
+      ),
+      el('label', { className: 'chk' },
+        el('input', { type: 'checkbox', checked: writeCredential, onChange: (e) => setWriteCredential(e.target.checked) }),
+        el('span', null, '同时写进系统凭据管理器（内置终端里敲 git push 也不用再输密码）'),
+      ),
+    ),
+    gh.error ? el('p', { className: 'wt-bad' }, gh.error) : null,
+    el('p', { className: 'field-hint' }, '提示：如果本机 git 已经登录过 GitHub，打开这个窗格时会自动识别，不用再粘令牌。'),
+  )
+}
+
+/** 上传仓库：建远程 + 首推 */
+function GhUploadModal({ pid }) {
+  useStore()
+  const project = pid ? projectOf(pid) : null
+  const scm = pid ? scmOf(pid) : null
+  const gh = store.gh
+  const [name, setName] = useState(project ? String(project.name || '').replace(/\s+/g, '-').toLowerCase() : '')
+  const [isPrivate, setPrivate] = useState(true)
+  const [description, setDescription] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState(null)
+
+  const submit = async () => {
+    if (busy || !pid) return
+    setBusy(true)
+    const out = await ghUploadRepo(pid, { name, private: isPrivate, description })
+    setBusy(false)
+    if (out) {
+      setResult(out)
+      loadScm(pid)
+    }
+  }
+
+  const foot = result
+    ? [
+      el('button', { key: 'c', type: 'button', className: 'btn', onClick: closeModal }, '关闭'),
+      result.repo?.htmlUrl
+        ? el('a', { key: 'o', className: 'btn primary', href: result.repo.htmlUrl, target: '_blank', rel: 'noreferrer' }, '在 GitHub 打开')
+        : null,
+    ]
+    : [
+      el('button', { key: 'c', type: 'button', className: 'btn', onClick: closeModal }, '取消'),
+      el('button', {
+        key: 's', type: 'button', className: 'btn primary',
+        disabled: busy || !name.trim(), onClick: submit,
+      }, busy ? '上传中…（首次推送可能较慢）' : '建仓并上传'),
+    ]
+
+  if (result) {
+    return el(Modal, { title: '已上传', subtitle: result.remote || '', foot },
+      el('div', { className: 'gh-steps' },
+        (result.steps || []).map((s, i) => el('div', { key: i, className: 'gh-step' }, el('span', null, '✓'), el('span', null, s))),
+      ),
+      el('p', { className: 'mono wt-mute' }, '分支：' + (result.branch || '—')),
+      el('p', { className: 'field-hint' }, '以后在这里改完，点「提交并推送」就能同步。'),
+    )
+  }
+
+  return el(Modal, {
+    title: '上传项目到 GitHub',
+    subtitle: project ? (project.alias || project.name) + ' · ' + shortPath(project.path || '', 60) : '',
+    foot,
+  },
+    gh.loggedIn
+      ? el('p', { className: 'wt-mute' }, '将以 ' + gh.login + ' 的身份新建一个仓库，并把当前分支推上去。')
+      : el('p', { className: 'wt-bad' }, '还没登录 GitHub —— 先关掉这个窗，点「登录 GitHub」。'),
+    el('div', { className: 'field' },
+      el('label', null, '仓库名'),
+      el('input', {
+        className: 'mono', value: name, autoComplete: 'off',
+        onChange: (e) => setName(e.target.value),
+        onKeyDown: (e) => { if (e.key === 'Enter') submit() },
+      }),
+      el('div', { className: 'field-hint' }, '如果本地已经配了 origin，会沿用那个远程仓库，不会重复建。'),
+    ),
+    el('div', { className: 'field' },
+      el('label', null, '描述（可选）'),
+      el('input', { value: description, autoComplete: 'off', onChange: (e) => setDescription(e.target.value) }),
+    ),
+    el('div', { className: 'field' },
+      el('label', null, '可见性'),
+      el('div', { className: 'tpl-row' },
+        el('button', { type: 'button', className: 'tpl' + (isPrivate ? ' on' : ''), onClick: (e) => { e.preventDefault(); setPrivate(true) } }, el('b', null, '🔒 私有')),
+        el('button', { type: 'button', className: 'tpl' + (!isPrivate ? ' on' : ''), onClick: (e) => { e.preventDefault(); setPrivate(false) } }, el('b', null, '🌐 公开')),
+      ),
+    ),
+    el('div', { className: 'field' },
+      el('label', null, '会做这几件事'),
+      el('div', { className: 'gh-steps' },
+        ['git init（已有仓库就跳过）', '没有提交就提交一次「初始提交」', '在 GitHub 建同名仓库，设为 origin', 'push -u origin ' + ((scm && scm.branch) || '当前分支')]
+          .map((s, i) => el('div', { key: i, className: 'gh-step' }, el('span', null, String(i + 1) + '.'), el('span', null, s))),
+      ),
+      el('div', { className: 'field-hint' }, '不会改动你的 .gitignore；如果项目里有 node_modules 之类的大目录，先自己加进去再上传。'),
+    ),
+  )
+}
+
+/* ---------- 克隆 ---------- */
+
+function repoNameOf(url) {
+  const s = String(url || '').trim().replace(/[\\/]+$/, '')
+  const tail = s.split(/[\\/:]+/).filter(Boolean).pop() || 'repo'
+  return tail.replace(/\.git$/i, '')
+}
+
+function CloneModal() {
+  useStore()
+  const gh = store.gh
+  const [url, setUrl] = useState('')
+  const [parent, setParent] = useState(String(store.defaults.workspace || ''))
+  const [branch, setBranch] = useState('')
+  const [shallow, setShallow] = useState(false)
+  const [insecure, setInsecure] = useState(store.scm.insecure === true)
+  const [busy, setBusy] = useState(false)
+  const [lines, setLines] = useState([])
+  const [error, setError] = useState('')
+  const [showList, setShowList] = useState(false)
+  const [q, setQ] = useState('')
+
+  const name = repoNameOf(url)
+  const dest = parent ? joinPath(parent, name) : ''
+
+  useEffect(() => { if (gh.state === 'idle') loadGh() }, [])
+  useEffect(() => {
+    if (showList && gh.reposState === 'idle') loadGhRepos({ q: gh.q || '' })
+  }, [showList])
+
+  const start = async () => {
+    if (busy) return
+    if (!url.trim()) { setError('请填写仓库地址'); return }
+    if (!dest) { setError('请填写克隆到哪个目录'); return }
+    setBusy(true); setError(''); setLines([])
+    try {
+      const out = await cloneRepo(
+        { url: url.trim(), dest, depth: shallow ? 1 : 0, branch: branch.trim(), insecure },
+        (line) => setLines((cur) => cur.concat([line]).slice(-40)),
+      )
+      const pid = addProject({ name: name, path: out.path || dest })
+      toast('已克隆到 ' + (out.path || dest), 'ok')
+      closeModal()
+      if (pid) enterProject(pid)
+    } catch (err) {
+      setError(String(err?.message ?? err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const foot = [
+    el('button', { key: 'c', type: 'button', className: 'btn', onClick: closeModal }, '取消'),
+    el('button', {
+      key: 's', type: 'button', className: 'btn primary',
+      disabled: busy || !url.trim(), onClick: start,
+    }, busy ? '克隆中…' : '克隆'),
+  ]
+
+  return el(Modal, {
+    title: '克隆 GitHub 仓库',
+    subtitle: '克隆完成后会自动建成一个项目并打开。私有仓库需要先登录。',
+    wide: true,
+    foot,
+  },
+    el('div', { className: 'field' },
+      el('label', null, '仓库地址'),
+      el('input', {
+        className: 'mono', value: url, autoComplete: 'off',
+        placeholder: 'https://github.com/owner/repo.git 或 owner/repo',
+        onChange: (e) => setUrl(e.target.value),
+        onKeyDown: (e) => { if (e.key === 'Enter') start() },
+      }),
+      gh.loggedIn
+        ? el('div', { className: 'field-hint' },
+          el('button', {
+            type: 'button', className: 'mini-btn',
+            onClick: (e) => { e.preventDefault(); setShowList((v) => !v) },
+          }, showList ? '收起我的仓库' : '从我的仓库里选（' + gh.login + '）'),
+        )
+        : el('div', { className: 'field-hint' }, '未登录也能克隆公开仓库；私有仓库要先登录。'),
+    ),
+    showList
+      ? el('div', { className: 'gh-repos' },
+        el('div', { className: 'gh-repos-head' },
+          el('input', {
+            className: 'scm-input mono', placeholder: '搜仓库名…', value: q,
+            onChange: (e) => { setQ(e.target.value); loadGhRepos({ q: e.target.value }) },
+          }),
+          el('button', { type: 'button', className: 'mini-btn', onClick: () => loadGhRepos({ q }) }, '↻'),
+        ),
+        gh.reposState === 'loading'
+          ? el('p', { className: 'wt-mute' }, '读取中…')
+          : gh.reposState === 'error'
+            ? el('p', { className: 'wt-bad' }, gh.reposError || '读取失败')
+            : gh.repos.length
+              ? gh.repos.slice(0, 40).map((r) => el('button', {
+                key: r.fullName, type: 'button', className: 'gh-repo',
+                onClick: (e) => { e.preventDefault(); setUrl(r.cloneUrl); setShowList(false) },
+              },
+                el('span', { className: 'mono' }, r.fullName),
+                r.private ? el('span', { className: 'tag' }, '私有') : null,
+                el('span', { className: 'gc-date mono' }, (r.updatedAt || '').slice(0, 10)),
+              ))
+              : el('p', { className: 'wt-mute' }, '没有匹配的仓库'),
+      )
+      : null,
+    el('div', { className: 'field' },
+      el('label', null, '克隆到'),
+      el('input', {
+        className: 'mono', value: parent, autoComplete: 'off',
+        placeholder: 'C://Users//你的用户名//projects',
+        onChange: (e) => setParent(e.target.value),
+      }),
+      dest ? el('div', { className: 'field-hint mono' }, '将创建：' + dest) : null,
+    ),
+    el('div', { className: 'field' },
+      el('label', null, '选项'),
+      el('label', { className: 'chk' },
+        el('input', { type: 'checkbox', checked: shallow, onChange: (e) => setShallow(e.target.checked) }),
+        el('span', null, '浅克隆（--depth 1，只取最新一个提交，大仓库快很多）'),
+      ),
+      el('input', {
+        className: 'scm-input mono', value: branch, placeholder: '只克隆某个分支（可留空）',
+        onChange: (e) => setBranch(e.target.value),
+      }),
+      el('label', { className: 'chk' },
+        el('input', {
+          type: 'checkbox', checked: insecure,
+          onChange: (e) => { setInsecure(e.target.checked); setScmInsecure(e.target.checked) },
+        }),
+        el('span', null, '跳过证书校验（本机报 CRYPT_E_NO_REVOCATION_CHECK 时才用）'),
+      ),
+      el('div', { className: 'field-hint' }, '默认先只关吊销检查；仍失败才用「跳过证书校验」。这个开关会记住，推送 / 拉取也一起生效。'),
+    ),
+    lines.length ? el('pre', { className: 'gh-log mono' }, lines.join('\n')) : null,
+    error ? el('p', { className: 'wt-bad' }, error) : null,
   )
 }

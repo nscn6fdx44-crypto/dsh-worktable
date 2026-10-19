@@ -1,7 +1,7 @@
 {
   "name": "trae-usage-worktable",
   "description": "工作台：DSH 侧边栏的完整工作台 UI，含项目列表、卡片网格与控制室会话统计",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "entry": {
     "name": "trae-usage-worktable",
     "inject": []
