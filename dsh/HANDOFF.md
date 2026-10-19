@@ -14,10 +14,10 @@
 | 分支 / 最近提交 | `dsh-plugin` / 0.10.1：`feat(0.10.1): 取消初始化（删 .git）` |
 | 版本 | `package.json` = `dsh.plugin.json` = **0.10.1** |
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
-| 运行中的实例 | 客户端会热更，但 **host 路由必须完整重启 DSH** 才生效（`/gh/status` 在旧实例上会是 401/404） |
+| 运行中的实例 | 客户端会热更，但 **host 路由必须完整重启 DSH** 才生效（`/gh/status`、`op:uninit` 在旧实例上会 401/404） |
 | 自测基线 | host **166** + client **548** 全通过（`npm test`） |
-| tag | `v0.10.0` 已发（`88c22f9`）；`v0.10.1` 待打 |
-| Release | `v0.10.0` 已发（id 417235810）；`v0.10.1` 待发布，包 `trae-usage-worktable-0.10.1.tgz`（248340 字节，sha256 `3596d368…4c14`）已打包 |
+| tag | `v0.10.0` 已发（`88c22f9`）；`v0.10.1` **已打并推送**（带注释，指向 `d71172e`） |
+| Release | 都已发布：`v0.10.0`（id 417235810）、`v0.10.1`（id 417246640）；后者附件 `trae-usage-worktable-0.10.1.tgz`（248340 字节，sha256 `3596d368…4c14`）下载回本地逐字节校验一致 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
 
 ---
