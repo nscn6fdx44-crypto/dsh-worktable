@@ -1850,6 +1850,25 @@ check('从来没有过宽度时才 ready:false', none.ready === false && none.wi
 const keptOnFail = mod.pickDock(good, { ready: false, width: 0 })
 check('测量抛错也沿用上次区域', keptOnFail.width === 980 && keptOnFail.stale === true, JSON.stringify({ w: keptOnFail.width, s: keptOnFail.stale }))
 
+/* ---------- ㉖ 未锚定宿主时不许铺满整窗 ---------- */
+const box1 = mod.undockedBox(1600, 1000)
+check('未锚定：宽度按比例且有上限', box1.width === 1056 && box1.left === 0 && box1.height === 1000, JSON.stringify(box1))
+check('未锚定：右侧一定留空（width < vw）', box1.width < 1600, String(box1.width))
+const box2 = mod.undockedBox(0, 0)
+check('未锚定：尺寸异常时用兜底', box2.width > 0 && box2.height === 800, JSON.stringify(box2))
+const box3 = mod.undockedBox(4000, 1200)
+check('未锚定：超宽屏也封在 1180', box3.width === 1180, String(box3.width))
+
+/* 渲染层：没有宿主几何时 dock 必须是 is-undocked + 有界宽度，而不是 inset:0 */
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+const undockedTree = render(overlayComp)
+const dockNode = allByClass(undockedTree, /(^|\s)wt-dock(\s|$)/)[0]
+check('dock 用 is-undocked（不再 is-full）', !!dockNode && String(dockNode.props.className).includes('is-undocked'), dockNode ? String(dockNode.props.className) : '')
+check('dock 宽度是有界值而非铺满', !!dockNode && Number(String(dockNode.props.style.width).replace('px', '')) > 0, dockNode ? JSON.stringify(dockNode.props.style) : '')
+check('样式里有 is-undocked 规则', (styleNodes[0] && styleNodes[0].textContent || '').includes('is-undocked'), '')
+
 const failed = results.filter((r) => !r)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)
 process.exit(failed.length ? 1 : 0)

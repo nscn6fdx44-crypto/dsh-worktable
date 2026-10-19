@@ -11,7 +11,7 @@
 import { Component, useRef } from 'react'
 import { el, Light, Splitter, ContextMenu, Toasts } from './ui.js'
 import { ModalHost } from './modals.js'
-import { useHostDock, remeasure } from './hostdock.js'
+import { useHostDock, remeasure, undockedBox } from './hostdock.js'
 import {
   store, useStore, STATES, normState, PANE_TABS, INFO_TAB, GRID_TABS, GRID_PID,
   fmtDuration, relTime, shortPath, projEmoji, openGrid, enterProject, closeOverlay,
@@ -45,9 +45,12 @@ export function MainView() {
   if (!open) return null
 
   /* 锚点没找到（宿主改版）时退回整块覆盖：功能不受影响，只是看不到右侧对话 */
+  /* 有几何就按几何摆；完全没有几何时用「有界盒子」，绝不 inset:0 铺满整窗 */
+  const vw = (typeof window !== 'undefined' && window.innerWidth) || 1280
+  const vh = (typeof window !== 'undefined' && window.innerHeight) || 800
   const style = dockedFit
     ? { left: geo.left + 'px', top: geo.top + 'px', width: geo.width + 'px', height: geo.height + 'px' }
-    : null
+    : undockedBox(vw, vh)
 
   return el('div', {
     className: 'wt-scope wt-root',
@@ -58,7 +61,7 @@ export function MainView() {
     ...themeAttrs(),
   },
     el('div', {
-      className: 'wt-dock' + (dockedFit ? ' is-docked' : ' is-full'),
+      className: 'wt-dock' + (dockedFit ? ' is-docked' : ' is-undocked'),
       style,
       role: 'region',
       'aria-label': '工作台',

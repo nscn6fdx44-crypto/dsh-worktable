@@ -178,6 +178,16 @@ export function releaseDock() {
   lastGood = { ready: true, left: 0, top: 0, width: 0, height: 0, track: 0, max: 0 }
 }
 
+/**
+ * 纯函数：没锚上宿主对话区时，工作台该占多大。
+ * 绝不能是 inset:0（会盖住侧边栏和对话）——退成「按比例占左半，留出右边」。
+ */
+export function undockedBox(vw, vh) {
+  const w = Math.max(320, Math.round((Number(vw) || 1280) * 0.66))
+  const h = Math.max(240, Math.round(Number(vh) || 800))
+  return { left: 0, top: 0, width: Math.min(w, 1180), height: h }
+}
+
 /** 让 UI 手动重测（宿主布局变了之后） */
 export function remeasure() {
   if (!host.ready) return geo
@@ -207,13 +217,6 @@ export function useHostDock(rootRef, active, preferred) {
       return undefined
     }
 
-    if (!attachHost(rootRef && rootRef.current)) {
-      /* 宿主改版导致锚点找不到：不硬挤，降级成整块覆盖（功能不受影响，只是看不到对话） */
-      last.current.ready = false
-      setSnap({ ...geo, ready: false, width: 0 })
-      return undefined
-    }
-
     const update = () => {
       const base = measure()
       const { width } = computeDock({ track: base.track, preferred })
@@ -223,6 +226,27 @@ export function useHostDock(rootRef, active, preferred) {
       if (prev.width !== next.width || prev.left !== next.left || prev.top !== next.top || prev.height !== next.height) {
         setSnap({ ...next })
       }
+    }
+
+    if (!attachHost(rootRef && rootRef.current)) {
+      /* 锚点暂时找不到（宿主开预览 / 换面板 / 侧边栏动画中）：
+         1) 有过几何就沿用上次区域，绝不铺满整窗；
+         2) 同时后台重试几轮，宿主结构恢复了就自动贴回去。 */
+      const fallback = pickDock(lastGood, { ready: false, width: 0 })
+      last.current = { width: fallback.width, left: fallback.left, top: fallback.top, height: fallback.height, ready: fallback.ready }
+      setSnap({ ...fallback })
+      let tries = 0
+      let timer = 0
+      const retry = () => {
+        tries += 1
+        if (attachHost(rootRef && rootRef.current)) {
+          update()
+          return
+        }
+        if (tries < 8) timer = window.setTimeout(retry, 300)
+      }
+      timer = window.setTimeout(retry, 300)
+      return () => { if (timer) window.clearTimeout(timer) }
     }
 
     update()

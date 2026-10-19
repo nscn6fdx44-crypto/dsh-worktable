@@ -1329,3 +1329,10 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
   flex: none; margin-left: 4px; font-size: 10px; padding: 3px 7px;
   color: #ffd9a0; border-color: rgba(232, 115, 74, .45); background: rgba(232, 115, 74, .16);
 }
+/* 没锚上宿主对话区：按比例占左边，右侧留空（绝不铺满整窗） */
+.wt-scope .wt-dock.is-undocked {
+  position: absolute;
+  border-right: 1px solid rgba(var(--amber-rgb), .35);
+  box-shadow: 24px 0 60px -34px #000;
+  border-radius: 0 14px 14px 0;
+}
