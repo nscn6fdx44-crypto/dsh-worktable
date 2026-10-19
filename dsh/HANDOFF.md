@@ -16,8 +16,8 @@
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
 | 运行中的实例 | 客户端会热更，但 **host 路由必须完整重启 DSH** 才生效（`/gh/status` 在旧实例上会是 401/404） |
 | 自测基线 | host **159** + client **545** 全通过（`npm test`） |
-| tag | `v0.10.0` 待打（提交后打 tag 并推送） |
-| Release | `v0.10.0` 待发布；包 `trae-usage-worktable-0.10.0.tgz`（247070 字节，sha256 `89211334…040b`）已打包 |
+| tag | `v0.10.0` **已打并推送**（带注释，指向 `88c22f9`） |
+| Release | `v0.10.0` **已发布**（id 417235810），附件 `trae-usage-worktable-0.10.0.tgz`（247070 字节，sha256 `89211334…040b`）下载回本地逐字节校验一致 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
 
 ---
@@ -27,14 +27,14 @@
 ```powershell
 cd C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh
 git pull --ff-only            # 可能有别的会话也在改同一个仓库（见 §11）
-npm run build && npm test     # 基线必须 131 / 481 全绿，否则先别改
+npm run build && npm test     # 基线必须 159 / 545 全绿，否则先别改
 ```
 
 要读的三处（按顺序，读这三处就能接上）：
 
 1. `src/client/core.js`（约 2860 行）—— 唯一的状态源（store / 所有动作 / 路由调用）
 2. `src/client/overlay.js` + `src/client/hostdock.js` —— 主区渲染 + **让位机制**（最容易被改坏的部位）
-3. `test/client-smoke.mjs` —— 481 条断言就是行为规格书
+3. `test/client-smoke.mjs` —— 545 条断言就是行为规格书
 
 ---
 
@@ -106,8 +106,8 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 | `src/client/ui.js` | ~197 | 基础件：`el`、`Icon`、`Light`、`Splitter`、`ContextMenu`、`Toasts` |
 | `src/client/render.js` | ~464 | 纯函数：`viewKindOf`、Markdown 渲染、代码高亮、格式化 |
 | `src/client/theme.css` | ~1342 | 全部样式（`.wt-scope` 作用域，CSS 变量控制主题） |
-| `test/client-smoke.mjs` | ~1884 | 客户端离线自测：stub React / document / fetch，**481 条断言** |
-| `test/host-routes.mjs` | ~626 | host 路由自测：fake webServer / sessionController，**131 条断言** |
+| `test/client-smoke.mjs` | ~1884 | 客户端离线自测：stub React / document / fetch，**545 条断言** |
+| `test/host-routes.mjs` | ~626 | host 路由自测：fake webServer / sessionController，**159 条断言** |
 
 ---
 
@@ -205,14 +205,16 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
    切「▤ 上一下二 / ▥ 三列 / ▦ 四格」每格都有内容 → 拖标签跨格互换。
    顺手看一眼 `GET /api/trae-worktable/term/mode` 的 `ok/from`，能直接看出用的是哪份 node-pty；
 
-1. ~~**打 tag + 补 Release 资产**~~ —— **0.8.52 / 0.8.53 都已发**（2026-10-19）：
-   tag 已推、Release 已建、附件已传并校验 sha256；首页 `README.md` / `README.zh.md` / `INSTALL.md`
-   与 `dsh/README.md` 已同步到 0.8.53（安装指向新 Release）；
-2. **真机验收**：0.8.48 → 0.8.52 是一族（侧边栏 / 让位），0.8.53 是拖到会话——建议一次验完写回 §8；
-   重点验两条：① 展开宿主侧边栏后工作台的关闭键点得动；② 文件/网页拖到顶栏后输入框里出现【文件】/【网页】块；
-3. **媒体窗真机确认**：三种选法各试一次（选择文件 / 浏览项目 / 拖入）；
-4. 收尾项：`/transcript` 补 `guard()`；把 `README` 的验收清单和「已知坑」同步到 0.8.53；
-5. 想再上功能的话，候选：终端命令收藏、多项目并排的三栏、产物清单支持 glob。
+1. ~~**打 tag + 补 Release 资产**~~ —— **0.8.52 / 0.8.53 / 0.9.0 / 0.10.0 都已发**：
+   tag 已推、Release 已建、附件已传并下载回来校验 sha256 一致；首页 `README.md` / `README.zh.md` /
+   `INSTALL.md` 与 `dsh/README.md` 已同步到 0.10.0（安装指向新 Release）；
+2. **旧功能真机验收（可延后）**：0.8.48 → 0.8.52 是一族（侧边栏 / 让位），0.8.53 是拖到会话；
+   重点两条：① 展开宿主侧边栏后工作台的关闭键点得动；② 文件/网页拖到顶栏后输入框里出现【文件】/【网页】块；
+3. **媒体窗确认**：三种选法各试一次（选择文件 / 浏览项目 / 拖入）；
+4. 收尾项：`/transcript` 补 `guard()`；
+5. 想再上功能的话，候选：终端命令收藏、冲突三方合并 UI、多项目并排的三栏、产物清单支持 glob。
+   git 侧已知缺口：冲突（`conflicts` 组已能读出但没做「用它/用他」的解决 UI）、rebase/cherry-pick、
+   PR 列表与创建（`/gh/repos` 已有，PR 接口没做）。
 
 ---
 
