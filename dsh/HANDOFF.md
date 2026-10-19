@@ -1,6 +1,6 @@
 # 交接文档 · trae-usage-worktable（工作台）
 
-> 生成时间：2026-10-19 · 版本 **0.8.52** · 分支 `dsh-plugin`（远端默认分支）
+> 生成时间：2026-10-19 · 版本 **0.8.53** · 分支 `dsh-plugin`（远端默认分支）
 > 用途：换会话/换人接手时，靠这一份 + 仓库本身恢复全部上下文。README 讲“是什么”，这份讲“现在到哪了、怎么继续”。
 
 ---
@@ -12,10 +12,10 @@
 | 仓库目录 | `C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh`（git 顶层是上一级 `2026-10-16-23-21-22`，插件在 `dsh/` 子目录） |
 | 远端 | `https://github.com/nscn6fdx44-crypto/dsh-worktable.git` |
 | 分支 / 最近提交 | `dsh-plugin` / `9e1fbb9 fix(0.8.52): 侧边栏展开时工作台会话/关闭键点不动` |
-| 版本 | `package.json` = `dsh.plugin.json` = **0.8.52** |
+| 版本 | `package.json` = `dsh.plugin.json` = **0.8.53** |
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
-| 运行中的实例 | `/api/trae-worktable/health` → **0.8.52**（已生效） |
-| 自测基线 | host **131** + client **481** 全通过（`npm test`） |
+| 运行中的实例 | `/api/trae-worktable/health` → **0.8.53**（已生效） |
+| 自测基线 | host **131** + client **496** 全通过（`npm test`） |
 | tag | `v0.8.52` **已打并推送**（带注释，指向 `ea1a8aa`） |
 | Release | `v0.8.52` **已发布**，附件 `trae-usage-worktable-0.8.52.tgz`（128.1 KB，sha256 `d263ec9e…31da66`）已校验与本地一致 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
@@ -232,3 +232,19 @@ cd $repo; npm run build; npm test
 3. 每次改动都要 **`npm run build` + `npm test` 全绿** 才算完成，然后 commit（`fix(0.x.y): …` 中文说明写在 body 里）+ push + `git tag v0.x.y`；
 4. 别把 `lib/`、`*.tgz` 提交进仓库（`.gitignore` 已挡）；
 5. 不要擅自把上游 `dsh-worktable` 加进 `bundles`（抢 `/api/worktable/*` 路由，且在这版宿主上会让网页端起不来）。它现在还躺在 profile 的 `dependencies` 里但**未启用**，可忽略。
+---
+
+## 12. 0.8.53 新增：拖文件 / 网页到对话
+
+| 交互 | 位置 | 实现 |
+| --- | --- | --- |
+| 拖文件 → 对话 | 文件管理器每一行（`draggable`） | `dragFilePayload(e, path)` 写 `application/x-wt-file` + `text/plain` + `file:///` 的 `text/uri-list` |
+| 按钮发送 | 文件管理器工具条「→ 对话」 | `sendPathToChat(path)`（选中文件优先，否则发当前目录） |
+| 拖网页 → 对话 | 浏览器地址栏（`draggable`） | `dragUrlPayload(e, url, title)` 写 `application/x-wt-url` + `text/uri-list` |
+| 按钮发送 | 浏览器工具条「💬」 | `sendUrlToChat(url, title)` |
+| **放置区** | 项目工作区 / 总览的顶栏整条 `header.dock-head` | `readChatDrop(e)` 解析（自定义类型 → `File.path` → uri-list → text/plain），`dropToChat(e)` 填进宿主输入框 |
+
+- 落到对话的内容格式：文件 `【文件】<文件名>\n<绝对路径>`；网页 `【网页】<标题>\n<网址>`（无标题则只一句）；
+- **只填输入框、不自动发送**（`fillHostInput`），由用户回车；
+- 拖拽经过顶栏时有 `.drop-hover` 高亮 + 「松手 → 填进输入框」提示；
+- 纯函数都能单测：`fileUrlOf` / `chatTextForFile` / `chatTextForUrl` / `readChatDrop`（self-test 新增 12 条）。

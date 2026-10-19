@@ -36,6 +36,7 @@ import {
   setSideProject, setSideSplit, sideProjectOf,
   enterProject,
   listMediaDir,
+  fileUrlOf, chatTextForFile, chatTextForUrl, readChatDrop, sendToChat, sendPathToChat, sendUrlToChat,
 } from './core.js'
 import { el } from './ui.js'
 import { WorktableSidebar, sideModeOf } from './sidebar.js'
@@ -60,7 +61,8 @@ export { store, openFile, createSessionInDir, switchHostSession, searchUrl, webG
   overviewProjects, setOverview, setGridTab,
   handleHotkey, HOTKEYS,
   setRunConfig, runProject, stopProject, openRunPort, hydrate, termExec,
-  setSideProject, setSideSplit, sideProjectOf, enterProject, kindOfMediaPath, mediaRowsOf, listMediaDir, sideModeOf, pickDock, remeasure, undockedBox }
+  setSideProject, setSideSplit, sideProjectOf, enterProject, kindOfMediaPath, mediaRowsOf, listMediaDir, sideModeOf, pickDock, remeasure, undockedBox,
+  fileUrlOf, chatTextForFile, chatTextForUrl, readChatDrop, sendToChat, sendPathToChat, sendUrlToChat }
 
 class SidebarBoundary extends Component {
   constructor(props) { super(props); this.state = { err: null } }

@@ -1879,6 +1879,46 @@ const cssGuard = (styleNodes[0] && styleNodes[0].textContent) || ''
 check('根层 pointer-events 用双类名钉死（防宿主 .overlayLayer>* 覆盖）', cssGuard.includes('.wt-scope.wt-root'), '')
 check('dh-tools 独立层叠（关闭键不被顶栏溢出内容压住）', /\.dh-tools\s*\{[^}]*position:\s*relative/.test(cssGuard), '')
 
+/* ---------- ㉗ 拖文件 / 网页到对话 ---------- */
+check('fileUrlOf 转成 file:///', mod.fileUrlOf('C:\\a\\b.png') === 'file:///C:/a/b.png', mod.fileUrlOf('C:\\a\\b.png'))
+const cf = mod.chatTextForFile('C:\\a\\b.png')
+check('文件话术含文件名与路径', cf.includes('【文件】b.png') && cf.includes('C:\\a\\b.png'), cf.replace(/\n/g, ' / '))
+const cu1 = mod.chatTextForUrl('https://example.com/x', '示例站')
+check('网页话术带标题', cu1.includes('【网页】示例站') && cu1.includes('https://example.com/x'), cu1.replace(/\n/g, ' / '))
+const cu2 = mod.chatTextForUrl('https://example.com/y')
+check('网页话术无标题也成立', cu2 === '【网页】https://example.com/y', cu2)
+
+const dtOf = (map, files) => ({ getData: (k) => map[k] || '', files: files || [], types: Object.keys(map) })
+check('readChatDrop：自定义文件类型', (mod.readChatDrop({ dataTransfer: dtOf({ 'application/x-wt-file': 'C:\\a.txt' }) }) || {}).kind === 'file', '')
+const urlDrop = mod.readChatDrop({ dataTransfer: dtOf({ 'application/x-wt-url': JSON.stringify({ url: 'https://e.com', title: 'E' }) }) })
+check('readChatDrop：自定义网址类型带标题', !!urlDrop && urlDrop.kind === 'url' && urlDrop.title === 'E', JSON.stringify(urlDrop))
+const uriDrop = mod.readChatDrop({ dataTransfer: dtOf({ 'text/uri-list': 'https://e.com/a' }) })
+check('readChatDrop：外部拖来的网址', !!uriDrop && uriDrop.kind === 'url' && uriDrop.value === 'https://e.com/a', JSON.stringify(uriDrop))
+const fileUri = mod.readChatDrop({ dataTransfer: dtOf({ 'text/uri-list': 'file:///C:/a/b.png' }) })
+check('readChatDrop：file:// URI 还原成 Windows 路径', !!fileUri && fileUri.kind === 'file' && fileUri.value === 'C:\\a\\b.png', JSON.stringify(fileUri))
+check('readChatDrop：空 dataTransfer 返回 null', mod.readChatDrop({ dataTransfer: dtOf({}) }) === null && mod.readChatDrop({}) === null, '')
+check('sendToChat 不抛错（宿主输入框不在时返回 false）', (() => { try { mod.sendToChat({ kind: 'file', value: 'C:\\x.txt' }); return true } catch { return false } })(), '')
+
+/* 文件管理器：行可拖 + 工具条「→ 对话」 */
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+mod.openTab(pid6, 'files')
+const filesTree = render(overlayComp)
+const fxRows = allByClass(filesTree, /(^|\s)fx-row(\s|$)/)
+const dragRow = fxRows.find((r) => r.props && r.props.draggable === 'true')
+check('文件行可拖拽', !!dragRow && typeof dragRow.props.onDragStart === 'function', fxRows.length + ' 行')
+check('文件工具条有「→ 对话」', collect(filesTree).some((n) => n.type === 'button' && textOf(n).includes('→ 对话')), '')
+
+/* 浏览器：地址可拖 + 💬 按钮 + 顶栏接收 */
+mod.openTab(pid6, 'web')
+const webTree = render(overlayComp)
+const wbUrl = allByClass(webTree, /(^|\s)wb-url(\s|$)/)[0]
+check('网页地址可拖拽', !!wbUrl && wbUrl.props.draggable === 'true' && typeof wbUrl.props.onDragStart === 'function', wbUrl ? String(wbUrl.props.draggable) : '')
+check('浏览器有「发到对话」按钮', allByClass(webTree, /(^|\s)wb-to-chat(\s|$)/).length === 1, '')
+const head = allByClass(webTree, /(^|\s)dock-head(\s|$)/)[0]
+check('顶栏是拖放接收区', !!head && typeof head.props.onDrop === 'function' && typeof head.props.onDragOver === 'function', '')
+
 const failed = results.filter((r) => !r)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)
 process.exit(failed.length ? 1 : 0)

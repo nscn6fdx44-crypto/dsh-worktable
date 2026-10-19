@@ -1340,3 +1340,16 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
   box-shadow: 24px 0 60px -34px #000;
   border-radius: 0 14px 14px 0;
 }
+/* 拖文件/网页到顶栏 → 发到对话 */
+.wt-scope .dock-head.drop-hover {
+  background: rgba(var(--amber-rgb), .16);
+  box-shadow: inset 0 0 0 1px var(--amber-line);
+  border-radius: 10px;
+}
+.wt-scope .dock-head.drop-hover::after {
+  content: '松手 → 填进对话输入框';
+  position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+  font-size: 10.5px; color: rgb(var(--amber-ink-rgb)); pointer-events: none;
+}
+.wt-scope .fx-row[draggable="true"] { cursor: grab; }
+.wt-scope .fx-row[draggable="true"]:active { cursor: grabbing; }

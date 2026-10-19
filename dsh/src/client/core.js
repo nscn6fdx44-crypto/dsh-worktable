@@ -222,6 +222,7 @@ export const store = {
   run: { pid: '', state: 'idle', cmd: '', at: 0, error: '' },   // 当前项目的运行状态（内存）
   /* 并排：同一块让位区里再放一个项目的工作区（存 wt.side） */
   side: { pid: '', split: 50 },
+  chatDropHover: false,   // 有文件/链接正拖到工作台顶栏的「对话」区
   /* 总览的排序 / 筛选 / 就地搜索（存 wt.overview） */
   overview: { q: '', sort: 'recent', filter: 'all' },
   media: { pid: '', path: '' },   // 媒体窗当前预览的文件（由「产物」或编辑器推过来）
@@ -1312,6 +1313,115 @@ export function openRunPort(pid) {
   openTab(pid, 'web')
   webGotoSmart('http://localhost:' + port)
   return true
+}
+
+
+/* ============================ 拖到对话（文件 / 网页） ============================ */
+
+export const FILE_DRAG = 'application/x-wt-file'
+export const URL_DRAG = 'application/x-wt-url'
+
+/** Windows 路径 → file:/// URL（拖给外部程序/浏览器用） */
+export function fileUrlOf(path) {
+  const s = String(path || '').trim()
+  if (!s) return ''
+  const norm = s.replace(/\\/g, '/')
+  return /^[A-Za-z]:/.test(norm) ? 'file:///' + encodeURI(norm) : 'file://' + encodeURI(norm)
+}
+
+export function chatTextForFile(path) {
+  const p = String(path || '').trim()
+  if (!p) return ''
+  const name = p.split(/[\\/]/).pop() || p
+  return '【文件】' + name + '\n' + p
+}
+
+export function chatTextForUrl(url, title) {
+  const u = String(url || '').trim()
+  if (!u) return ''
+  const t = String(title || '').trim()
+  return t ? '【网页】' + t + '\n' + u : '【网页】' + u
+}
+
+/** 拖一个文件：写自定义类型 + text/plain + text/uri-list（外部程序也能接） */
+export function dragFilePayload(e, path) {
+  const p = String(path || '').trim()
+  if (!e || !e.dataTransfer || !p) return false
+  try {
+    e.dataTransfer.setData(FILE_DRAG, p)
+    e.dataTransfer.setData('text/plain', p)
+    const fu = fileUrlOf(p)
+    if (fu) e.dataTransfer.setData('text/uri-list', fu)
+    e.dataTransfer.effectAllowed = 'copy'
+    return true
+  } catch { return false }
+}
+
+/** 拖一个网页：自定义类型带标题 + text/uri-list */
+export function dragUrlPayload(e, url, title) {
+  const u = String(url || '').trim()
+  if (!u) return false
+  try {
+    e.dataTransfer.setData(URL_DRAG, JSON.stringify({ url: u, title: String(title || '') }))
+    e.dataTransfer.setData('text/uri-list', u)
+    e.dataTransfer.setData('text/plain', u)
+    e.dataTransfer.effectAllowed = 'copy'
+    return true
+  } catch { return false }
+}
+
+/** 从 dataTransfer 解析「要发给对话」的东西（自定义类型 → File.path → uri-list → text） */
+export function readChatDrop(e) {
+  const dt = e && e.dataTransfer
+  if (!dt) return null
+  try {
+    const f = dt.getData(FILE_DRAG)
+    if (f) return { kind: 'file', value: f }
+    const raw = dt.getData(URL_DRAG)
+    if (raw) {
+      const o = JSON.parse(raw)
+      return o && o.url ? { kind: 'url', value: o.url, title: o.title || '' } : null
+    }
+    if (dt.files && dt.files.length && dt.files[0] && dt.files[0].path) {
+      return { kind: 'file', value: String(dt.files[0].path) }
+    }
+    const uris = String(dt.getData('text/uri-list') || '').split(/\r?\n/).filter((x) => x && !x.startsWith('#'))
+    const first = uris[0] || String(dt.getData('text/plain') || '').trim()
+    if (!first) return null
+    if (/^https?:\/\//i.test(first)) return { kind: 'url', value: first }
+    if (/^file:\/\//i.test(first)) {
+      const p = decodeURI(first.replace(/^file:\/\/+/i, '')).replace(/\//g, '\\')
+      return { kind: 'file', value: p }
+    }
+    return { kind: 'file', value: first }
+  } catch { return null }
+}
+
+/** 统一出口：把文件/网页塞进宿主输入框（不自动发送） */
+export function sendToChat(payload) {
+  if (!payload || !payload.value) return false
+  const text = payload.kind === 'url'
+    ? chatTextForUrl(payload.value, payload.title)
+    : chatTextForFile(payload.value)
+  const ok = fillHostInput(text)
+  toast(ok ? '已填到对话输入框，回车发送' : '没找到宿主输入框，文本已就绪', ok ? 'ok' : 'warn')
+  return !!ok
+}
+
+export function sendPathToChat(path) { return sendToChat({ kind: 'file', value: path }) }
+export function sendUrlToChat(url, title) { return sendToChat({ kind: 'url', value: url, title }) }
+
+export function setChatDropHover(on) {
+  if (store.chatDropHover === !!on) return
+  emit({ chatDropHover: !!on })
+}
+
+/** 拖放落到「对话」区域时调用 */
+export function dropToChat(e) {
+  const payload = readChatDrop(e)
+  setChatDropHover(false)
+  if (!payload) return false
+  return sendToChat(payload)
 }
 
 /* ============================ 快捷键 ============================ */

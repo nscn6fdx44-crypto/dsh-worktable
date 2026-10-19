@@ -22,7 +22,7 @@ import {
   jumpToSession, setGridTab, uiOf, flushUi,
   overviewProjects, setOverview, OVERVIEW_SORTS, OVERVIEW_FILTERS,
   runProject, stopProject, openRunPort,
-  setSideProject, setSideSplit, sideProjectOf,
+  setSideProject, setSideSplit, sideProjectOf, readChatDrop, dropToChat, setChatDropHover,
 } from './core.js'
 import { InfoPane, FilesPane, EditorPane, TermPane, WebPane, CustomPane, MediaPane, NotesPane } from './panes.js'
 
@@ -120,7 +120,21 @@ function Overview({ ui, geo }) {
   const board = el(OverviewPane, { tab, projects, shown, rows, running, waiting, badgeOf })
 
   return el('div', { className: 'dock-wrap' },
-    el('header', { className: 'dock-head' },
+    el('header', {
+      className: 'dock-head' + (store.chatDropHover ? ' drop-hover' : ''),
+      title: '把文件或网页拖到这里 → 填进对话输入框',
+      onDragOver: (e) => {
+        if (!readChatDrop(e)) return
+        e.preventDefault()
+        try { e.dataTransfer.dropEffect = 'copy' } catch { /* ignore */ }
+        setChatDropHover(true)
+      },
+      onDragLeave: (e) => {
+        const to = e.relatedTarget
+        if (!to || !e.currentTarget.contains(to)) setChatDropHover(false)
+      },
+      onDrop: (e) => { if (readChatDrop(e)) { e.preventDefault(); e.stopPropagation(); dropToChat(e) } },
+    },
       el('div', { className: 'dh-main' },
         el('span', { className: 'dh-ico', 'aria-hidden': 'true' }, '🧰'),
         el('b', { className: 'dh-name', title: '工作台总览（右侧仍是 DSH 对话）' }, '工作台总览'),
@@ -342,8 +356,21 @@ function Workspace({ project, ui, geo }) {
   }
 
   return el('div', { className: 'dock-wrap' },
-    el('header', { className: 'dock-head' },
-      el('div', { className: 'dh-main' },
+    el('header', {
+      className: 'dock-head' + (store.chatDropHover ? ' drop-hover' : ''),
+      title: '把文件或网页拖到这里 → 填进对话输入框',
+      onDragOver: (e) => {
+        if (!readChatDrop(e)) return
+        e.preventDefault()
+        try { e.dataTransfer.dropEffect = 'copy' } catch { /* ignore */ }
+        setChatDropHover(true)
+      },
+      onDragLeave: (e) => {
+        const to = e.relatedTarget
+        if (!to || !e.currentTarget.contains(to)) setChatDropHover(false)
+      },
+      onDrop: (e) => { if (readChatDrop(e)) { e.preventDefault(); e.stopPropagation(); dropToChat(e) } },
+    },      el('div', { className: 'dh-main' },
         el('span', { className: 'dh-ico', 'aria-hidden': 'true' }, projEmoji(project)),
         geo.stale
           ? el('button', {

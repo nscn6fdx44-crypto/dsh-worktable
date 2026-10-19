@@ -19,6 +19,7 @@ import {
   sessionsOf, primarySession, stateOf, jumpToSession, runProject, stopProject, openRunPort,
   ARTIFACT_FILE, loadArtifacts, openArtifact, sendArtifactToChat,
   openModal, siteUrlOf, cycleStatus, updateProject, projectOf, toast, listMediaDir,
+  dragFilePayload, dragUrlPayload, sendPathToChat, sendUrlToChat, sendToChat,
   webSync, webGoto, webGotoSmart, webSearch, webSetEngine, SEARCH_ENGINES, webHome, webCloseHome,
   webBack, webForward, webReload, webLoaded, webProbe,
   webSetViewport, webOpenExternal, webSetMore,
@@ -266,6 +267,14 @@ export function FilesPane({ project }) {
         title: tree.writable === false ? '新建只允许在工作目录 / 用户目录 / 已注册项目内' : '新建文件夹',
         onClick: startCreate,
       }, '＋ 新建'),
+      el('button', {
+        type: 'button', className: 'mini-btn', title: '把选中的文件 / 当前目录发到对话输入框',
+        onClick: () => {
+          const sel = rows.find((r) => r.name === view.sel)
+          if (sel && !sel.dir) { sendPathToChat(joinPath(dirPath, sel.name)); return }
+          sendPathToChat(dirPath)
+        },
+      }, '→ 对话'),
       el('button', { type: 'button', className: 'mini-btn', title: '在系统资源管理器中打开这个目录', onClick: () => revealPath(dirPath) }, '⧉ 系统窗口'),
     ),
 
@@ -320,7 +329,9 @@ export function FilesPane({ project }) {
           key: e.name,
           className: 'fx-row' + (view.sel === e.name ? ' on' : ''),
           role: 'button',
-          title: joinPath(dirPath, e.name),
+          draggable: 'true',
+          onDragStart: (ev) => { dragFilePayload(ev, joinPath(dirPath, e.name)) },
+          title: '拖动可发给对话 · ' + joinPath(dirPath, e.name),
           onClick: () => selectEntry(e.name),
           onDoubleClick: () => activate(e),
           onContextMenu: (ev) => rowKey(e, ev),
@@ -823,6 +834,9 @@ export function WebPane({ project }) {
       el('input', {
         className: 'mono wb-url', value: shown, spellCheck: false, autoComplete: 'off',
         placeholder: 'localhost:5173',
+        draggable: 'true',
+        title: '可把这个网址拖到顶栏「对话」区；也可以点右边的 💬',
+        onDragStart: (ev) => { dragUrlPayload(ev, shown || url, web.title) },
         onChange: (e) => setDraft(e.target.value),
         onKeyDown: (e) => {
           if (e.key === 'Enter') go(draft || url)
@@ -830,6 +844,10 @@ export function WebPane({ project }) {
         },
       }),
       el('button', { type: 'button', className: 'mini-btn wb-go', onClick: () => go(draft || url) }, '打开'),
+      el('button', {
+        type: 'button', className: 'mini-btn wb-to-chat', title: '把这个网页发到对话输入框',
+        onClick: () => sendUrlToChat(draft || url || shown, web.title),
+      }, '💬'),
       el('span', { className: 'wb-dot ' + web.state, title: webStateText(web), 'aria-hidden': 'true' }),
       el('button', {
         type: 'button',
