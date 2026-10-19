@@ -2,7 +2,7 @@
 
 DeepSeek Harness（DSH）侧边栏**工作台**插件：把你的项目收纳成侧边栏应用抽屉，提供可停靠的分栏工作区——文件浏览、编辑器、终端、内置浏览器、媒体查看、笔记、自定义窗口与只读 git——全部在 DSH 内完成。
 
-> 英文说明见 [README.md](README.md) · 当前版本 **0.8.53**
+> 英文说明见 [README.md](README.md) · 当前版本 **0.9.0**
 
 需要 **DSH `0.2.0-rc.2` 或 `0.2.1-rc.2`**（Windows 桌面端）。
 
@@ -17,27 +17,27 @@ CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`�
 **方式 A —— 直接按网址装**（DSH 自己去 GitHub 下载附件）：
 
 ```powershell
-& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.8.53/trae-usage-worktable-0.8.53.tgz"
+& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.9.0/trae-usage-worktable-0.9.0.tgz"
 ```
 
 **方式 B —— 下载后装本地文件**（GitHub 慢或被墙时用）：
 
-1. 从 [v0.8.53 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.8.53) 把 `trae-usage-worktable-0.8.53.tgz` 下载到**你想放的任意目录**
-   （130.1 KB，sha256 `ec55f523460f7224e22905c4a175d2d967df24102416f43f9ceeda907611261e`）
+1. 从 [v0.9.0 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.9.0) 把 `trae-usage-worktable-0.9.0.tgz` 下载到**你想放的任意目录**
+   （218.8 KB，sha256 `ec7fc69edc1a188e630deb94392cf189a156ae12ec80aa873efc74d291b955e1`）
 2. 在 PowerShell 执行——路径换成**你自己**存放的位置：
    ```powershell
-   & "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<你下载的完整路径>\trae-usage-worktable-0.8.53.tgz"
+   & "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<你下载的完整路径>\trae-usage-worktable-0.9.0.tgz"
    ```
 
-重开 DSH —— 侧边栏即出现「工作台」面板。用 `/api/trae-worktable/health` 核对：`"version": "0.8.53"`。
+重开 DSH —— 侧边栏即出现「工作台」面板。用 `/api/trae-worktable/health` 核对：`"version": "0.9.0"`。
 
 ## 功能
 
 - **项目抽屉**——从侧边栏扫描、固定、排序、管理本机项目；卡片大小按宿主实际给的空间自适应
 - **可停靠分栏工作区**——窗格贴在对话左侧，右侧留给**真能打字的** DSH 对话；比例可拖、按项目记忆
-- **布局预设**——单栏 / 左右 / 上下，外加自由拖拽分栏
+- **布局预设**——六种：单栏 / 左右 / 上下 / 上一下二 / 三列 / 2×2，分割线都能拖；标签可以拖到别的格子互换
 - **文件浏览与编辑**——带沙箱，拦截凭证目录（`.ssh` / `.aws` / `.env*` 等）与越界路径
-- **终端**——在项目里跑命令，带历史面板
+- **终端**——真 PTY（xterm.js + 宿主自带的 node-pty）：`vim`、`top`、`ssh`、REPL 都能跑，`Ctrl+C` 真的进前台进程；借不到原生模块时降级为「一条命令一个进程」
 - **运行配置**——一键 ▶ 把命令喂进终端（cwd = 项目目录），■ 停止，端口直接开窗格
 - **内置浏览器**——在停靠窗格里打开内部工具与网页（先探测可达性与能否 iframe）
 - **媒体窗**——图片 / PDF / SVG / 音视频，支持「选择文件」与「浏览项目」
@@ -49,11 +49,12 @@ CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`�
 - **快捷键体系**、项目模板、配置 JSON 导入导出
 - **拖到对话**——文件行或网页地址拖到顶栏，自动填成一段可发送的内容
 
-## 本版变更（0.8.48 → 0.8.53）
+## 本版变更（0.8.48 → 0.9.0）
 
+- **0.9.0** 一次补掉与上游的三处差距：**真 PTY 终端**（借宿主自带的 `node-pty`，`vim` / `top` / `ssh` / REPL 都能跑，`Ctrl+C` 真的进前台进程；借不到原生模块时降级成命令模式并写明原因）、**六种布局预设**（新增上一下二、三列、2×2）、**标签跨格拖**
 - **0.8.53** 拖文件 / 网页到会话：把文件管理器里的一行、或浏览器地址栏拖到工作台顶栏，路径（含标题）就填进右侧对话输入框，**不会自动发送**；工具条「→ 对话」「💬」一键同效
 
-这五个版本修的都是同一族问题——侧边栏尺寸与让位几何：
+0.8.48 – 0.8.52 这五个版本修的都是同一族问题——侧边栏尺寸与让位几何：
 
 - **0.8.48** 卡片改为测量宿主**实际**给的空间（`sideModeOf`），不再固定 `46vh / 330px`
 - **0.8.49** 卡片不再压住宿主会话列表。真因是**溢出而非层级**：卡片禁止收缩（`flex: 0 0 auto`）导致溢出到列表上

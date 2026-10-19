@@ -65,24 +65,24 @@ DSH 的命令行工具叫 `dsh.cmd`，位置固定是：
 在 PowerShell 里粘贴这一整行，回车：
 
 ```powershell
-& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.8.53/trae-usage-worktable-0.8.53.tgz"
+& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.9.0/trae-usage-worktable-0.9.0.tgz"
 ```
 
 DSH 会自己去 GitHub 把这个安装包下载下来。
 
 ### 方式 B：先下载再装本地文件（GitHub 打不开 / 特别慢时用）
 
-1. 打开 [v0.8.53 Release 页面](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.8.53)，点 **Assets** 里的
-   `trae-usage-worktable-0.8.53.tgz` 下载（130.1 KB）。存到**你自己记得住的目录**，比如 `D:\Downloads`。
+1. 打开 [v0.9.0 Release 页面](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.9.0)，点 **Assets** 里的
+   `trae-usage-worktable-0.9.0.tgz` 下载（218.8 KB）。存到**你自己记得住的目录**，比如 `D:\Downloads`。
 2. 在 PowerShell 里粘贴（把路径换成你实际存的位置）：
 
 ```powershell
-& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "D:\Downloads\trae-usage-worktable-0.8.53.tgz"
+& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "D:\Downloads\trae-usage-worktable-0.9.0.tgz"
 ```
 
-> 校验下载是否完整（可选）：文件应该是 **133209 字节**，sha256 是
-> `ec55f523460f7224e22905c4a175d2d967df24102416f43f9ceeda907611261e`。
-> 在 PowerShell 里跑 `Get-FileHash "D:\Downloads\trae-usage-worktable-0.8.53.tgz" -Algorithm SHA256` 可以对一下。
+> 校验下载是否完整（可选）：文件应该是 **224018 字节**，sha256 是
+> `ec7fc69edc1a188e630deb94392cf189a156ae12ec80aa873efc74d291b955e1`。
+> 在 PowerShell 里跑 `Get-FileHash "D:\Downloads\trae-usage-worktable-0.9.0.tgz" -Algorithm SHA256` 可以对一下。
 
 ---
 
@@ -91,11 +91,11 @@ DSH 会自己去 GitHub 把这个安装包下载下来。
 命令跑完会刷一堆下载信息，最后应该是这类结尾：
 
 ```
-+ trae-usage-worktable 0.8.53
++ trae-usage-worktable 0.9.0
 Done in 12.3s
 ```
 
-**看到 `0.8.53` 和 `Done` 就是装好了。**
+**看到 `0.9.0` 和 `Done` 就是装好了。**
 
 想更确定，再跑这一条（列出已装插件，只读，不影响任何东西）：
 
@@ -106,7 +106,7 @@ Done in 12.3s
 输出里应该有一行：
 
 ```
-├── trae-usage-worktable@0.8.53
+├── trae-usage-worktable@0.9.0
 ```
 
 > 如果你看到的是 `trae-usage-worktable@link:...`，说明装的是**开发版**（链接到源码目录），不是 Release 版。
@@ -129,7 +129,7 @@ Done in 12.3s
 | `ERR_PNPM_FETCH_404`、`ETIMEDOUT`、`ECONNRESET`、`fetch failed` | 连不上 GitHub | 改用**方式 B**（先下载再装本地文件） |
 | `'dsh' 不是内部或外部命令` | 你敲了 `dsh xxx`，但 PATH 里没有它 | 用完整路径：`& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" ...` |
 | 装完侧边栏**没有**「工作台」 | ① DSH 没重开；② profile 里没启用这个 bundle | 先完全退出再开一次；仍没有就把第 5 步 `ls` 的输出发给我 |
-| `ls` 里版本不是 0.8.53 | 装的是旧包 | 按第 4 步重装一次（会覆盖旧版本） |
+| `ls` 里版本不是 0.9.0 | 装的是旧包 | 按第 4 步重装一次（会覆盖旧版本） |
 | 报 `Unsupported engine` / 版本不兼容 | DSH 版本不在支持范围 | 升级 DSH 到 `0.2.0-rc.2` 或 `0.2.1-rc.2` |
 
 ---

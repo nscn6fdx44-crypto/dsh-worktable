@@ -4,12 +4,13 @@
  * 每个窗格只读 store 的对应切片，动作全部来自 core。
  */
 import { useState, useEffect, useRef } from 'react'
+import XTERM_CSS from '@xterm/xterm/css/xterm.css'
 import { el, Icon, Light } from './ui.js'
 import {
   viewKindOf, isMediaKind, hasPreview, renderMarkdown, highlightCode, langOf, kindEmoji,
 } from './render.js'
 import {
-  store, useStore, STATES, normState, fmtSize, fmtDuration, relTime, shortPath, projEmoji,
+  API, store, useStore, STATES, normState, fmtSize, fmtDuration, relTime, shortPath, projEmoji,
   loadTree, openFile, editText, saveFile, setEditorView, rawUrl,
   termExec, termKill, termClear, loadGit,
   workspaceDirOf, revealPath, openExternal,
@@ -639,7 +640,74 @@ export function EditorPane({ project }) {
 
 /* ============================ 主区：终端 ============================ */
 
+/*
+ * 两种模式，优先真 PTY：
+ *   pty  — 走 node-pty（借宿主自带的那份），能跑 vim / top / ssh / 交互式提示符，
+ *          Ctrl+C 真的进到前台进程；宿主里借不到原生模块就自动降级。
+ *   exec — 一条命令起一个进程 + NDJSON 流（0.8.53 之前的行为），没有交互能力。
+ */
+
+let xtermCssReady = false
+/** xterm 自带几十条 .xterm 规则，只注入一次 */
+function ensureXtermCss() {
+  if (xtermCssReady || typeof document === 'undefined') return
+  xtermCssReady = true
+  try {
+    const node = document.createElement('style')
+    node.setAttribute('data-wt', 'xterm')
+    node.textContent = XTERM_CSS
+    document.head.appendChild(node)
+  } catch { /* 注入失败只是不好看，不影响功能 */ }
+}
+
+async function ptyPost(path, body, signal) {
+  const res = await fetch(API + path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body || {}),
+    signal,
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status))
+  return data || {}
+}
+
 export function TermPane({ project }) {
+  /* 先按「命令模式」渲染，PTY 一旦握手成功立刻切过去（通常 <100ms）。
+     这样即使宿主里没有 node-pty，界面也不会先闪一个空白等待页。 */
+  const [mode, setMode] = useState('exec')
+  const [reason, setReason] = useState('')
+  const [info, setInfo] = useState({ shell: '', cwd: '' })
+  const [tryN, setTryN] = useState(0)
+  const sessionId = 'wt-pty-' + project.id
+
+  useEffect(() => {
+    let alive = true
+    ptyPost('/term/open', { id: sessionId, cwd: workspaceDirOf(project) || project.path || '' })
+      .then((r) => {
+        if (!alive) return
+        if (r && r.ok && r.mode === 'pty') {
+          setInfo({ shell: r.shell || '', cwd: r.cwd || '' })
+          setMode('pty')
+        } else {
+          setReason((r && r.error) || '当前环境里没有可用的 node-pty')
+          setMode('exec')
+        }
+      })
+      .catch((err) => {
+        if (!alive) return
+        setReason(String((err && err.message) || err))
+        setMode('exec')
+      })
+    return () => { alive = false }
+  }, [project.id, tryN])
+
+  if (mode === 'exec') return el(ExecTerm, { project, reason, onRetryPty: () => setTryN((n) => n + 1) })
+  return el(PtyTerm, { project, sessionId, info })
+}
+
+/** 一条命令一个进程（PTY 不可用时的降级模式，行为与 0.8.53 之前一致） */
+function ExecTerm({ project, reason, onRetryPty }) {
   useStore()
   const term = store.terms[project.id] || { lines: [], busy: false, cwd: '', history: [] }
   const [input, setInput] = useState('')
@@ -706,6 +774,16 @@ export function TermPane({ project }) {
           el('p', null, '这个终端直接把命令交给宿主所在机器执行。'),
           el('p', { className: 'mono' }, '试：dir / git status / npm run build'),
           el('p', null, 'cd 会改变后续命令的工作目录；↑↓ 翻历史，Ctrl+L 清屏。'),
+          reason
+            ? el('p', { className: 'term-fallback' },
+              '当前是「命令模式」：' + reason,
+              onRetryPty
+                ? el('button', {
+                  type: 'button', className: 'mini-btn', style: { marginLeft: '6px' },
+                  onClick: onRetryPty,
+                }, '再试一次 PTY')
+                : null)
+            : null,
         ),
     ),
     showHist
@@ -728,6 +806,199 @@ export function TermPane({ project }) {
         onKeyDown: onKey,
       }),
     ),
+  )
+}
+
+/**
+ * 真 PTY 终端（xterm.js）。
+ *
+ * 连接方式：宿主开一个 pty 会话（id 按项目固定）→ 这里挂一条 NDJSON 长连接收输出，
+ * 键盘输入攒 10ms 批量 POST 回去，容器尺寸变化 140ms 防抖后报 cols/rows。
+ * 切标签页只是卸载 xterm 组件，**进程留在宿主里**；切回来重新挂上会先回放 backlog，
+ * 屏幕基本能接上。要彻底收掉就点「重启」（kill + 重开）。
+ */
+function PtyTerm({ project, sessionId, info }) {
+  const hostRef = useRef(null)
+  const termRef = useRef(null)
+  const inputRef = useRef(null)
+  const [state, setState] = useState('connecting')
+  const [error, setError] = useState('')
+  const [nonce, setNonce] = useState(0)
+
+  useEffect(() => {
+    let disposed = false
+    let term = null
+    let fit = null
+    let ro = null
+    let ctrl = null
+    let inputBuf = ''
+    let inputTimer = 0
+    let fitTimer = 0
+
+    const sendInput = (d) => {
+      inputBuf += d
+      if (!inputTimer) {
+        inputTimer = setTimeout(() => {
+          inputTimer = 0
+          const data = inputBuf
+          inputBuf = ''
+          if (data) ptyPost('/term/input', { id: sessionId, data }).catch(() => { /* 进程已退出 */ })
+        }, 10)
+      }
+    }
+    inputRef.current = sendInput
+
+    ;(async () => {
+      ensureXtermCss()
+      const [{ Terminal }, { FitAddon }] = await Promise.all([
+        import('@xterm/xterm'),
+        import('@xterm/addon-fit'),
+      ])
+      if (disposed || !hostRef.current) return
+      term = new Terminal({
+        fontSize: 12.5,
+        fontFamily: 'ui-monospace, "Cascadia Mono", Consolas, "Microsoft YaHei Mono", monospace',
+        cursorBlink: true,
+        scrollback: 4000,
+        theme: {
+          background: '#0b0e12',
+          foreground: '#dfe4ea',
+          cursor: '#f0b429',
+          selectionBackground: 'rgba(240,180,41,.28)',
+          black: '#0b0e12',
+          brightBlack: '#5a6270',
+          red: '#e06c75',
+          brightRed: '#ff8b93',
+          green: '#98c379',
+          brightGreen: '#b6e08a',
+          yellow: '#e5c07b',
+          brightYellow: '#ffd68a',
+          blue: '#61afef',
+          brightBlue: '#82c4ff',
+          magenta: '#c678dd',
+          brightMagenta: '#e0a0f0',
+          cyan: '#56b6c2',
+          brightCyan: '#7fd6e0',
+          white: '#dfe4ea',
+          brightWhite: '#ffffff',
+        },
+      })
+      termRef.current = term
+      fit = new FitAddon()
+      term.loadAddon(fit)
+      term.open(hostRef.current)
+      term.onData(sendInput)
+
+      const doFit = () => {
+        if (disposed || !term) return
+        try { fit.fit() } catch { /* 容器还没量出尺寸 */ }
+        ptyPost('/term/resize', { id: sessionId, cols: term.cols, rows: term.rows }).catch(() => {})
+      }
+      setTimeout(doFit, 30)
+      try { term.focus() } catch { /* 不在前台 */ }
+
+      if (typeof ResizeObserver === 'function') {
+        ro = new ResizeObserver(() => {
+          clearTimeout(fitTimer)
+          fitTimer = setTimeout(doFit, 140)
+        })
+        ro.observe(hostRef.current)
+      }
+
+      ctrl = new AbortController()
+      const res = await fetch(API + '/term/stream', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: sessionId }),
+        signal: ctrl.signal,
+      })
+      if (!res.ok) throw new Error('连接终端失败：HTTP ' + res.status)
+      if (disposed) return
+      setState('live')
+
+      const reader = res.body.getReader()
+      const dec = new TextDecoder()
+      let buf = ''
+      let exited = false
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        let at
+        while ((at = buf.indexOf('\n')) !== -1) {
+          const line = buf.slice(0, at)
+          buf = buf.slice(at + 1)
+          if (!line.trim()) continue
+          let ev
+          try { ev = JSON.parse(line) } catch { continue }
+          if (ev.t === 'out') {
+            try { term.write(String(ev.d ?? '')) } catch { /* 组件已卸载 */ }
+          } else if (ev.t === 'exit') {
+            exited = true
+            try {
+              term.write('\r\n\x1b[38;5;244m[进程已退出' + (ev.code != null ? '（' + ev.code + '）' : '') + ']\x1b[0m\r\n')
+            } catch { /* ignore */ }
+            setState('exited')
+          }
+        }
+      }
+      if (!disposed && !exited) setState('detached')
+    })().catch((err) => {
+      if (disposed) return
+      setState('error')
+      setError(String((err && err.message) || err))
+    })
+
+    return () => {
+      disposed = true
+      clearTimeout(inputTimer)
+      clearTimeout(fitTimer)
+      if (ctrl) { try { ctrl.abort() } catch { /* 已结束 */ } }
+      if (ro) { try { ro.disconnect() } catch { /* ignore */ } }
+      try { if (term) term.dispose() } catch { /* ignore */ }
+      termRef.current = null
+      inputRef.current = null
+    }
+  }, [sessionId, nonce])
+
+  const restart = () => {
+    ptyPost('/term/kill', { id: sessionId }).catch(() => {})
+    setState('connecting')
+    setNonce((n) => n + 1)
+  }
+
+  const label = {
+    connecting: '连接中…', live: 'PTY', exited: '已退出', detached: '已断开', error: '连接失败',
+  }[state] || 'PTY'
+
+  return el('div', { className: 'pane-body term-body pty-body' },
+    el('div', { className: 'term-bar' },
+      el('span', { className: 'term-badge' + (state === 'live' ? ' on' : '') }, label),
+      el('span', { className: 'term-cwd mono', title: info.cwd || project.path }, shortPath(info.cwd || project.path || '—', 34)),
+      info.shell ? el('span', { className: 'term-shell mono', title: info.shell }, String(info.shell).split(/[\\/]/).pop()) : null,
+      el('button', {
+        type: 'button', className: 'mini-btn', title: '清屏（只清显示，进程还在）',
+        onClick: () => { try { if (termRef.current) termRef.current.clear() } catch { /* ignore */ } },
+      }, '清屏'),
+      el('button', {
+        type: 'button', className: 'mini-btn', title: '给前台进程发 Ctrl+C',
+        onClick: () => { if (inputRef.current) inputRef.current('\u0003') },
+      }, '中断 ^C'),
+      el('button', {
+        type: 'button', className: 'mini-btn', title: '关掉这个 shell，重新开一个',
+        onClick: restart,
+      }, '重启'),
+    ),
+    el('div', {
+      className: 'xterm-host',
+      ref: hostRef,
+      onClick: () => { try { if (termRef.current) termRef.current.focus() } catch { /* ignore */ } },
+    }),
+    state === 'error'
+      ? el('div', { className: 'term-hint' },
+        el('p', null, '终端连不上：' + error),
+        el('p', null, '点「重启」再试一次；如果一直失败，说明宿主进程里没有可用的 node-pty。'))
+      : null,
   )
 }
 

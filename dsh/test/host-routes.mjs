@@ -621,6 +621,29 @@ const bareCreate = await new Promise((resolve) => {
 })
 check('无 sessionController 时 ok:false + 原因', bareCreate.ok === false && /sessionController/.test(String(bareCreate.error)), JSON.stringify(bareCreate).slice(0, 120))
 
+/* ---------- 终端：真 PTY 的降级契约 ---------- */
+/* 纯 Node 里没有 Electron 的 resourcesPath，也不该有 node-pty：
+   这几条测的是「拿不到原生模块时必须优雅降级」，不是 PTY 本身能用。 */
+const mode = await call(BASE + '/term/mode', undefined, 'GET')
+const modeJson = JSON.parse(mode.body)
+check('term/mode 能报出 PTY 可用性', mode.status === 200 && typeof modeJson.ok === 'boolean', JSON.stringify(modeJson).slice(0, 140))
+check('term/mode 说明用的是哪个 shell', typeof modeJson.shell === 'string' && modeJson.shell.length > 0, modeJson.shell)
+check('term/mode 不可用时给得出原因', modeJson.ok === true || String(modeJson.error || '').length > 0, String(modeJson.error || '').slice(0, 100))
+
+const open = await call(BASE + '/term/open', { id: 'wt-pty-test', cwd: tmp, cols: 100, rows: 30 })
+const openJson = JSON.parse(open.body)
+check('term/open 拿不到 node-pty 时返回 200 + mode:exec（不 5xx）', open.status === 200 && openJson.mode === 'exec', JSON.stringify(openJson).slice(0, 160))
+check('term/open 降级时带原因', openJson.ok === false && String(openJson.error || '').includes('node-pty'), String(openJson.error || '').slice(0, 100))
+
+const stream404 = await call(BASE + '/term/stream', { id: 'nope-nope' })
+check('term/stream 未知会话 → 404', stream404.status === 404, String(stream404.status))
+const input409 = await call(BASE + '/term/input', { id: 'nope-nope', data: 'x' })
+check('term/input 未知会话 → 409', input409.status === 409, String(input409.status))
+const resize409 = await call(BASE + '/term/resize', { id: 'nope-nope', cols: 80, rows: 24 })
+check('term/resize 未知会话 → 409', resize409.status === 409, String(resize409.status))
+const killOk = await call(BASE + '/term/kill', { id: 'nope-nope' })
+check('term/kill 幂等（不存在的会话也 200）', killOk.status === 200, String(killOk.status))
+
 const failed = results.filter((r) => !r.ok)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)
 process.exit(failed.length ? 1 : 0)

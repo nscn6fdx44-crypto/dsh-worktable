@@ -2,7 +2,7 @@
 
 A **DeepSeek Harness (DSH)** side-panel *worktable* plugin: turn your projects into a side-panel app drawer with a dockable split workspace — file browser, editor, terminal, in-app browser, media viewer, notes, custom window and read-only git — all inside DSH.
 
-> 中文说明见 [README.zh.md](README.zh.md) · 当前版本 **0.8.53**
+> 中文说明见 [README.zh.md](README.zh.md) · 当前版本 **0.9.0**
 
 Requires **DSH `0.2.0-rc.2` or `0.2.1-rc.2`** (Windows desktop).
 
@@ -17,27 +17,27 @@ The CLI lives at `<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd` — 
 **Option A — install straight from the release URL** (DSH downloads the asset itself):
 
 ```powershell
-& "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.8.53/trae-usage-worktable-0.8.53.tgz"
+& "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.9.0/trae-usage-worktable-0.9.0.tgz"
 ```
 
 **Option B — download the file and install it locally** (use this if GitHub is slow or blocked):
 
-1. Download `trae-usage-worktable-0.8.53.tgz` from the [v0.8.53 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.8.53) to any folder you like
-   (130.1 KB, sha256 `ec55f523460f7224e22905c4a175d2d967df24102416f43f9ceeda907611261e`)
+1. Download `trae-usage-worktable-0.9.0.tgz` from the [v0.9.0 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.9.0) to any folder you like
+   (218.8 KB, sha256 `ec7fc69edc1a188e630deb94392cf189a156ae12ec80aa873efc74d291b955e1`)
 2. In PowerShell — replace the path with wherever **you** saved it:
    ```powershell
-   & "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<full path to>\trae-usage-worktable-0.8.53.tgz"
+   & "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<full path to>\trae-usage-worktable-0.9.0.tgz"
    ```
 
-Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. Verify with `/api/trae-worktable/health` → `"version": "0.8.53"`.
+Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. Verify with `/api/trae-worktable/health` → `"version": "0.9.0"`.
 
 ## What's inside
 
 - **Project drawer** — scan, pin, reorder and manage your local projects from the sidebar; auto-adapts to how much room the host sidebar gives it
 - **Dockable split workspace** — panes sit left of the conversation and hand the right side back to a *real* DSH chat, resizable and remembered per project
-- **Layout presets** — single column / side-by-side / stacked, plus drag-to-resize splits
+- **Layout presets** — six of them: single / side-by-side / stacked / top-row + two / three columns / 2×2, each with drag-to-resize splits; drag a tab onto another pane to swap them
 - **File browser & editor** — browse, open and edit files with a sandbox that blocks credential dirs (`.ssh` / `.aws` / `.env*` …) and path escapes
-- **Terminal** — run commands inside your project, with command history
+- **Terminal** — a real PTY (xterm.js + the host's own node-pty): `vim`, `top`, `ssh` and REPLs work, `Ctrl+C` reaches the foreground process; falls back to one-process-per-command if the native module is unavailable
 - **Run configs** — one click ▶ feeds a command to the terminal in the project directory, ■ stops it, ports open in a pane
 - **In-app browser** — open internal tools and web pages in a docked pane (reachability + iframe-ability probed first)
 - **Media pane** — images, PDF, SVG, audio and video, picked from disk or browsed from the project
@@ -49,11 +49,12 @@ Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. 
 - **Keyboard shortcuts**, per-project templates, and JSON import/export for your setup
 - **Drag to chat** — drop a file row or a browser URL on the top bar and it lands in the chat input as a ready-to-send block
 
-## Latest changes (0.8.48 → 0.8.53)
+## Latest changes (0.8.48 → 0.9.0)
 
+- **0.9.0** three gaps against upstream closed at once: **real PTY terminal** (borrows the host's own `node-pty`, so `vim` / `top` / `ssh` / REPLs work and `Ctrl+C` reaches the foreground process; degrades to command mode with a readable reason if the native module is missing), **six layout presets** (adds top-row + two, three columns, and 2×2), and **drag tabs across panes**
 - **0.8.53** drag & drop into the conversation: drag a file from the file browser, or a URL from the browser address bar, onto the workbench top bar — the path/URL plus a heading is filled into the DSH chat input (**not auto-sent**); toolbar buttons 「→ 对话」/「💬」 do the same in one click
 
-All five releases in this range fix the same family of bugs — sidebar sizing and host hand-off geometry:
+The 0.8.48 – 0.8.52 releases in this range fix the same family of bugs — sidebar sizing and host hand-off geometry:
 
 - **0.8.48** sidebar card now measures the space the host actually gives it (`sideModeOf`) instead of a fixed `46vh / 330px`
 - **0.8.49** card no longer covers the host session list — root cause was *overflow*, not z-index: the card refused to shrink (`flex: 0 0 auto`) and spilled over the list

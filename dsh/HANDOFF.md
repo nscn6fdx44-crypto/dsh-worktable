@@ -11,13 +11,13 @@
 | --- | --- |
 | 仓库目录 | `C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh`（git 顶层是上一级 `2026-10-16-23-21-22`，插件在 `dsh/` 子目录） |
 | 远端 | `https://github.com/nscn6fdx44-crypto/dsh-worktable.git` |
-| 分支 / 最近提交 | `dsh-plugin` / 0.8.53 由两个提交构成：`f2f518a feat(0.8.53): 文件 / 网页可拖到会话` + `c317e88 docs(release)`，之后是文档同步 |
-| 版本 | `package.json` = `dsh.plugin.json` = **0.8.53** |
+| 分支 / 最近提交 | `dsh-plugin` / 0.9.0 一个提交：`feat(0.9.0): 真 PTY 终端 + 六种布局 + 标签跨格拖` |
+| 版本 | `package.json` = `dsh.plugin.json` = **0.9.0** |
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
-| 运行中的实例 | `/api/trae-worktable/health` → **0.8.53**（已生效） |
-| 自测基线 | host **131** + client **496** 全通过（`npm test`） |
-| tag | `v0.8.53` **已打并推送**（带注释） |
-| Release | `v0.8.53` **已发布**，附件 `trae-usage-worktable-0.8.53.tgz`（130.1 KB，sha256 `ec55f523…11261e`）已校验与本地一致 |
+| 运行中的实例 | `/api/trae-worktable/health` → 重启前仍是 **0.8.52**；PTY 是 host 侧改动，**必须完整重启 DSH** 才生效 |
+| 自测基线 | host **140** + client **518** 全通过（`npm test`） |
+| tag | `v0.9.0` 待打（提交后打 tag 并推送） |
+| Release | `v0.9.0` 待发布；包 `trae-usage-worktable-0.9.0.tgz`（218.8 KB，sha256 `ec7fc69e…b955e1`）已打包 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
 
 ---
@@ -195,6 +195,11 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 ---
 
 ## 9. 下一步建议（按优先级）
+
+0. **0.9.0 真机验收（只有这一条必须人点）**：重启 DSH 后看终端工具条 `PTY` 徽标是否点亮 →
+   `python` 进 REPL 能交互 → `Ctrl+C` 退 REPL 但 shell 还在 → 切标签页再切回输出还在 →
+   切「▤ 上一下二 / ▥ 三列 / ▦ 四格」每格都有内容 → 拖标签跨格互换。
+   顺手看一眼 `GET /api/trae-worktable/term/mode` 的 `ok/from`，能直接看出用的是哪份 node-pty；
 
 1. ~~**打 tag + 补 Release 资产**~~ —— **0.8.52 / 0.8.53 都已发**（2026-10-19）：
    tag 已推、Release 已建、附件已传并校验 sha256；首页 `README.md` / `README.zh.md` / `INSTALL.md`

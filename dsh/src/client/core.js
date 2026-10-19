@@ -390,6 +390,12 @@ export function uiOf(pid) {
     layout: LAYOUTS.some((l) => l.id === raw.layout) ? raw.layout : 'single',
     secondTab: typeof raw.secondTab === 'string' ? raw.secondTab : '',
     split: Number.isFinite(Number(raw.split)) && Number(raw.split) > 0 ? Math.round(Number(raw.split)) : 0,
+    /* 第 3、4 格显示的标签页（索引 2、3；0/1 分别由 activeTab / secondTab 承担） */
+    cells: Array.isArray(raw.cells)
+      ? raw.cells.map((k) => (typeof k === 'string' ? k : '')).concat(['', '', '', '']).slice(0, 4)
+      : ['', '', '', ''],
+    /* 第二条分割线（三列 / 四格用），0 = 50/50 */
+    splitB: Number.isFinite(Number(raw.splitB)) && Number(raw.splitB) > 0 ? Math.round(Number(raw.splitB)) : 0,
   }
 }
 
@@ -1288,7 +1294,8 @@ export function runProject(pid) {
   }
   openTab(pid, 'term')
   emit({ run: { pid, state: 'running', cmd, at: Date.now(), error: '' } })
-  termExec(pid, cmd)
+  /* 有交互式终端就把命令打进去（看得见输出）；没有才退回命令模式 */
+  termRun(pid, cmd)
   const port = Number((project.run && project.run.port) || 0)
   if (port) toast('已启动：' + cmd + '（端口 ' + port + '）', 'ok')
   else toast('已启动：' + cmd, 'ok')
@@ -1298,7 +1305,7 @@ export function runProject(pid) {
 export function stopProject(pid) {
   const project = projectOf(pid)
   if (!project) return false
-  termKill(pid)
+  termCtrlC(pid)
   emit({ run: { pid, state: 'idle', cmd: '', at: Date.now(), error: '' } })
   toast('已请求停止', 'info')
   return true
@@ -1849,28 +1856,106 @@ export function openMedia(pid, path) {
 
 /* ============================ 布局预设 ============================ */
 
-/** 一个工作区能同时铺几个窗格 */
+/** 一个工作区能同时铺几个窗格（panes = 格子数） */
 export const LAYOUTS = [
-  { id: 'single', icon: '▭', label: '单窗格', hint: '一次只显示一个窗口（默认）' },
-  { id: 'vsplit', icon: '◫', label: '左右两栏', hint: '左栏 + 右栏，中间可拖动；两栏各看一个窗口' },
-  { id: 'hsplit', icon: '⬓', label: '上下两栏', hint: '上排 + 下排，中间可拖动；两栏各看一个窗口' },
+  { id: 'single', icon: '▭', label: '单窗格', hint: '一次只显示一个窗口（默认）', panes: 1 },
+  { id: 'vsplit', icon: '◫', label: '左右两栏', hint: '左栏 + 右栏，中间可拖动；两栏各看一个窗口', panes: 2 },
+  { id: 'hsplit', icon: '⬓', label: '上下两栏', hint: '上排 + 下排，中间可拖动；两栏各看一个窗口', panes: 2 },
+  { id: 't3', icon: '▤', label: '上一下二', hint: '顶行通栏 + 下面并排两栏（三格）', panes: 3 },
+  { id: 'cols3', icon: '▥', label: '三列', hint: '三栏并排，两条分割线都能拖', panes: 3 },
+  { id: 'grid4', icon: '▦', label: '四格', hint: '2×2 四格，行列各一条分割线', panes: 4 },
 ]
+
+/** 这个布局要铺几个窗格 */
+export function paneCountOf(layout) {
+  const hit = LAYOUTS.find((l) => l.id === layout)
+  return hit ? hit.panes : 1
+}
+
+/** 第 slot 格现在显示哪个标签页（0 = 主窗格，1 = 次窗格，2/3 存 ui.cells） */
+export function cellKeyOf(ui, slot) {
+  if (slot <= 0) return ui.activeTab || ''
+  if (slot === 1) return ui.secondTab || ''
+  return (ui.cells && ui.cells[slot]) || ''
+}
+
+/** 某一格空着时，挑一个没被别格占用的标签页顶上 */
+function freeTabFor(ui, slot, extraSkip) {
+  const used = new Set(extraSkip ? [extraSkip] : [])
+  for (let i = 0; i < 4; i++) {
+    if (i === slot) continue
+    const k = cellKeyOf(ui, i)
+    if (k) used.add(k)
+  }
+  return (ui.tabs.find((t) => !used.has(t.key)) || {}).key || ''
+}
+
+/** 往 patch 里写「某一格显示 key」——两个老字段（activeTab / secondTab）保持原语义 */
+function withCell(ui, patch, slot, key) {
+  if (slot <= 0) patch.activeTab = key
+  else if (slot === 1) patch.secondTab = key
+  else {
+    const cells = (patch.cells || ui.cells || []).concat(['', '', '', '']).slice(0, 4)
+    cells[slot] = key
+    patch.cells = cells
+  }
+  return patch
+}
 
 export function setLayout(pid, layout) {
   const id = LAYOUTS.some((l) => l.id === layout) ? layout : 'single'
   const ui = uiOf(pid)
   const patch = { layout: id }
-  /* 第一次切到分栏：自动给“第二窗格”挑一个和当前不同的标签页 */
-  if (id !== 'single' && !ui.secondTab) {
-    const cur = ui.activeTab || (ui.tabs[0] ? ui.tabs[0].key : '')
-    const alt = ui.tabs.find((t) => t.key !== cur) || ui.tabs[0]
-    patch.secondTab = alt ? alt.key : ''
+  /* 多窗格：把空着的格子填上「还没被占用的标签页」，切过去立刻有内容 */
+  const draft = { ...ui, cells: (ui.cells || []).slice() }
+  for (let slot = 1; slot < paneCountOf(id); slot++) {
+    if (cellKeyOf(draft, slot)) continue
+    const key = freeTabFor(draft, slot)
+    withCell(draft, patch, slot, key)
+    if (slot === 1) draft.secondTab = key
+    else draft.cells[slot] = key
   }
   patchUi(pid, patch)
 }
 
 export function setSecondTab(pid, key) {
   patchUi(pid, { secondTab: typeof key === 'string' ? key : '' })
+}
+
+/** 往第 slot 格放一个标签页（0 主 / 1 次 / 2、3 由 cells 承担） */
+export function setCellTab(pid, slot, key) {
+  const ui = uiOf(pid)
+  const to = Math.max(0, Math.min(3, Number(slot) || 0))
+  if (!key || typeof key !== 'string') return
+  patchUi(pid, withCell(ui, {}, to, key))
+}
+
+/** 拖标签到另一格：两格互换（目标格原来那个标签页回到源格） */
+export function moveTabToCell(pid, key, slot) {
+  const ui = uiOf(pid)
+  const to = Math.max(0, Math.min(3, Number(slot) || 0))
+  if (to >= paneCountOf(ui.layout)) return false
+  let from = -1
+  for (let i = 0; i < 4; i++) if (cellKeyOf(ui, i) === key) { from = i; break }
+  if (from < 0 || from === to) return false
+  const target = cellKeyOf(ui, to)
+  const patch = {}
+  const draft = { ...ui, cells: (ui.cells || []).slice() }
+  /* 源格不能空着：优先换过来，实在没有别的标签页就挑一个空闲的 */
+  const back = target || freeTabFor(draft, from, key)
+  withCell(draft, patch, from, back)
+  if (from === 1) draft.secondTab = back
+  else if (from > 1) draft.cells[from] = back
+  else draft.activeTab = back
+  withCell(draft, patch, to, key)
+  patchUi(pid, patch)
+  return true
+}
+
+/** 第二条分割线（三列 / 四格）：pct = 20–80；传 0 复位 50/50 */
+export function setSplitB(pid, pct) {
+  const n = Number(pct)
+  patchUi(pid, { splitB: Number.isFinite(n) && n > 0 ? Math.max(20, Math.min(80, Math.round(n))) : 0 })
 }
 
 /** pct = 第一窗格占比（20–80）；传 0 复位 50/50 */
@@ -1914,7 +1999,17 @@ export function closeTab(pid, key) {
   const tabs = ui.tabs.filter((t) => t.key !== key)
   const activeTab = ui.activeTab === key ? (tabs[Math.max(0, idx - 1)]?.key || '') : ui.activeTab
   const secondTab = ui.secondTab === key ? (tabs.find((t) => t.key !== activeTab)?.key || '') : ui.secondTab
-  patchUi(pid, { tabs, activeTab, secondTab })
+  /* 三/四格布局：被关掉的那一格换一个没人用的标签页，别留半块空白 */
+  const cells = (ui.cells || []).slice()
+  for (let i = 2; i < 4; i++) {
+    if (cells[i] === key) cells[i] = ''
+    if (!cells[i]) {
+      const used = new Set([activeTab, secondTab].concat(cells.filter(Boolean)))
+      const alt = tabs.find((t) => !used.has(t.key))
+      cells[i] = alt ? alt.key : ''
+    }
+  }
+  patchUi(pid, { tabs, activeTab, secondTab, cells })
 }
 
 export function setActiveTab(pid, key) {
@@ -2379,6 +2474,44 @@ export async function termExec(pid, cmdRaw) {
     if (timer) clearTimeout(timer)
     termPatch(pid, { busy: false })
   }
+}
+
+/**
+ * 把一条命令「打进」当前终端。
+ * 有真 PTY 会话（wt-pty-<pid>）就直接写进去，命令出现在交互式 shell 里、输出看得见；
+ * 没有就退回命令模式（一条命令一个进程）。返回 true = 走了 PTY。
+ */
+export async function termRun(pid, cmdRaw) {
+  const cmd = String(cmdRaw || '').trim()
+  if (!cmd) return false
+  try {
+    const res = await fetch(API + '/term/input', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'wt-pty-' + pid, data: cmd + '\r' }),
+    })
+    if (res.ok) {
+      pushHistory(pid, cmd)
+      termPatch(pid, { cwd: (projectOf(pid) || {}).path || '' })
+      return true
+    }
+  } catch { /* 没 PTY / 宿主异常：下面兜底 */ }
+  termExec(pid, cmd)
+  return false
+}
+
+/** Ctrl+C：PTY 里发 \x03（只打断前台命令，不杀 shell）；命令模式杀进程树 */
+export async function termCtrlC(pid) {
+  try {
+    const res = await fetch(API + '/term/input', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'wt-pty-' + pid, data: '\u0003' }),
+    })
+    if (res.ok) return true
+  } catch { /* 没有 PTY */ }
+  termKill(pid)
+  return false
 }
 
 function applyTermEvent(pid, raw) {

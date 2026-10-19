@@ -37,6 +37,7 @@ import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
+import { loadPty, shellSpec, openSession, getSession, peekSession, closeSession, listSessions } from './pty.js'
 
 export const name = 'trae-usage-worktable'
 export const inject = ['webServer']
@@ -614,9 +615,107 @@ export function apply(ctx) {
     if (!allowMethod(req, res, 'POST')) return
     const body = await readJson(req, res, MAX_BODY_JSON)
     if (body === undefined) return
-    const term = TERM_SESSIONS.get(String(body?.id || 'default'))
+    const id = String(body?.id || 'default')
+    const term = TERM_SESSIONS.get(id)
     if (term?.child) killTree(term.child)
+    closeSession(id)
     sendJson(res, 200, { ok: true })
+  })})
+
+  /* ---------- 终端：真 PTY（借用宿主自带的 node-pty） ---------- */
+
+  register({ kind: 'exact', path: BASE + '/term/mode', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'GET')) return
+    const p = loadPty()
+    sendJson(res, 200, {
+      ok: p.ok, from: p.from, error: p.error, shell: shellSpec().file, sessions: listSessions(),
+    })
+  })})
+
+  /**
+   * 开一个交互式终端。
+   * 拿不到 node-pty 时**不报错**，返回 { ok:false, mode:'exec' }：客户端据此退回
+   * 「一条命令一个进程」的老模式，用户不至于开不出终端。
+   */
+  register({ kind: 'exact', path: BASE + '/term/open', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const id = String(body?.id || 'default').slice(0, 64) || 'default'
+    const r = openSession(id, { cwd: body?.cwd, cols: body?.cols, rows: body?.rows })
+    if (!r.ok) return sendJson(res, 200, { ok: false, mode: 'exec', error: r.error })
+    sendJson(res, 200, {
+      ok: true, mode: 'pty', id, shell: r.shell, cwd: r.cwd,
+      cols: r.session.cols, rows: r.session.rows,
+    })
+  })})
+
+  /** 把 PTY 输出以 NDJSON 长连接推给客户端（先回放 backlog，再接实时流） */
+  register({ kind: 'exact', path: BASE + '/term/stream', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const id = String(body?.id || 'default')
+    const s = peekSession(id)
+    if (!s) return sendJson(res, 404, { error: '没有这个终端会话（先 /term/open）' })
+
+    res.writeHead(200, {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-accel-buffering': 'no',
+      connection: 'keep-alive',
+    })
+    const send = (obj) => { try { res.write(JSON.stringify(obj) + '\n') } catch { /* 客户端已断开 */ } }
+    if (s.backlog) send({ t: 'out', d: s.backlog })
+    send({ t: 'ready', d: id })
+    if (s.exited) {
+      send({ t: 'exit', code: s.code ?? 0 })
+      return res.end()
+    }
+    const onData = (d) => {
+      if (d === null) { send({ t: 'exit', code: s.code ?? 0 }); cleanup(); return }
+      send({ t: 'out', d })
+    }
+    const cleanup = () => {
+      s.listeners.delete(onData)
+      try { res.end() } catch { /* 已结束 */ }
+    }
+    s.listeners.add(onData)
+    req.on('close', () => { s.listeners.delete(onData) })
+  })})
+
+  register({ kind: 'exact', path: BASE + '/term/input', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const s = getSession(body?.id)
+    if (!s) return sendJson(res, 409, { error: '终端已关闭' })
+    const data = String(body?.data ?? '')
+    if (data.length > 64_000) return sendJson(res, 400, { error: '一次输入过长' })
+    try {
+      s.pty.write(data)
+    } catch (err) {
+      return sendJson(res, 500, { error: '写入终端失败：' + msg(err) })
+    }
+    sendJson(res, 200, { ok: true })
+  })})
+
+  register({ kind: 'exact', path: BASE + '/term/resize', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'POST')) return
+    const body = await readJson(req, res, MAX_BODY_JSON)
+    if (body === undefined) return
+    const s = getSession(body?.id)
+    if (!s) return sendJson(res, 409, { error: '终端已关闭' })
+    const cols = clampInt(body?.cols, 20, 400, s.cols)
+    const rows = clampInt(body?.rows, 6, 200, s.rows)
+    try {
+      s.pty.resize(cols, rows)
+      s.cols = cols
+      s.rows = rows
+    } catch (err) {
+      return sendJson(res, 500, { error: '调整终端尺寸失败：' + msg(err) })
+    }
+    sendJson(res, 200, { ok: true, cols, rows })
   })})
 
   /* ---------- git（只读） ---------- */

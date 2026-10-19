@@ -8,7 +8,7 @@
  *
  * 让位几何全部来自 hostdock.js，组件只消费 geo，不直接碰宿主 DOM。
  */
-import { Component, useRef } from 'react'
+import { Component, useRef, useState } from 'react'
 import { el, Light, Splitter, ContextMenu, Toasts } from './ui.js'
 import { ModalHost } from './modals.js'
 import { useHostDock, remeasure, undockedBox, anchorLeft } from './hostdock.js'
@@ -17,7 +17,8 @@ import {
   fmtDuration, relTime, shortPath, projEmoji, openGrid, enterProject, closeOverlay,
   openModal, openMenu, setDockPx, openTab, closeTab, setActiveTab,
   loadSessions, stateOf, sessionsOf, primarySession, projectBySession, createFromSession, startSessionDrag, switchHostSession, emit,
-  LAYOUTS, setLayout, setSecondTab, setSplit,
+  LAYOUTS, setLayout, setSecondTab, setSplit, setSplitB,
+  paneCountOf, cellKeyOf, setCellTab, moveTabToCell,
   themeStyle, themeAttrs,
   jumpToSession, setGridTab, uiOf, flushUi,
   overviewProjects, setOverview, OVERVIEW_SORTS, OVERVIEW_FILTERS,
@@ -471,25 +472,70 @@ function Workspace({ project, ui, geo }) {
   )
 }
 
+/**
+ * 多窗格铺法（全部由 flex 套出来，不引 grid）：
+ *   vsplit  ◫ 左右两栏            hsplit ⬓ 上下两栏
+ *   t3      ▤ 顶行通栏 + 下两栏   cols3  ▥ 三列
+ *   grid4   ▦ 2×2
+ * 每格都是一个完整的 MainPane（自带标签栏），分割条按父容器算百分比。
+ */
 function Panes({ project, ui }) {
   const layout = ui.layout || 'single'
   const tabs = ui.tabs || []
-  /* 分栏但没有第二个窗口可用时退回单窗格，避免出现半块空白 */
-  if (layout === 'single' || tabs.length < 2) return el(MainPane, { key: 'main', project, ui, slot: 'a' })
-  const vertical = layout === 'vsplit'
-  const pct = ui.split > 0 ? ui.split : 50
-  const box = (which) => (vertical
-    ? { width: (which === 'a' ? pct : 100 - pct) + '%' }
-    : { height: (which === 'a' ? pct : 100 - pct) + '%' })
-  return el('div', { className: 'ws-split ' + (vertical ? 'v' : 'h') },
-    el('div', { className: 'ws-cell', style: box('a') }, el(MainPane, { key: 'a', project, ui, slot: 'a' })),
-    el(PaneSplit, { vertical, onPct: (v) => setSplit(project.id, v) }),
-    el('div', { className: 'ws-cell', style: box('b') }, el(MainPane, { key: 'b', project, ui, slot: 'b' })),
-  )
+  const count = paneCountOf(layout)
+  /* 分栏但可用标签页不够时退回单窗格，避免出现半块空白 */
+  if (count < 2 || tabs.length < 2) return el(MainPane, { key: 'main', project, ui, slot: 0 })
+
+  const a = ui.split > 0 ? ui.split : 50
+  const b = ui.splitB > 0 ? ui.splitB : 50
+  const cell = (slot, style) => el('div', { key: 'c' + slot, className: 'ws-cell', style },
+    el(MainPane, { project, ui, slot }))
+  const bar = (key, vertical, set, title) => el(PaneSplit, {
+    key, vertical, title,
+    onPct: (v) => set(project.id, v),
+  })
+
+  if (layout === 'vsplit') {
+    return el('div', { className: 'ws-split v' },
+      cell(0, { width: a + '%' }), bar('s1', true, setSplit),
+      cell(1, { width: (100 - a) + '%' }))
+  }
+  if (layout === 'hsplit') {
+    return el('div', { className: 'ws-split h' },
+      cell(0, { height: a + '%' }), bar('s1', false, setSplit),
+      cell(1, { height: (100 - a) + '%' }))
+  }
+  if (layout === 't3') {
+    return el('div', { className: 'ws-split h' },
+      cell(0, { height: a + '%' }),
+      bar('s1', false, setSplit),
+      el('div', { key: 'bottom', className: 'ws-split v', style: { flex: 1, minHeight: 0 } },
+        cell(1, { width: b + '%' }), bar('s2', true, setSplitB),
+        cell(2, { width: (100 - b) + '%' })))
+  }
+  if (layout === 'cols3') {
+    /* 两条分割线各管一段；末列至少留 15%，免得挤成一条缝 */
+    const raw = [a, b, Math.max(15, 100 - a - b)]
+    const sum = raw[0] + raw[1] + raw[2]
+    const w = raw.map((x) => (x / sum) * 100)
+    return el('div', { className: 'ws-split v' },
+      cell(0, { width: w[0] + '%' }), bar('s1', true, setSplit),
+      cell(1, { width: w[1] + '%' }), bar('s2', true, setSplitB),
+      cell(2, { width: w[2] + '%' }))
+  }
+  /* grid4：两行，每行再左右分 */
+  return el('div', { className: 'ws-split h' },
+    el('div', { key: 'r1', className: 'ws-split v', style: { height: a + '%', minHeight: 0 } },
+      cell(0, { width: b + '%' }), bar('s1', true, setSplitB),
+      cell(1, { width: (100 - b) + '%' })),
+    bar('s2', false, setSplit),
+    el('div', { key: 'r2', className: 'ws-split v', style: { flex: 1, minHeight: 0 } },
+      cell(2, { width: b + '%' }), bar('s3', true, setSplitB),
+      cell(3, { width: (100 - b) + '%' })))
 }
 
 /** 两栏之间的拖动条（按父容器尺寸换算百分比，横竖都支持） */
-function PaneSplit({ vertical, onPct }) {
+function PaneSplit({ vertical, onPct, title }) {
   const down = (e) => {
     e.preventDefault()
     e.stopPropagation()
@@ -515,26 +561,55 @@ function PaneSplit({ vertical, onPct }) {
     className: 'pane-split ' + (vertical ? 'v' : 'h'),
     role: 'separator',
     'aria-orientation': vertical ? 'vertical' : 'horizontal',
-    title: '拖动调整两栏比例（双击回到 50/50）',
+    title: title || '拖动调整比例（双击回到 50/50）',
     onPointerDown: down,
     onDoubleClick: () => onPct(0),
   }, el('i', null))
 }
 
-function MainPane({ project, ui, nest, slot }) {
+/** 正在拖的标签页：HTML5 拖拽在 dragover 阶段读不到 dataTransfer，只能自己记一份 */
+let dragTabKey = ''
+
+function MainPane({ project, ui, nest, slot = 0 }) {
   const tabs = ui.tabs
-  const isB = slot === 'b'
-  /* 第二窗格默认挑一个和第一窗格不同的标签页 */
-  const fallbackB = (tabs.find((t) => t.key !== ui.activeTab) || tabs[0] || {}).key || ''
-  const activeKey = isB
-    ? (ui.secondTab || fallbackB)
-    : (ui.activeTab || (tabs[0] ? tabs[0].key : ''))
+  const idx = Math.max(0, Number(slot) || 0)
+  const isB = idx > 0
+  const [over, setOver] = useState(false)
+  /* 本格没指定（或指定的标签页已被关掉）时，挑一个「别格没用着」的标签页顶上 */
+  const used = new Set()
+  for (let i = 0; i < 4; i++) {
+    if (i === idx) continue
+    const k = cellKeyOf(ui, i)
+    if (k) used.add(k)
+  }
+  const fallback = (tabs.find((t) => !used.has(t.key)) || tabs[0] || {}).key || ''
+  const activeKey = cellKeyOf(ui, idx) || fallback
   const active = tabs.find((t) => t.key === activeKey) || null
 
   const titleOf = (t) => (t.kind === 'editor' ? (store.editor.name || '编辑器') : t.title)
-  const pick = (key) => (isB ? setSecondTab(project.id, key) : setActiveTab(project.id, key))
+  const pick = (key) => setCellTab(project.id, idx, key)
 
-  return el('div', { className: 'pane pane-main' + (nest ? ' pane-nest' : '') + (isB ? ' pane-b' : '') },
+  const dropHere = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const key = dragTabKey || String((e.dataTransfer && e.dataTransfer.getData('text/plain')) || '')
+    dragTabKey = ''
+    setOver(false)
+    if (key) moveTabToCell(project.id, key, idx)
+  }
+
+  return el('div', {
+    className: 'pane pane-main' + (nest ? ' pane-nest' : '') + (isB ? ' pane-b' : '') + (over ? ' drag-over' : ''),
+    onDragOver: (e) => {
+      if (!dragTabKey) return
+      e.preventDefault()
+      if (!over) setOver(true)
+    },
+    onDragLeave: (e) => {
+      if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget)) setOver(false)
+    },
+    onDrop: dropHere,
+  },
     el('div', { className: 'pane-head tabhead' },
       el('div', { className: 'tabs' },
         tabs.length
@@ -542,8 +617,19 @@ function MainPane({ project, ui, nest, slot }) {
             key: t.key,
             className: 'tab' + (t.key === activeKey ? ' on' : ''),
             role: 'button',
-            title: isB ? '在这一栏打开：' + titleOf(t) : '打开：' + titleOf(t),
+            draggable: true,
+            title: (isB ? '在这一栏打开：' : '打开：') + titleOf(t) + '（拖到别的格子可以换过去）',
             onClick: () => pick(t.key),
+            onDragStart: (e) => {
+              dragTabKey = t.key
+              try {
+                e.dataTransfer.setData('text/plain', t.key)
+                e.dataTransfer.effectAllowed = 'move'
+              } catch { /* 个别环境没有 dataTransfer */ }
+            },
+            onDragEnd: () => { dragTabKey = '' },
+            onDragOver: (e) => { if (dragTabKey) { e.preventDefault(); e.stopPropagation() } },
+            onDrop: dropHere,
           },
             el('span', { className: 'tab-title' }, titleOf(t)),
             el('button', {

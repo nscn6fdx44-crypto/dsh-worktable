@@ -1341,6 +1341,65 @@ check('只剩一个标签页时自动退回单窗格', allByClass(oneTab, /(^|\s
 mod.setLayout(pid6, 'single')
 check('切回单窗格', mod.uiOf(pid6).layout === 'single', mod.uiOf(pid6).layout)
 
+/* ---------- ⑥b 上一下二 / 三列 / 四格 + 跨格拖标签 ---------- */
+mod.openTab(pid6, 'term')
+mod.openTab(pid6, 'web')
+mod.openTab(pid6, 'notes')
+
+check('六个布局预设', mod.LAYOUTS.length === 6, String(mod.LAYOUTS.length))
+check('paneCountOf 按预设给格子数',
+  mod.paneCountOf('single') === 1 && mod.paneCountOf('vsplit') === 2 && mod.paneCountOf('t3') === 3 && mod.paneCountOf('grid4') === 4,
+  ['single', 'vsplit', 't3', 'grid4'].map((l) => mod.paneCountOf(l)).join('/'))
+check('布局预设都带 panes 字段', mod.LAYOUTS.every((l) => l.panes >= 1), '')
+
+mod.setLayout(pid6, 't3')
+const u3 = mod.uiOf(pid6)
+check('上一下二：三格都自动有标签页', !!u3.activeTab && !!u3.secondTab && !!u3.cells[2], JSON.stringify({ a: u3.activeTab, b: u3.secondTab, c: u3.cells[2] }))
+check('三格标签页互不相同', new Set([u3.activeTab, u3.secondTab, u3.cells[2]]).size === 3, [u3.activeTab, u3.secondTab, u3.cells[2]].join(','))
+const t3Tree = render(overlayComp)
+check('上一下二渲染三个窗格', allByClass(t3Tree, /(^|\s)pane-main(\s|$)/).length === 3, allByClass(t3Tree, /pane-main/).length)
+check('上一下二有两条分割线', allByClass(t3Tree, /(^|\s)pane-split(\s|$)/).length === 2, allByClass(t3Tree, /pane-split/).length)
+
+mod.setSplitB(pid6, 12)
+check('第二条分割线下限夹到 20', mod.uiOf(pid6).splitB === 20, String(mod.uiOf(pid6).splitB))
+mod.setSplitB(pid6, 96)
+check('第二条分割线上限夹到 80', mod.uiOf(pid6).splitB === 80, String(mod.uiOf(pid6).splitB))
+mod.setSplitB(pid6, 0)
+check('第二条分割线传 0 复位', mod.uiOf(pid6).splitB === 0, String(mod.uiOf(pid6).splitB))
+
+mod.setLayout(pid6, 'cols3')
+const uc3 = mod.uiOf(pid6)
+const cols3Tree = render(overlayComp)
+check('三列：三格都有标签页', new Set([uc3.activeTab, uc3.secondTab, uc3.cells[2]]).size === 3, '')
+check('三列渲染三个窗格', allByClass(cols3Tree, /(^|\s)pane-main(\s|$)/).length === 3, allByClass(cols3Tree, /pane-main/).length)
+
+mod.setLayout(pid6, 'grid4')
+const ug4 = mod.uiOf(pid6)
+check('四格：四格都有标签页', new Set([ug4.activeTab, ug4.secondTab, ug4.cells[2], ug4.cells[3]]).size === 4, JSON.stringify([ug4.activeTab, ug4.secondTab, ug4.cells[2], ug4.cells[3]]))
+const g4Tree = render(overlayComp)
+check('四格渲染四个窗格', allByClass(g4Tree, /(^|\s)pane-main(\s|$)/).length === 4, allByClass(g4Tree, /pane-main/).length)
+check('四格有三条分割线', allByClass(g4Tree, /(^|\s)pane-split(\s|$)/).length === 3, allByClass(g4Tree, /pane-split/).length)
+
+/* 跨格拖：把第一格的标签拖到第三格 → 两格互换，不丢标签页 */
+const beforeA0 = ug4.activeTab
+const beforeC0 = ug4.cells[2]
+check('拖标签到另一格成功', mod.moveTabToCell(pid6, beforeA0, 2) === true, '')
+const ug5 = mod.uiOf(pid6)
+check('目标格换成拖过去的标签页', ug5.cells[2] === beforeA0, ug5.cells[2] + ' vs ' + beforeA0)
+check('源格换回目标格原来的标签页', ug5.activeTab === beforeC0, ug5.activeTab + ' vs ' + beforeC0)
+check('标签页总数没变（是互换不是复制）', ug5.tabs.length === ug4.tabs.length, ug5.tabs.length + ' vs ' + ug4.tabs.length)
+check('拖到同一格不动作', mod.moveTabToCell(pid6, ug5.cells[2], 2) === false, '')
+
+/* 关掉某个正被格子用着的标签页 → 那一格自动换一个顶上 */
+const closingKey = ug5.cells[2]
+mod.closeTab(pid6, closingKey)
+check('关掉的标签页从格子里清掉', mod.uiOf(pid6).cells[2] !== closingKey, mod.uiOf(pid6).cells[2])
+
+const g5Tree = render(overlayComp)
+const dragTabs = collect(g5Tree).filter((n) => n.props && n.props.draggable === true)
+check('标签页带 draggable 可以拖', dragTabs.length >= 3, String(dragTabs.length))
+mod.setLayout(pid6, 'single')
+
 /* ---------- ⑦ 媒体窗 / 笔记窗 ---------- */
 mod.setLayout(pid6, 'single')
 mod.store.open = true

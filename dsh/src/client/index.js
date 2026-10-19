@@ -21,7 +21,8 @@ import {
   closeMenu, closeModal, closeOverlay, startTicker, VERSION, openFile, createSessionInDir, switchHostSession, openSearch,
   searchUrl, webGotoSmart, setTheme, resetTheme, themeStyle, themeAttrs, webHome,
   moveProjectBefore, setProjectFolder,
-  LAYOUTS, setLayout, setSecondTab, setSplit, uiOf,
+  LAYOUTS, setLayout, setSecondTab, setSplit, setSplitB, uiOf,
+  paneCountOf, cellKeyOf, setCellTab, moveTabToCell,
   openTab, closeTab,
   updateProject, projectOf,
   loadArtifacts, openArtifact, sendArtifactToChat, openMedia, ARTIFACT_FILE,
@@ -32,7 +33,7 @@ import {
   overviewProjects, setOverview, OVERVIEW_SORTS, OVERVIEW_FILTERS, setGridTab,
   handleHotkey, HOTKEYS,
   setRunConfig, runProject, stopProject, openRunPort,
-  termExec,
+  termExec, termRun, termCtrlC,
   setSideProject, setSideSplit, sideProjectOf,
   enterProject,
   listMediaDir,
@@ -53,14 +54,15 @@ export { VERSION }
 export { computeDock, attachHost, applyDock, releaseDock, dockAspect } from './hostdock.js'
 /* 离线自测出口：暴露编辑器状态与 openFile，便于断言「未保存改动不被覆盖」守卫 */
 export { store, openFile, createSessionInDir, switchHostSession, searchUrl, webGotoSmart, setTheme, resetTheme, themeStyle, themeAttrs, webHome, openSearch, moveProjectBefore, setProjectFolder,
-  LAYOUTS, setLayout, setSecondTab, setSplit, uiOf, openTab, closeTab, updateProject,
+  LAYOUTS, setLayout, setSecondTab, setSplit, setSplitB, uiOf,
+  paneCountOf, cellKeyOf, setCellTab, moveTabToCell, openTab, closeTab, updateProject,
   loadArtifacts, openArtifact, sendArtifactToChat, openMedia,
   PROJECT_TEMPLATES, applyTemplate, exportSnapshot, exportSnapshotText, importSnapshot, openModal, closeModal,
   registerExternalProject, unregisterExternalProject, openExternalProject,
   removeProject, undoRemoveProject, toastUndo, PaneBoundary,
   overviewProjects, setOverview, setGridTab,
   handleHotkey, HOTKEYS,
-  setRunConfig, runProject, stopProject, openRunPort, hydrate, termExec,
+  setRunConfig, runProject, stopProject, openRunPort, hydrate, termExec, termRun, termCtrlC,
   setSideProject, setSideSplit, sideProjectOf, enterProject, kindOfMediaPath, mediaRowsOf, listMediaDir, sideModeOf, pickDock, remeasure, undockedBox,
   fileUrlOf, chatTextForFile, chatTextForUrl, readChatDrop, sendToChat, sendPathToChat, sendUrlToChat }
 
