@@ -11,13 +11,13 @@
 | --- | --- |
 | 仓库目录 | `C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh`（git 顶层是上一级 `2026-10-16-23-21-22`，插件在 `dsh/` 子目录） |
 | 远端 | `https://github.com/nscn6fdx44-crypto/dsh-worktable.git` |
-| 分支 / 最近提交 | `dsh-plugin` / `9e1fbb9 fix(0.8.52): 侧边栏展开时工作台会话/关闭键点不动` |
+| 分支 / 最近提交 | `dsh-plugin` / 0.8.53 由两个提交构成：`f2f518a feat(0.8.53): 文件 / 网页可拖到会话` + `c317e88 docs(release)`，之后是文档同步 |
 | 版本 | `package.json` = `dsh.plugin.json` = **0.8.53** |
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
 | 运行中的实例 | `/api/trae-worktable/health` → **0.8.53**（已生效） |
 | 自测基线 | host **131** + client **496** 全通过（`npm test`） |
-| tag | `v0.8.52` **已打并推送**（带注释，指向 `ea1a8aa`） |
-| Release | `v0.8.52` **已发布**，附件 `trae-usage-worktable-0.8.52.tgz`（128.1 KB，sha256 `d263ec9e…31da66`）已校验与本地一致 |
+| tag | `v0.8.53` **已打并推送**（带注释） |
+| Release | `v0.8.53` **已发布**，附件 `trae-usage-worktable-0.8.53.tgz`（130.1 KB，sha256 `ec55f523…11261e`）已校验与本地一致 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
 
 ---
@@ -66,8 +66,8 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 
 ### GitHub Release（**已完成**）
 
-- tag `v0.8.52` 已推；Release `v0.8.52` 已建、附件已上传，正文取自
-  `C:\Users\jinshuaiyu\Documents\deepseek-harness\default-workspace\RELEASE-v0.8.52.md`
+- tag `v0.8.53` 已推；Release `v0.8.53` 已建、附件已上传，正文取自仓库内
+  `dsh/docs/releases/v0.8.53.md`（**0.8.53 起发布说明进仓库了**，不再放 Documents 下）
 - **别再信「没有 token」这条**：本机没 `gh`、没 `GH_TOKEN`，但 `git credential fill`
   能直接拿到 GitHub OAuth 令牌（`gho_` 开头，scopes 含 `repo`），`api.github.com` 也没被 hosts 拦：
   ```powershell
@@ -77,9 +77,12 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
   建 Release = `POST /repos/<owner>/<repo>/releases`（`tag_name`/`name`/`body`），
   传附件 = `POST https://uploads.github.com/repos/<owner>/<repo>/releases/<id>/assets?name=<文件名>`，
   Content-Type 用 `application/gzip`。改正文用 `PATCH /releases/<id>`，删附件用 `DELETE /releases/assets/<id>`。
-- 仓库已有 Release：`v0.8.52`、`v0.8.47`、`v0.8.11`（各 1 个附件）
-- **下次发版顺序**：`npm run build && npm test` → 改两处版本号 → 打包 → 更新 RELEASE 说明（含新 sha256）
-  → commit + push → `git tag -a` + push tag → 建 Release / 传附件（脚本可照上面重写，幂等）
+- 仓库已有 Release：`v0.8.53`、`v0.8.52`、`v0.8.47`、`v0.8.11`（各 1 个附件）
+- **首页/安装文档跟着版本走**：发版时必须一起改 —— `README.md`、`README.zh.md`、`INSTALL.md`
+  里的下载 URL、版本号、sha256、大小（漏改就会出现「首页写的还是上个版本」）
+- **下次发版顺序**：`npm run build && npm test` → 改两处版本号 → 写 `docs/releases/vX.md`
+  → 打包并算 sha256（注意：`dsh/README.md` 会在包里，改它要**在打包前**改完）
+  → 同步根 README / INSTALL 的版本与 sha → commit + push → `git tag -a` + push tag → 建 Release / 传附件
 
 ---
 
@@ -187,11 +190,13 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 
 ## 9. 下一步建议（按优先级）
 
-1. ~~**打 `v0.8.52` tag + 补 Release 资产**~~ —— **已完成（2026-10-19）**：tag 已推、Release 已建、附件已传并校验 sha256；
-   首页 `README.md` / `README.zh.md` 与 `dsh/README.md` 已同步到 0.8.52（安装指向新 Release、补 0.8.48–0.8.52 修复与验收项）；
-2. **真机验收这一串 UI 修复**（0.8.48 → 0.8.52 全是侧边栏/让位相关，最好一次验完并把结果写回本文档 §8）；
+1. ~~**打 tag + 补 Release 资产**~~ —— **0.8.52 / 0.8.53 都已发**（2026-10-19）：
+   tag 已推、Release 已建、附件已传并校验 sha256；首页 `README.md` / `README.zh.md` / `INSTALL.md`
+   与 `dsh/README.md` 已同步到 0.8.53（安装指向新 Release）；
+2. **真机验收**：0.8.48 → 0.8.52 是一族（侧边栏 / 让位），0.8.53 是拖到会话——建议一次验完写回 §8；
+   重点验两条：① 展开宿主侧边栏后工作台的关闭键点得动；② 文件/网页拖到顶栏后输入框里出现【文件】/【网页】块；
 3. **媒体窗真机确认**：三种选法各试一次（选择文件 / 浏览项目 / 拖入）；
-4. 收尾项：`/transcript` 补 `guard()`；把 `README` 的验收清单和「已知坑」同步到 0.8.52；
+4. 收尾项：`/transcript` 补 `guard()`；把 `README` 的验收清单和「已知坑」同步到 0.8.53；
 5. 想再上功能的话，候选：终端命令收藏、多项目并排的三栏、产物清单支持 glob。
 
 ---

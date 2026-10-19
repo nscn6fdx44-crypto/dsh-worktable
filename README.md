@@ -2,7 +2,7 @@
 
 A **DeepSeek Harness (DSH)** side-panel *worktable* plugin: turn your projects into a side-panel app drawer with a dockable split workspace — file browser, editor, terminal, in-app browser, media viewer, notes, custom window and read-only git — all inside DSH.
 
-> 中文说明见 [README.zh.md](README.zh.md) · 当前版本 **0.8.52**
+> 中文说明见 [README.zh.md](README.zh.md) · 当前版本 **0.8.53**
 
 Requires **DSH `0.2.0-rc.2` or `0.2.1-rc.2`** (Windows desktop).
 
@@ -17,19 +17,19 @@ The CLI lives at `<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd` — 
 **Option A — install straight from the release URL** (DSH downloads the asset itself):
 
 ```powershell
-& "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.8.52/trae-usage-worktable-0.8.52.tgz"
+& "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.8.53/trae-usage-worktable-0.8.53.tgz"
 ```
 
 **Option B — download the file and install it locally** (use this if GitHub is slow or blocked):
 
-1. Download `trae-usage-worktable-0.8.52.tgz` from the [v0.8.52 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.8.52) to any folder you like
-   (128.1 KB, sha256 `d263ec9e917d764e3dd0eef0657ad61671d8a1bbe405648459644954f831da66`)
+1. Download `trae-usage-worktable-0.8.53.tgz` from the [v0.8.53 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.8.53) to any folder you like
+   (130.1 KB, sha256 `ec55f523460f7224e22905c4a175d2d967df24102416f43f9ceeda907611261e`)
 2. In PowerShell — replace the path with wherever **you** saved it:
    ```powershell
-   & "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<full path to>\trae-usage-worktable-0.8.52.tgz"
+   & "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<full path to>\trae-usage-worktable-0.8.53.tgz"
    ```
 
-Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. Verify with `/api/trae-worktable/health` → `"version": "0.8.52"`.
+Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. Verify with `/api/trae-worktable/health` → `"version": "0.8.53"`.
 
 ## What's inside
 
@@ -47,8 +47,11 @@ Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. 
 - **Overview page** — every project and host session in one place, with search, sorting, filtering and drag-to-pin
 - **Read-only git** — quick repo status / log / branches without leaving DSH
 - **Keyboard shortcuts**, per-project templates, and JSON import/export for your setup
+- **Drag to chat** — drop a file row or a browser URL on the top bar and it lands in the chat input as a ready-to-send block
 
-## Latest changes (0.8.48 → 0.8.52)
+## Latest changes (0.8.48 → 0.8.53)
+
+- **0.8.53** drag & drop into the conversation: drag a file from the file browser, or a URL from the browser address bar, onto the workbench top bar — the path/URL plus a heading is filled into the DSH chat input (**not auto-sent**); toolbar buttons 「→ 对话」/「💬」 do the same in one click
 
 All five releases in this range fix the same family of bugs — sidebar sizing and host hand-off geometry:
 

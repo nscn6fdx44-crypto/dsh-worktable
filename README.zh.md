@@ -2,7 +2,7 @@
 
 DeepSeek Harness（DSH）侧边栏**工作台**插件：把你的项目收纳成侧边栏应用抽屉，提供可停靠的分栏工作区——文件浏览、编辑器、终端、内置浏览器、媒体查看、笔记、自定义窗口与只读 git——全部在 DSH 内完成。
 
-> 英文说明见 [README.md](README.md) · 当前版本 **0.8.52**
+> 英文说明见 [README.md](README.md) · 当前版本 **0.8.53**
 
 需要 **DSH `0.2.0-rc.2` 或 `0.2.1-rc.2`**（Windows 桌面端）。
 
@@ -17,19 +17,19 @@ CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`�
 **方式 A —— 直接按网址装**（DSH 自己去 GitHub 下载附件）：
 
 ```powershell
-& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.8.52/trae-usage-worktable-0.8.52.tgz"
+& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.8.53/trae-usage-worktable-0.8.53.tgz"
 ```
 
 **方式 B —— 下载后装本地文件**（GitHub 慢或被墙时用）：
 
-1. 从 [v0.8.52 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.8.52) 把 `trae-usage-worktable-0.8.52.tgz` 下载到**你想放的任意目录**
-   （128.1 KB，sha256 `d263ec9e917d764e3dd0eef0657ad61671d8a1bbe405648459644954f831da66`）
+1. 从 [v0.8.53 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.8.53) 把 `trae-usage-worktable-0.8.53.tgz` 下载到**你想放的任意目录**
+   （130.1 KB，sha256 `ec55f523460f7224e22905c4a175d2d967df24102416f43f9ceeda907611261e`）
 2. 在 PowerShell 执行——路径换成**你自己**存放的位置：
    ```powershell
-   & "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<你下载的完整路径>\trae-usage-worktable-0.8.52.tgz"
+   & "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<你下载的完整路径>\trae-usage-worktable-0.8.53.tgz"
    ```
 
-重开 DSH —— 侧边栏即出现「工作台」面板。用 `/api/trae-worktable/health` 核对：`"version": "0.8.52"`。
+重开 DSH —— 侧边栏即出现「工作台」面板。用 `/api/trae-worktable/health` 核对：`"version": "0.8.53"`。
 
 ## 功能
 
@@ -47,8 +47,11 @@ CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`�
 - **总览**——所有项目与宿主会话一屏尽览，支持搜索、排序、筛选、拖到侧边栏固定
 - **只读 git**——不离开 DSH 就能看仓库状态 / 日志 / 分支
 - **快捷键体系**、项目模板、配置 JSON 导入导出
+- **拖到对话**——文件行或网页地址拖到顶栏，自动填成一段可发送的内容
 
-## 本版变更（0.8.48 → 0.8.52）
+## 本版变更（0.8.48 → 0.8.53）
+
+- **0.8.53** 拖文件 / 网页到会话：把文件管理器里的一行、或浏览器地址栏拖到工作台顶栏，路径（含标题）就填进右侧对话输入框，**不会自动发送**；工具条「→ 对话」「💬」一键同效
 
 这五个版本修的都是同一族问题——侧边栏尺寸与让位几何：
 
