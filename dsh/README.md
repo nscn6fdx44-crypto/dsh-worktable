@@ -1,4 +1,4 @@
-# trae-usage-worktable（DSH 插件 · 0.10.3）
+# trae-usage-worktable（DSH 插件 · 0.10.4）
 
 > DeepSeek Harness 侧边栏的完整工作台。本目录是 `nscn6fdx44-crypto/dsh-worktable`
 > 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的**独立实现**：
@@ -16,11 +16,11 @@
 ```
 
 重开 DSH → 侧边栏出现「工作台」（托盘图标旁的 `🧰` 工作台卡片）→ 打开带 token 的网页端，
-访问 `/api/trae-worktable/health`，返回里的 `version` 应等于 `package.json` 的版本（当前 `0.10.3`）。
+访问 `/api/trae-worktable/health`，返回里的 `version` 应等于 `package.json` 的版本（当前 `0.10.4`）。
 
 分发 / 升级 / 卸载 / 排查见下方「安装」一节。
 
-## 能力（0.10.3）
+## 能力（0.10.4）
 
 | 半侧 | 文件 | 内容 |
 |---|---|---|
@@ -42,9 +42,10 @@
 3. **项目列表**：按「分组」归组，点一行进入工作区；每行状态灯跟随绑定对话，也可点击手工覆盖；
 4. **不再单列宿主会话**——那份列表与项目列表信息重复，宿主会话统一在「绑定对话」里选；
 5. 右击项目：编辑 / 绑定对话 / 删除（模式项随窗口模式一起删了）；
-6. **拖放添加项目**（0.8.12）：总览「◉ 宿主会话」页签里的每一行都能**拖到侧边栏上**，松手即用该会话
-   新建项目并绑定（落点整块高亮 + 「松手 → 用这条会话新建项目」）；同一条会话重复拖只会进已有项目。
-   也认拖进来的目录路径（Windows 绝对路径 / `file://`）→ 按目录建项目。
+6. **拖放添加项目**（0.8.12，0.10.4 修好命名）：宿主侧边栏 / 总览「◉ 宿主会话」里的会话行都能**拖到左侧工作台**，
+   松手即用该会话新建项目并绑定；落点是**某个项目**时改成**绑到那个项目**（不再凭空多一个）。
+   项目名按会话标题自动取（宿主只给会话 id 时先落占位名，补拉一次 `/sessions` 后自动改名）；
+   同一条会话重复拖只会进已有项目。也认拖进来的目录路径（Windows 绝对路径 / `file://`）→ 按目录建项目。
 
 > 状态来源（0.8.2 起）：**以 DSH 自己的 `agent.status` 为准**——host 通过 `ctx.agents.get(sessionId)`
 > 拿到该会话的 Agent，`status` 只有 `running` / `idle` 两档，这是宿主维护的权威状态；
@@ -217,6 +218,24 @@
 
 已知边界：Windows 上走 ConPTY，个别旧版本可能丢输出（`useConpty` 已默认打开）；
 `backlog` 只留输出、不保留滚动语义，切回来看到的是「最近 240KB 重放」，不是逐像素复原的屏幕。
+
+### 拖拽建项目 / 绑定（0.10.4）
+
+宿主侧边栏的会话行可以直接拖到工作台：
+
+| 落点 | 行为 |
+|---|---|
+| 侧边栏空白处 | 用这条会话**新建项目**并进入 |
+| 侧边栏某个项目行 | **绑到那个项目**（不新建）；项目没有工作目录时顺手用会话 cwd 补上 |
+| 总览的项目卡片 | 同上 |
+| 会话已在别的项目上 | 拒绝并说明在哪个项目，不会一话两绑 |
+| 拖的是目录 | 按目录建项目 / 给空目录项目补工作目录（已有值不覆盖） |
+
+取名：会话标题 → 工作目录名 → 「未命名项目」+ 编辑窗。宿主行只带 `session-<uuid>` 时，
+先落占位名，**补拉一次 `/sessions` 后自动改名并关掉编辑窗**；真查不到（会话已删）才留着让人手填。
+
+拖拽细节见「已知坑」第 9 条：宿主的 `effectAllowed` 是 `move`，我们的 `dropEffect` 必须兼容，
+否则浏览器不派发 `drop` —— 这是以前「拖过去没反应」的根因。
 
 ### 源代码管理 / GitHub（0.10.0 起）
 
@@ -795,8 +814,12 @@ package/lib/index.js     package/lib/client.js     package/README.md    package/
 10. **`flex: 0 0 auto` + `max-height` 的卡片在可压缩容器里必然溢出**：宿主 `_footArea` 默认可被压缩，
     卡片要么允许收缩（`flex:0 1 auto` + `min-height:0` + `overflow-y:auto`），要么就等着它盖住上面的列表。
 8. **client bundle 按 rev 缓存**：改完不重启 DSH 不生效。
-9. **宿主自己的会话行不可拖**：`ui-sidebar` 里没有任何 drag 实现，所以拖拽源由工作台的
-   「宿主会话」页签提供（`ov-row` 带 `draggable` + `application/x-dsh-session` 负载）；
+9. **宿主的会话行是能拖的，但只给一个 id**：`ui-sidebar` 里会话行是
+   `draggable` + `onDragStart → dataTransfer.setData('text/plain', node.id)`，
+   并且声明 `effectAllowed = 'move'`。两个后果：
+   ① 我们这边 `dragover` 的 `dropEffect` 必须是 `move`（或至少兼容），写死 `copy` 会让浏览器
+   **根本不派发 drop**；② 载荷里没有标题和 cwd，必须拿 id 回查 `/sessions` 才有名字（0.10.4 修）。
+   工作台自己的行仍然写 `application/x-dsh-session`（带标题 + cwd），两条来源都要认。
    侧边栏整块是落点，同时兼容 `text/plain` / `text/uri-list` / 拖文件。
 10. **「＋ 新建对话」必须走宿主 `sessionController.create`**：客户端服务的 `createSession` /
     `newSession` 都不可靠（0.8.11 及以前靠猜签名，猜不中 → 项目建好了但一条会话都没生成）。

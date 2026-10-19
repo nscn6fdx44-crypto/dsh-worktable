@@ -266,7 +266,10 @@ globalThis.fetch = async (url, opts) => {
     const body = { ok: true }
     return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
   }
-  const body = u.endsWith('/sessions') ? fakeSessions
+  /* 每次返回**拷贝**：往 fakeSessions 里 push 不会立刻出现在已加载的快照里，
+     这样才能测「快照落后 → 补拉一次」那条路径 */
+  const body = u.endsWith('/sessions')
+    ? { ...fakeSessions, sessions: fakeSessions.sessions.map((s) => ({ ...s })) }
     : u.endsWith('/defaults') ? fakeDefaults
         : u.endsWith('/fs/list')
           ? (fakeDirs
@@ -2216,6 +2219,111 @@ fakeDirs = null
 /* 克隆：读 NDJSON 拿 end.path */
 const cl = await mod.cloneRepo({ url: 'demo-user/demo', dest: '/demo/cloned' }, () => {})
 check('克隆流读到结束事件与落盘路径', cl && cl.ok === true && cl.path === '/demo/cloned', JSON.stringify(cl || null))
+
+/* ---------- ㉕ 拖拽建项目：载荷识别 / 命名 / 绑定落点 ---------- */
+function fakeEvt(map, files) {
+  return {
+    dataTransfer: {
+      types: Object.keys(map), getData: (k) => String(map[k] ?? ''),
+      files: files || [], effectAllowed: map.__allow || '', dropEffect: '',
+    },
+    preventDefault() {}, stopPropagation() {},
+  }
+}
+
+check('dropEffect 跟 move 兼容（宿主会话行声明的就是 move）',
+  mod.pickDropEffect(fakeEvt({ __allow: 'move' })) === 'move', mod.pickDropEffect(fakeEvt({ __allow: 'move' })))
+check('dropEffect 默认 copy', mod.pickDropEffect(fakeEvt({ __allow: 'copyMove' })) === 'copy', '')
+check('dropEffect 未声明时按 copy', mod.pickDropEffect(fakeEvt({})) === 'copy', '')
+check('dropEffect 认 link', mod.pickDropEffect(fakeEvt({ __allow: 'link' })) === 'link', '')
+
+/* 宿主侧边栏会话行：只给 text/plain = 会话 id */
+const hostEvt = fakeEvt({ 'text/plain': 'session-4f2c9e11-0c3d-4a1b-9f22-77aa88bb99cc', __allow: 'move' })
+const hostDrop = mod.readDrop(hostEvt)
+check('宿主会话行只带 id 也能认出来',
+  hostDrop && hostDrop.session && hostDrop.session.id === 'session-4f2c9e11-0c3d-4a1b-9f22-77aa88bb99cc', JSON.stringify(hostDrop))
+check('裸 UUID 也认', (() => {
+  const d = mod.readDrop(fakeEvt({ 'text/plain': '4f2c9e11-0c3d-4a1b-9f22-77aa88bb99cc' }))
+  return !!(d && d.session)
+})(), '')
+check('随手的纯文本不当项目名（误拖不该凭空多项目）',
+  mod.readDrop(fakeEvt({ 'text/plain': '随便一段文字' })) === null, '')
+check('会话 id 不会被当成附件塞进对话',
+  mod.readChatDrop(hostEvt) === null, JSON.stringify(mod.readChatDrop(hostEvt)))
+check('普通文件路径仍然能发给对话', (() => {
+  const d = mod.readChatDrop(fakeEvt({ 'text/plain': 'C:\\demo\\a.txt' }))
+  return !!(d && d.kind === 'file')
+})() , '')
+check('JSON 里的 sessionId 也认', (() => {
+  const d = mod.readDrop(fakeEvt({ 'text/plain': '{"sessionId":"session-abc123","title":"部署脚本"}' }))
+  return !!(d && d.session && d.session.id === 'session-abc123' && d.session.title === '部署脚本')
+})(), '')
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/* ① 快照里已有这条会话：同步就按标题命名 */
+fakeSessions.sessions.push({ id: 'session-dd11ee22-3344-5566-7788-99aabbccddee', title: '拖进来的新会话', cwd: 'C:\\demo\\dropped', state: 'idle', createdAt: 9, updatedAt: NOW })
+await mod.loadSessions()
+const nBefore = mod.store.projects.length
+const madeId = mod.createFromSession({ id: 'session-dd11ee22-3344-5566-7788-99aabbccddee' })
+const made = mod.store.projects.find((p) => p.id === madeId)
+check('宿主拖来的只有 id，也按会话标题命名',
+  mod.store.projects.length === nBefore + 1 && made && made.name === '拖进来的新会话', made && made.name)
+check('同时带上会话的工作目录', made.path === 'C:\\demo\\dropped', made.path)
+check('项目绑定到这条会话', made.sessions.includes('session-dd11ee22-3344-5566-7788-99aabbccddee'), JSON.stringify(made.sessions))
+
+/* ② 快照里还没有（刚建 / 轮询没跟上）：先落占位名，补拉一次后自动改名 */
+fakeSessions.sessions.push({ id: 'session-late-0001', title: '后到的会话', cwd: 'C:\\demo\\late', state: 'idle', createdAt: 10, updatedAt: NOW })
+const lateId = mod.createFromSession({ id: 'session-late-0001' })
+const placed = mod.store.projects.find((p) => p.id === lateId)
+check('快照里没有的会话先落「未命名项目」并弹编辑窗',
+  placed && placed.name === '未命名项目' && mod.store.modal && mod.store.modal.kind === 'edit',
+  (placed && placed.name) + ' / modal=' + (mod.store.modal && mod.store.modal.kind))
+await sleep(60)
+const healed = mod.store.projects.find((p) => p.id === lateId)
+check('补拉快照后自动改成会话标题', healed.name === '后到的会话', healed.name)
+check('自动改名同时补上工作目录', healed.path === 'C:\\demo\\late', healed.path)
+check('自动改名后关掉编辑窗', !mod.store.modal, JSON.stringify(mod.store.modal))
+
+/* ③ 真的查不到（会话不存在）：不猜名字，停在编辑窗 */
+const n2 = mod.store.projects.length
+const ghostId = mod.createFromSession({ id: 'session-ffffffff-0000-1111-2222-333333333333' })
+const blank = mod.store.projects.find((p) => p.id === ghostId)
+check('查不到的会话不硬编名字，留给编辑窗',
+  mod.store.projects.length === n2 + 1 && blank.name === '未命名项目' && mod.store.modal && mod.store.modal.kind === 'edit',
+  blank.name + ' / modal=' + (mod.store.modal && mod.store.modal.kind))
+mod.closeModal()
+
+/* ④ 拖到某个项目上 = 绑定，不再新建 */
+fakeSessions.sessions.push({ id: 'session-cwd-0001', title: 'cwd 会话', cwd: 'C:\\demo\\cwdonly', state: 'idle', createdAt: 11, updatedAt: NOW })
+await mod.loadSessions()
+const hostProj = made
+const bindN = mod.store.projects.length
+const bound = mod.dropOnProject(fakeEvt({ 'text/plain': 'session-cwd-0001' }), hostProj.id)
+const afterBind = mod.store.projects.find((p) => p.id === hostProj.id)
+check('拖到项目行是绑定，不新建项目',
+  bound === true && mod.store.projects.length === bindN && afterBind.sessions.includes('session-cwd-0001'),
+  JSON.stringify(afterBind.sessions))
+check('已有工作目录的项目不被会话 cwd 覆盖', afterBind.path === 'C:\\demo\\dropped', afterBind.path)
+
+/* ⑤ 项目没有工作目录时，绑定顺手把会话 cwd 补上 */
+mod.updateProject(hostProj.id, { path: '', sessions: [] })
+mod.dropOnProject(fakeEvt({ 'text/plain': 'session-cwd-0001' }), hostProj.id)
+const filled = mod.store.projects.find((p) => p.id === hostProj.id)
+check('项目没有工作目录时用会话 cwd 补上', filled.path === 'C:\\demo\\cwdonly', filled.path)
+
+/* ⑥ 拖到项目上的目录：只补空目录，不覆盖已有 */
+const dirProj = mod.store.projects.find((p) => p.id === hostProj.id)
+mod.dropOnProject(fakeEvt({ 'text/plain': 'D:\\projects\\newdir' }), dirProj.id)
+check('已有工作目录的项目不被目录拖拽覆盖',
+  mod.store.projects.find((p) => p.id === dirProj.id).path !== 'D:\\projects\\newdir',
+  mod.store.projects.find((p) => p.id === dirProj.id).path)
+
+/* ⑦ 落到空白处：仍然是「用这条会话新建项目」 */
+const n3 = mod.store.projects.length
+mod.dropOnWorktable(fakeEvt({ 'text/plain': 'session-cwd-0001' }))
+check('已绑定的会话再拖到空白处 → 进已有项目，不重复建',
+  mod.store.projects.length === n3, n3 + ' → ' + mod.store.projects.length)
 
 const failed = results.filter((r) => !r)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)

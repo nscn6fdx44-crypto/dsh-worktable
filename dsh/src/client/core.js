@@ -996,7 +996,50 @@ export function canDropOnWorktable(e) {
   return !!(dt.files && dt.files.length)
 }
 
-/** 从 dataTransfer 里认出「会话」或「目录路径」 */
+/**
+ * dragover 里该把 dropEffect 设成什么。
+ *
+ * 必须和拖拽源声明的 effectAllowed 兼容，否则浏览器**根本不派发 drop**（不是被我们拦掉，
+ * 是光标显示禁止、松手什么都不发生）。宿主的会话行用 effectAllowed='move'，
+ * 我们以前固定写 'copy' —— 两者不兼容，这就是「拖过去没反应」的根因。
+ */
+export function pickDropEffect(e) {
+  const dt = e && e.dataTransfer
+  const allow = String((dt && dt.effectAllowed) || '').toLowerCase()
+  if (!allow || allow === 'uninitialized' || allow === 'all' || allow.indexOf('copy') >= 0) return 'copy'
+  if (allow.indexOf('move') >= 0) return 'move'
+  if (allow.indexOf('link') >= 0) return 'link'
+  return 'copy'
+}
+
+/** 会话 id 归一：宿主树节点、我们自己写的载荷、UUID 三种写法都算同一个会话 */
+export function normSessionId(raw) {
+  const s = String(raw || '').trim()
+  if (!s) return ''
+  return s.replace(/^session[-_:]/i, '').toLowerCase()
+}
+
+/** 从 id 列表里认会话：先精确，再按「去掉 session- 前缀」宽松比 */
+function lookupSession(raw) {
+  const sid = String(raw || '').trim()
+  if (!sid) return null
+  const exact = store.sessions.rows.find((s) => s.id === sid)
+  if (exact) return exact
+  const n = normSessionId(sid)
+  if (!n) return null
+  return store.sessions.rows.find((s) => normSessionId(s.id) === n) || null
+}
+
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+
+/**
+ * 从 dataTransfer 里认出「会话」「目录路径」或「一段文本（当项目名用）」。
+ *
+ * 三种来源都要认：
+ *   ① 工作台自己的会话行 —— application/x-dsh-session，带标题和 cwd；
+ *   ② 宿主侧边栏的会话行 —— 只写 text/plain = 会话 id（见宿主 ui-sidebar 的 onDragStart）；
+ *   ③ 别处拖来的纯文本（比如选中的会话标题）—— 当成项目名，总比「没反应」好。
+ */
 export function readDrop(e) {
   const dt = e && e.dataTransfer
   if (!dt) return null
@@ -1012,21 +1055,38 @@ export function readDrop(e) {
     } catch { /* 继续看别的格式 */ }
   }
 
-  for (const fmt of ['application/json', 'text/plain', 'text/uri-list']) {
+  /* 把所有能读的格式都过一遍：宿主可能塞在自定义类型里，也可能只在 text/plain */
+  const types = Array.from(dt.types || []).map((t) => String(t))
+  const formats = types.filter((t) => t !== 'Files').concat(['application/json', 'text/plain', 'text/uri-list'])
+  const seen = new Set()
+
+  for (const fmt of formats) {
+    if (seen.has(fmt)) continue
+    seen.add(fmt)
     const raw = get(fmt).trim()
     if (!raw) continue
-    if (raw.startsWith('{')) {
+
+    if (raw.startsWith('{') || raw.startsWith('[')) {
       try {
         const j = JSON.parse(raw)
-        const id = j && (j.id || j.sessionId)
-        if (id) return { session: { id: String(id), title: String(j.title || ''), cwd: String(j.cwd || '') } }
+        const id = j && (j.id || j.sessionId || j.session_id || (j.session && j.session.id))
+        if (id) {
+          const hidden = j.session && typeof j.session === 'object' ? j.session : j
+          return { session: {
+            id: String(id),
+            title: String(hidden.title || j.title || ''),
+            cwd: String(hidden.cwd || hidden.path || j.cwd || ''),
+          } }
+        }
       } catch { /* 不是 JSON，按文本继续判 */ }
     }
-    const hit = raw.match(/session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
+
+    /* 会话 id：session-<uuid> / session-xxx / 裸 uuid */
+    const hit = raw.match(/session-[0-9a-z_.:-]+/i) || raw.match(UUID_RE)
     if (hit) return { session: { id: hit[0] } }
-    if (/^session-\S+$/i.test(raw)) return { session: { id: raw } }
+
     const filePath = raw.replace(/^file:\/\//i, '')
-    if (/^[a-zA-Z]:[\\/]/.test(filePath)) return { path: filePath }
+    if (/^[a-zA-Z]:[\\/]/.test(filePath) || /^\\\\[^\\]/.test(filePath)) return { path: filePath }
   }
 
   const files = dt.files
@@ -1035,10 +1095,12 @@ export function readDrop(e) {
     const p = String((f && (f.path || f.webkitRelativePath)) || '')
     if (p) return { path: p }
   }
+
+  /* 认不出就不建：误拖一段文字进来凭空多一个项目，比「没反应」更烦人 */
   return null
 }
 
-/** 松手：会话 → 建一个绑定它的项目并进入；目录 → 按目录建项目 */
+/** 松手：会话 → 建一个绑定它的项目并进入；目录 → 按目录建项目；纯文本 → 用这段文本命名 */
 export function dropOnWorktable(e) {
   clearDragOver()
   const payload = readDrop(e)
@@ -1054,6 +1116,55 @@ export function dropOnWorktable(e) {
     return
   }
   toast('没认出拖进来的是会话还是目录', 'warn')
+}
+
+/**
+ * 松手在某个项目上：把会话绑过去，而不是又建一个新项目。
+ *
+ * 这一步是「拖入项目中」的正确落点 —— 以前 .pitem 没有 drop 处理，事件冒泡到侧边栏根，
+ * 结果用户想绑定，却凭空多出一个项目（还常常没有名字）。
+ */
+export function dropOnProject(e, pid) {
+  clearDragOver()
+  const p = projectOf(pid)
+  if (!p) return false
+  const payload = readDrop(e)
+  if (!payload) return false
+
+  if (payload.session) {
+    const sid = payload.session.id
+    if (p.sessions.includes(sid)) {
+      toast('这条对话已经绑定在「' + (p.alias || p.name) + '」里了', 'info')
+      enterProject(pid)
+      return true
+    }
+    const other = projectBySession(sid)
+    if (other) {
+      toast('这条对话已绑定到「' + (other.alias || other.name) + '」，先在那里解绑', 'warn')
+      return true
+    }
+    /* 项目还没设工作目录：顺手用会话的 cwd 补上（有才补，不覆盖已有值） */
+    const row = lookupSession(sid) || payload.session
+    const cwd = String(row.cwd || '')
+    const patch = { sessions: p.sessions.concat([sid]) }
+    if (!p.path && cwd) patch.path = cwd
+    updateProject(pid, patch)
+    const title = String(row.title || '') || sid
+    toast('已把对话绑到「' + (p.alias || p.name) + '」：' + title, 'ok')
+    return true
+  }
+
+  if (payload.path) {
+    if (p.path && p.path !== payload.path) {
+      toast('「' + (p.alias || p.name) + '」已有工作目录，没有改动', 'info')
+      return true
+    }
+    updateProject(pid, { path: payload.path })
+    toast('已设置工作目录：' + payload.path, 'ok')
+    return true
+  }
+
+  return false
 }
 
 export function setDragOver(on) {
@@ -1072,7 +1183,11 @@ function persistProjects(projects) {
 export function addProject({ name, path, emoji, sessionId, note }) {
   const cleanName = String(name || '').trim()
   if (!cleanName) { toast('请填写项目名称', 'warn'); return '' }
-  const pid = 'p-' + Date.now().toString(36)
+  /* id 用毫秒时间戳，但同一毫秒内建两个项目会撞（拖拽连点、批量导入、测试里都是这样），
+     撞了以后 updateProject / find 全都会指到错的那条 —— 所以撞了就往后加序号 */
+  const base = 'p-' + Date.now().toString(36)
+  let pid = base
+  for (let i = 2; store.projects.some((p) => p.id === pid); i += 1) pid = base + '-' + i
   const rec = normalizeProject({
     id: pid,
     name: cleanName,
@@ -1201,27 +1316,79 @@ export function setPrimarySession(pid, sid) {
   toast('已设为主对话', 'ok')
 }
 
-export function createFromSession(session) {
+/** 会话标题能不能直接当项目名（排除空、等于 id、形如 session-xxx） */
+function sessionTitleOf(session) {
   const sid = String(session?.id || '')
-  if (!sid) return
-  const existing = store.projects.find((p) => p.sessions.includes(sid))
-  if (existing) {
-    toast('该对话已有项目：' + (existing.alias || existing.name), 'info')
-    enterProject(existing.id)
-    return
+  const raw = String(session?.title || '').trim()
+  if (raw && raw !== sid && !/^session-[\w-]+$/i.test(raw)) return raw
+  return baseName(session?.cwd || '') || ''
+}
+
+/**
+ * 用一条会话建项目。
+ *
+ * 取名顺序：会话标题 → 工作目录名 → 「未命名项目」（并弹编辑窗）。
+ *
+ * 关键：宿主侧边栏的会话行拖过来的载荷**只有会话 id**（`text/plain = node.id`），
+ * 标题和 cwd 都没有。所以先拿 id 回查本地会话快照；快照里没有（刚启动 / 轮询失败 /
+ * 会话是新建的）就先落项目，再异步拉一次快照按标题补名 —— 以前没有这一步，
+ * 从宿主拖进来必然停在「未命名项目」，这就是「拖进来没有自动命名」。
+ *
+ * 保持同步返回：调用处（onDrop）要立即拿到 pid 决定是否 stopPropagation。
+ */
+export function createFromSession(session) {
+  const given = session && typeof session === 'object' ? session : {}
+  let sid = String(given.id || '').trim()
+  const row = sid ? lookupSession(sid) : null
+  /* 用快照里的规范 id（大小写 / 前缀可能和拖过来的写法不同），绑定才对得上 */
+  if (row && row.id) sid = String(row.id)
+  const info = row || given
+
+  if (sid) {
+    const existing = store.projects.find((p) => p.sessions.includes(sid))
+    if (existing) {
+      toast('该对话已有项目：' + (existing.alias || existing.name), 'info')
+      enterProject(existing.id)
+      return existing.id
+    }
   }
-  /* 取名顺序：会话标题 → 工作目录名 → 空（空就弹编辑窗让用户当场命名，别留 session-xxx） */
-  const rawTitle = String(session?.title || '').trim()
-  const usable = rawTitle && rawTitle !== sid && !/^session-[\w-]+$/i.test(rawTitle)
-  const title = (usable ? rawTitle : '') || baseName(session?.cwd || '') || ''
-  const pid = addProject({ name: title || '未命名项目', path: session?.cwd || '', sessionId: sid })
-  if (!pid) return
+
+  const title = sessionTitleOf(info)
+  if (!sid && !title) return ''
+  const pid = addProject({ name: title || '未命名项目', path: info.cwd || '', sessionId: sid })
+  if (!pid) return ''
   if (!title) {
+    /* 先按老行为弹编辑窗（用户随时能自己填）；有 id 的话同时去补快照，
+       查到就自动改名并关掉编辑窗 —— 但从宿主拖进来的绝大多数是这一种。 */
     openModal('edit', pid)
-    toast('这条对话没有标题，先给它起个名字', 'info')
-    return
+    toast('这条对话没有标题也没有工作目录，先给它起个名字', 'info')
+    if (sid) enrichProjectName(pid, sid)
+    return pid
   }
   enterProject(pid)
+  return pid
+}
+
+/**
+ * 项目已经用「未命名项目」落下时，异步补一次会话快照再取名。
+ * 只在名字还是占位名时覆盖，用户在编辑窗里已经改过就不动他。
+ */
+async function enrichProjectName(pid, sid) {
+  try {
+    await loadSessions()
+  } catch { return }
+  const row = lookupSession(sid)
+  const p = projectOf(pid)
+  if (!row || !p) return
+  const title = sessionTitleOf(row)
+  if (!title) return
+  const patch = {}
+  if (!p.name || p.name === '未命名项目' || p.name === sid) { patch.name = title; patch.alias = title }
+  if (!p.path && row.cwd) patch.path = row.cwd
+  if (!Object.keys(patch).length) return
+  updateProject(pid, patch)
+  if (store.modal && store.modal.kind === 'edit' && store.modal.pid === pid) closeModal()
+  toast('已按会话命名：' + title, 'ok')
 }
 
 /* ============================ 状态 / 布局 ============================ */
@@ -1409,6 +1576,10 @@ export function readChatDrop(e) {
   const dt = e && e.dataTransfer
   if (!dt) return null
   try {
+    /* 拖的是会话，不是文件/网页 —— 不能把 session-xxx 当成附件塞进对话 */
+    let own = ''
+    try { own = String(dt.getData(DRAG_SESSION) || '') } catch { own = '' }
+    if (own) return null
     const f = dt.getData(FILE_DRAG)
     if (f) return { kind: 'file', value: f }
     const raw = dt.getData(URL_DRAG)
@@ -1422,6 +1593,9 @@ export function readChatDrop(e) {
     const uris = String(dt.getData('text/uri-list') || '').split(/\r?\n/).filter((x) => x && !x.startsWith('#'))
     const first = uris[0] || String(dt.getData('text/plain') || '').trim()
     if (!first) return null
+    /* 宿主侧边栏的会话行只写 text/plain = 会话 id，别把它当文件路径 */
+    if (/^(session[-_:])?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(first)) return null
+    if (/^session[-_:]\S+$/i.test(first)) return null
     if (/^https?:\/\//i.test(first)) return { kind: 'url', value: first }
     if (/^file:\/\//i.test(first)) {
       const p = decodeURI(first.replace(/^file:\/\/+/i, '')).replace(/\//g, '\\')

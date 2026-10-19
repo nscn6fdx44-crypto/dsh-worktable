@@ -17,6 +17,7 @@ import {
   fmtDuration, relTime, shortPath, projEmoji, openGrid, enterProject, closeOverlay,
   openModal, openMenu, setDockPx, openTab, closeTab, setActiveTab,
   loadSessions, stateOf, sessionsOf, primarySession, projectBySession, createFromSession, startSessionDrag, switchHostSession, emit,
+  dropOnProject, canDropOnWorktable, pickDropEffect,
   LAYOUTS, setLayout, setSecondTab, setSplit, setSplitB,
   paneCountOf, cellKeyOf, setCellTab, moveTabToCell,
   themeStyle, themeAttrs,
@@ -307,9 +308,20 @@ function ProjectCard({ project }) {
   return el('article', {
     className: cls,
     tabIndex: 0,
-    title: (project.path || '未设置目录') + ' · 点击进入（右侧就是它的 DSH 对话）',
+    title: (project.path || '未设置目录') + ' · 点击进入（右侧就是它的 DSH 对话）\n把会话拖到这张卡片上 = 绑到这个项目',
     onClick: () => enterProject(project.id),
     onContextMenu: (e) => { e.preventDefault(); e.stopPropagation(); openMenu(project.id, e.clientX, e.clientY) },
+    onDragOver: (e) => {
+      if (!canDropOnWorktable(e)) return
+      e.preventDefault()
+      e.stopPropagation()
+      try { e.dataTransfer.dropEffect = pickDropEffect(e) } catch { /* ignore */ }
+    },
+    onDrop: (e) => {
+      if (!dropOnProject(e, project.id)) return
+      e.preventDefault()
+      e.stopPropagation()
+    },
   },
     st === 'working' ? el('span', { className: 'wt-sweep', 'aria-hidden': 'true' }) : null,
     el('div', { className: 'c-head' },

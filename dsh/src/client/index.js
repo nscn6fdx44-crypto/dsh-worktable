@@ -43,6 +43,8 @@ import {
   loadGh, ghLogin, ghLogout, loadGhRepos, ghUploadRepo, cloneRepo,
   loadFileMarks, setEditorView, editText,
   fileUrlOf, chatTextForFile, chatTextForUrl, readChatDrop, sendToChat, sendPathToChat, sendUrlToChat,
+  readDrop, dropOnWorktable, dropOnProject, canDropOnWorktable, pickDropEffect, normSessionId,
+  startSessionDrag, createFromSession,
 } from './core.js'
 import { el } from './ui.js'
 import { WorktableSidebar, sideModeOf } from './sidebar.js'
@@ -78,6 +80,9 @@ export { store, openFile, createSessionInDir, switchHostSession, searchUrl, webG
   loadGh, ghLogin, ghLogout, loadGhRepos, ghUploadRepo, cloneRepo,
   /* 编辑器行号栏的改动标记（离线自测出口） */
   loadFileMarks, setEditorView, editText,
+  /* 拖拽建项目（离线自测出口） */
+  readDrop, dropOnWorktable, dropOnProject, canDropOnWorktable, pickDropEffect, normSessionId,
+  startSessionDrag, createFromSession, loadSessions,
   fileUrlOf, chatTextForFile, chatTextForUrl, readChatDrop, sendToChat, sendPathToChat, sendUrlToChat }
 
 class SidebarBoundary extends Component {

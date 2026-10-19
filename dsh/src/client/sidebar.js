@@ -9,7 +9,8 @@ import {
   store, useStore, relTime, projEmoji,
   loadSessions, loadDefaults, openGrid, enterProject, openMenu, openModal,
   stateOf, sessionsOf, statusCounts, toggleHidden,
-  canDropOnWorktable, setDragOver, clearDragOver, dropOnWorktable, themeStyle, themeAttrs,
+  canDropOnWorktable, setDragOver, clearDragOver, dropOnWorktable, dropOnProject, pickDropEffect,
+  themeStyle, themeAttrs,
   moveProjectBefore, setProjectFolder, openExternalProject, toast,
 } from './core.js'
 import { ModalHost } from './modals.js'
@@ -130,7 +131,8 @@ export function WorktableSidebar() {
     onDragOver: (e) => {
       if (!canDropOnWorktable(e)) return
       e.preventDefault()
-      try { e.dataTransfer.dropEffect = 'copy' } catch { /* 老浏览器 */ }
+      /* 必须跟拖拽源声明的 effectAllowed 兼容，否则浏览器不派发 drop（宿主会话行是 'move'） */
+      try { e.dataTransfer.dropEffect = pickDropEffect(e) } catch { /* 老浏览器 */ }
       setDragOver(true)
     },
     onDragLeave: (e) => {
@@ -196,6 +198,19 @@ export function WorktableSidebar() {
                 tabIndex: 0,
                 onClick: () => enterProject(p.id),
                 onContextMenu: (e) => { e.preventDefault(); e.stopPropagation(); openMenu(p.id, e.clientX, e.clientY) },
+                /* 会话拖到这一行 = 绑到这个项目（不是又建一个）；项目互拖仍然交给分组标题 */
+                onDragOver: (e) => {
+                  if (dragPid(e) || !canDropOnWorktable(e)) return
+                  e.preventDefault()
+                  e.stopPropagation()
+                  try { e.dataTransfer.dropEffect = pickDropEffect(e) } catch { /* ignore */ }
+                },
+                onDrop: (e) => {
+                  if (dragPid(e)) return
+                  if (!dropOnProject(e, p.id)) return
+                  e.preventDefault()
+                  e.stopPropagation()
+                },
               },
                 el('span', { className: 'pi-ico', 'aria-hidden': 'true' }, projEmoji(p)),
                 el('span', { className: 'pi-name' }, p.alias || p.name),
@@ -230,7 +245,7 @@ export function WorktableSidebar() {
     ),
 
     store.dragOver
-      ? el('div', { className: 'drop-hint' }, '松手 → 用这条会话新建项目')
+      ? el('div', { className: 'drop-hint' }, '松手 → 用这条会话新建项目；落在某个项目上则是绑到它')
       : el('p', { className: 'side-tip' }, '右击项目：编辑 · 对话绑定 · 删除'),
 
     /* 主区没开时由侧边栏承载菜单/小窗/toast；主区一开就交给它，避免重复挂载 */
