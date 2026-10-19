@@ -61,7 +61,19 @@ export function WorktableSidebar() {
     const measure = () => {
       const rect = parent.getBoundingClientRect ? parent.getBoundingClientRect() : null
       if (!rect) return
-      setBox({ w: Math.round(rect.width), h: Math.round(rect.height) })
+      /* parent = footerActions（高度==我们自己的内容高，量它没意义）
+         再上一层是宿主的 footArea：它会被压缩，才是「真正给了多少空间」 */
+      const box = parent.parentElement
+      let avail = 0
+      if (box && box.getBoundingClientRect) {
+        const outer = box.getBoundingClientRect()
+        const style = typeof getComputedStyle === 'function' ? getComputedStyle(box) : null
+        /* footArea 若是 display:none（图标栏）就没有可用高度，交给 narrow 形态 */
+        if (outer.height > 0) avail = Math.min(outer.height, window.innerHeight * 0.46)
+        if (style && style.display === 'none') avail = 0
+      }
+      if (!avail) avail = Math.min(rect.height, window.innerHeight * 0.46)
+      setBox({ w: Math.round(rect.width), h: Math.round(avail) })
     }
     const schedule = () => {
       if (raf) return

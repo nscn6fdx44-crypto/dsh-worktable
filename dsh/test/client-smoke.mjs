@@ -1826,6 +1826,14 @@ const fitRoot = allByClass(fitTree, /(^|\s)wt-side(\s|$)/)[0]
 check('根节点带 data-narrow / data-short', !!fitRoot && fitRoot.props['data-narrow'] === '0' && fitRoot.props['data-short'] === '0', fitRoot ? JSON.stringify({ n: fitRoot.props['data-narrow'], s: fitRoot.props['data-short'] }) : '')
 check('根节点仍带主题 CSS 变量', !!fitRoot && !!fitRoot.props.style['--amber-rgb'], fitRoot ? String(fitRoot.props.style['--amber-rgb']) : '')
 
+/* ---------- ㉔ 侧边栏卡片不许溢出（压住会话列表的回归守卫） ---------- */
+const cssText = (styleNodes[0] && styleNodes[0].textContent) || ''
+const sideRule = (cssText.match(/\.wt-side \{[^}]*\}/) || [''])[0]
+check('卡片允许被宿主压缩（flex: 0 1 auto）', /flex:\s*0 1 auto/.test(sideRule), sideRule.slice(0, 60))
+check('卡片不再禁止收缩（没有 flex: 0 0 auto）', !/flex:\s*0 0 auto/.test(sideRule), '')
+check('卡片被压缩后自己滚（overflow-y: auto）', /overflow-y:\s*auto/.test(sideRule) && /min-height:\s*0/.test(sideRule), '')
+check('数据区可收缩（side-projects/plist min-height:0）', /\.wt-side \.side-projects \{[^}]*min-height:\s*0/.test(cssText) && /\.wt-side \.plist \{[^}]*min-height:\s*0/.test(cssText), '')
+
 const failed = results.filter((r) => !r)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)
 process.exit(failed.length ? 1 : 0)

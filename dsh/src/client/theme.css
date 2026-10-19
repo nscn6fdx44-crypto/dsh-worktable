@@ -50,10 +50,12 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 
 .wt-side {
   display: flex; flex-direction: column; gap: 9px; width: 100%; min-width: 0;
-  /* 不参与宿主侧边栏的拉伸：高度只由内容和上面的上限决定 */
-  flex: 0 0 auto;
+  /* 宿主 footArea 是可压缩的 flex 子项：卡片必须允许被压缩，
+     否则会溢出到上方的会话列表（regionArea）上面去，表现为「卡片压住会话列表」 */
+  flex: 0 1 auto;
   /* 高度跟着内容走，封顶 min(46vh, 330px)，超出由 .plist 内部滚动 */
-  max-height: min(46vh, 330px); padding: 10px 9px 9px; border-radius: 14px;
+  max-height: min(46vh, 330px); min-height: 0; overflow-y: auto;
+  padding: 10px 9px 9px; border-radius: 14px;
   position: relative; background: transparent;
   border: 1px solid rgba(var(--amber-rgb), .34);
   box-shadow: 0 12px 30px -22px rgba(var(--amber-rgb),.55), inset 0 1px 0 rgba(var(--amber-ink-rgb),.14);
@@ -1315,4 +1317,11 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 .wt-side[data-narrow="1"] .pitem .pi-bind,
 .wt-side[data-narrow="1"] .pitem .pi-arrow { display: none; }
 .wt-side[data-narrow="1"] .pgroup-title { text-align: center; font-size: 8.5px; }
+
+/* ---------- 被宿主压矮时：整卡滚动，列表让出高度（0.8.49 修重叠） ---------- */
+.wt-side { min-height: 0; }
+.wt-side .side-projects { min-height: 0; display: flex; flex-direction: column; }
+.wt-side .plist { min-height: 0; }
+.wt-side[data-short="1"] { overflow-y: auto; }
+.wt-side[data-short="1"] .side-projects { flex: 1 1 auto; }
 
