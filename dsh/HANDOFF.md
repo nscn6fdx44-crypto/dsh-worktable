@@ -11,13 +11,13 @@
 | --- | --- |
 | 仓库目录 | `C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh`（git 顶层是上一级 `2026-10-16-23-21-22`，插件在 `dsh/` 子目录） |
 | 远端 | `https://github.com/nscn6fdx44-crypto/dsh-worktable.git` |
-| 分支 / 最近提交 | `dsh-plugin` / 0.10.4：`fix(0.10.4): 拖 DSH 会话进来没自动命名`（`6893458`） |
-| 版本 | `package.json` = `dsh.plugin.json` = **0.10.4** |
+| 分支 / 最近提交 | `dsh-plugin` / 0.10.5：`fix(0.10.5): 项目名跟会话名不一致（落成 default-workspace）`（`30e0986`） |
+| 版本 | `package.json` = `dsh.plugin.json` = **0.10.5** |
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
 | 运行中的实例 | 客户端会热更，但 **host 路由必须完整重启 DSH** 才生效（`/gh/status`、`op:uninit` 在旧实例上会 401/404） |
-| 自测基线 | host **171** + client **595** 全通过（`npm test`） |
-| tag | 0.10.0 / 0.10.1 / 0.10.2 / 0.10.3 / `v0.10.4` **全部已打并推送**（0.10.4 指向 `6893458`） |
-| Release | 0.10.0（417235810）、0.10.1（417246640）、0.10.2（417267258）、0.10.3（417344262）、0.10.4（417364793）都已发布；0.10.4 附件 254825 字节 sha256 `7839003f…7cb0b`，下载回本地逐字节校验一致 |
+| 自测基线 | host **176** + client **599** 全通过（`npm test`） |
+| tag | 0.10.0 / 0.10.1 / 0.10.2 / 0.10.3 / 0.10.4 / `v0.10.5` **全部已打并推送**（0.10.5 指向 `30e0986`） |
+| Release | 0.10.0（417235810）、0.10.1（417246640）、0.10.2（417267258）、0.10.3（417344262）、0.10.4（417364793）、0.10.5（417385825）都已发布；0.10.5 附件 258532 字节 sha256 `b66c7c2b…6c963`，下载回本地逐字节校验一致 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
 
 ---
@@ -211,6 +211,11 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
    工作台空白处 → 侧边栏高亮 + 松手 → 新项目应**直接是会话标题**（不再是「未命名项目」+ 编辑窗）；
    再拖一条到**某个项目行**上 → 应提示「已把对话绑到 X」，项目数不变；同一条会话再拖到空白处 →
    进已有项目、不重复建。若拖拽时鼠标是禁止符号，说明 `effectAllowed` 又变了（见 README「已知坑」9）。
+   **再验 0.10.5 的取名**（host + client 都动了，必须**完整退出 DSH 再重开**）：把一条在默认工作区里的
+   会话拖进工作台 → 项目名应等于**侧边栏上那个会话名**（比如「安装 dsh-worktable 插件」），不能是
+   `default-workspace`；总览「◉ 宿主会话」里同名行也应显示真名。若仍显示 `default-workspace`，
+   先看 `GET /api/trae-worktable/sessions` 返回行上的 `titled` 是不是 `true`、`title` 是不是真名
+   （`titled:false` 就是没拿到标题，看宿主 `readTitleSnapshots` 是否可用）。
    **未验证项**：`/gh/upload`（会真的在你账号下建仓库，第一次用请自己确认仓库名与可见性）。
 1. ~~0.9.0 真机验收~~：重启 DSH 后看终端工具条 `PTY` 徽标是否点亮 →
    `python` 进 REPL 能交互 → `Ctrl+C` 退 REPL 但 shell 还在 → 切标签页再切回输出还在 →
@@ -219,7 +224,7 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 
 1. ~~**打 tag + 补 Release 资产**~~ —— **0.8.52 / 0.8.53 / 0.9.0 / 0.10.x 都已发**：
    tag 已推、Release 已建、附件已传并下载回来校验 sha256 一致；首页 `README.md` / `README.zh.md` /
-   `INSTALL.md` 与 `dsh/README.md` 已同步到 0.10.3（安装指向新 Release）；
+   `INSTALL.md` 与 `dsh/README.md` 已同步到 0.10.5（安装指向新 Release）；
 2. **旧功能真机验收（可延后）**：0.8.48 → 0.8.52 是一族（侧边栏 / 让位），0.8.53 是拖到会话；
    重点两条：① 展开宿主侧边栏后工作台的关闭键点得动；② 文件/网页拖到顶栏后输入框里出现【文件】/【网页】块；
 3. **媒体窗确认**：三种选法各试一次（选择文件 / 浏览项目 / 拖入）；
