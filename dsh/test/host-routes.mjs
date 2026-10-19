@@ -35,14 +35,50 @@ const liveSessions = new Map([
     ],
     header: { id: 's-waiting', cwd: 'C:\\Users\\demo\\proj-beta', createdAt: 2 },
   }],
-  ['s-done', { seq: 2, log: [ev('turn/start', {}), ev('turn/end', {})], header: { id: 's-done', cwd: 'C:\\Users\\demo\\proj-gamma', createdAt: 1 } }],
+  /* 长会话：标题事件在 seq 0，后面跟着远超 400 条扫描窗口的工具事件 ——
+     只扫尾部就会以为这条会话没有标题（真机上默认工作区的会话就是这么变成
+     「default-workspace」的）。 */
+  ['s-done', {
+    seq: 454,
+    log: [
+      ev('session/title', { data: { title: '收尾清理' } }),
+      ev('turn/start', {}),
+      ev('turn/end', {}),
+      ...Array.from({ length: 449 }, () => ev('step/start', {})),
+      ev('turn/start', {}),
+      ev('turn/end', {}),
+    ],
+    header: { id: 's-done', cwd: 'C:\\Users\\demo\\proj-gamma', createdAt: 1 },
+  }],
   ['s-idle', { seq: 0, log: [], header: { id: 's-idle', cwd: 'C:\\Users\\demo\\proj-delta', createdAt: 0 } }],
 ])
 
 const fakeSessions = { list: () => [...liveSessions.values()], get: (id) => liveSessions.get(id) }
+
+/* 标题折叠：真实服务读**整条**日志取最后一个 session/title；这里按同一语义实现 */
+const titleOfLog = (events) => {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const e = events[i]
+    if (e && e.type === 'session/title' && typeof e?.data?.title === 'string') return e.data.title
+  }
+  return undefined
+}
+const titleReads = []
 const fakeSessionQuery = {
   /* 真实环境里持久化列表只给 header，没有 live 标记 —— 状态判定不能依赖它 */
   listSessions: async () => [...liveSessions.values()].map((s) => ({ header: s.header, persisted: true })),
+  /* 与 dsh-session-query 同形：按入参顺序一条一个 PromiseSettledResult */
+  readTitleSnapshots: async (ids) => {
+    titleReads.push([...ids])
+    return ids.map((id) => {
+      const live = liveSessions.get(id)
+      const events = live ? live.log : []
+      /* 单条失败必须被隔离，不能拖垮整批 */
+      if (id === 's-idle') return { status: 'rejected', reason: new Error('SESSION_QUERY_CORRUPT_SESSION') }
+      const title = titleOfLog(events)
+      return { status: 'fulfilled', value: title === undefined ? { session: { id } } : { session: { id }, title: { title } } }
+    })
+  },
   load: async (id) => {
     if (id !== 's-persisted') throw new Error('SESSION_QUERY_SESSION_NOT_FOUND')
     return {
@@ -168,9 +204,20 @@ check('sessions 200', sess.status === 200 && sj.ok === true, 'source=' + sj.sour
 check('sessions 四态各 1', sj.counts.running === 1 && sj.counts.waiting === 1 && sj.counts.done === 1 && sj.counts.idle === 1, JSON.stringify(sj.counts))
 check('sessions 总数 4', sj.counts.total === 4)
 check('标题取首条用户消息', sj.sessions.some((s) => s.title === '跑一下构建'))
-check('无消息时退回目录名', sj.sessions.some((s) => s.title === 'proj-gamma'))
+/* 关键回归：标题事件在 seq 0、后面 449 条工具事件 —— 只扫尾部 400 条就会退成目录名 */
+check('标题优先用宿主折叠的会话名（长会话也取得到）', sj.sessions.find((s) => s.id === 's-done').title === '收尾清理', sj.sessions.find((s) => s.id === 's-done').title)
+check('标题折叠失败被隔离，退回目录名', sj.sessions.find((s) => s.id === 's-idle').title === 'proj-delta', sj.sessions.find((s) => s.id === 's-idle').title)
+check('会话标题不会取成工作目录名（default-workspace 那种）', sj.sessions.every((s) => s.title !== 'proj-gamma' || s.id !== 's-done'), '')
 check('保留 host 原始态（running/waiting）', sj.sessions.some((s) => s.state === 'running') && sj.sessions.some((s) => s.state === 'waiting'))
 check('列表行没 live 标记也能分辨活跃会话', sj.sessions.find((s) => s.id === 's-running').live === true && sj.sessions.find((s) => s.id === 's-idle').live === false, JSON.stringify(sj.sessions.map((s) => [s.id, s.live])))
+
+/* 标题折叠要读整条日志：同一批数据第二次拉取不能再读一遍 */
+const readsBefore = titleReads.length
+const sess2 = await call(BASE + '/sessions', undefined, 'GET')
+const sj2 = JSON.parse(sess2.body)
+check('标题按 (id, updatedAt) 缓存：第二次不再整条重读', titleReads.length === readsBefore, 'reads=' + titleReads.length)
+check('缓存命中后标题依旧正确', sj2.sessions.find((s) => s.id === 's-done').title === '收尾清理', sj2.sessions.find((s) => s.id === 's-done').title)
+check('首次折叠把全部会话 id 一次批下去', readsBefore >= 1 && titleReads[0].length === 4, JSON.stringify(titleReads[0]))
 
 const defaults = await call(BASE + '/defaults', undefined, 'GET')
 const dj = JSON.parse(defaults.body)

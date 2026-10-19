@@ -973,6 +973,10 @@ async function collectSessions(ctx) {
     out.push({
       id,
       title: safeTitle(header, observed),
+      /* 这个 title 是不是「会话自己的名字」。false = 只是拿工作目录名兜底，
+         界面该当它没有名字（项目别叫成 default-workspace）。
+         decorateTitles 拿到真标题后会翻成 true。 */
+      titled: !!observed.title,
       cwd: typeof header.cwd === 'string' ? header.cwd : '',
       state,
       live,
@@ -983,6 +987,9 @@ async function collectSessions(ctx) {
       turns: observed.turns,
     })
   }
+
+  /* 用宿主自己的标题折叠覆盖：侧边栏的会话名就是它算出来的，工作台要跟它一致 */
+  await decorateTitles(ctx, out)
 
   out.sort((a, b) => (b.updatedAt - a.updatedAt) || a.id.localeCompare(b.id))
   return {
@@ -995,6 +1002,75 @@ async function collectSessions(ctx) {
     counts,
     sessions: out,
   }
+}
+
+/* ---------------------------- 会话标题 ---------------------------- */
+
+const TITLE_TTL_MS = 60_000
+const TITLE_CACHE_MAX = 400
+/** id → { stamp, at, title }：readTitleSnapshots 要读整条日志，不能每 4s 重来一遍 */
+const TITLE_CACHE = new Map()
+
+/**
+ * 把 host 认的会话标题刷到行上。
+ *
+ * 侧边栏里的会话名（「安装 dsh-worktable 插件」这种）来自
+ * `sessionQuery.readTitleSnapshots()` —— 它会折叠**整条日志**，取最后一个
+ * `session/title` 事件。我们以前只在事件尾部 400 条里找，长会话的标题事件
+ * 早就甩出窗口了；冷会话（重启后不在内存里）更是连日志都拿不到，于是标题
+ * 退化成工作目录名 —— 默认工作区恰好叫 `default-workspace`，项目就跟着叫了
+ * 这个名字。这里直接问 host 要权威标题。
+ *
+ * 成本：冷会话要读盘重放日志，所以按 (id, updatedAt) 做 60s 缓存，
+ * 失败/无标题也缓存成空串，否则每轮轮询都会重读。
+ */
+async function decorateTitles(ctx, rows) {
+  if (!Array.isArray(rows) || !rows.length) return
+  const querySvc = service(ctx, 'sessionQuery')
+  const fold = querySvc && typeof querySvc.readTitleSnapshots === 'function' ? querySvc.readTitleSnapshots : null
+
+  const now = Date.now()
+  const pending = []
+  for (const row of rows) {
+    const stamp = String(row.updatedAt) + '|' + String(row.createdAt)
+    const hit = TITLE_CACHE.get(row.id)
+    if (hit && hit.stamp === stamp && now - hit.at < TITLE_TTL_MS) {
+      if (hit.title) { row.title = hit.title; row.titled = true }
+      continue
+    }
+    pending.push({ row, stamp })
+  }
+  if (!fold || !pending.length) return
+
+  let settled = null
+  try {
+    settled = await Promise.resolve(fold.call(querySvc, pending.map((x) => x.row.id)))
+  } catch { return }
+  if (!Array.isArray(settled)) return
+
+  pending.forEach((item, i) => {
+    const res = settled[i]
+    const snap = res && res.status === 'fulfilled' ? res.value : null
+    const title = titleTextOf(snap)
+    TITLE_CACHE.set(item.row.id, { stamp: item.stamp, at: now, title })
+    if (title) { item.row.title = title; item.row.titled = true }
+  })
+
+  if (TITLE_CACHE.size > TITLE_CACHE_MAX) {
+    let drop = TITLE_CACHE.size - TITLE_CACHE_MAX
+    for (const key of TITLE_CACHE.keys()) {
+      TITLE_CACHE.delete(key)
+      drop -= 1
+      if (drop <= 0) break
+    }
+  }
+}
+
+/** 标题快照是 `{ title, messageSeqs, source, eventSeq, updatedAt }`；老宿主给纯字符串 */
+function titleTextOf(snap) {
+  const raw = snap && typeof snap === 'object' ? snap.title : ''
+  const text = typeof raw === 'string' ? raw : (raw && typeof raw.title === 'string' ? raw.title : '')
+  return String(text).replace(/\s+/g, ' ').trim().slice(0, 100)
 }
 
 function degradedSessions(err) {
@@ -1132,15 +1208,14 @@ function clip(text, max = 4000) {
 }
 
 function transcriptTitle(header, events) {
-  let title = ''
-  for (let i = events.length - 1; i >= 0 && i >= events.length - 400; i -= 1) {
+  /* events 是完整日志（已经在内存里），从尾往前找最后一个 session/title 即可 ——
+     限成尾部 400 条会让长会话的标题永远取不到。 */
+  for (let i = events.length - 1; i >= 0; i -= 1) {
     const ev = events[i]
-    if (ev && ev.type === 'session/title') {
-      const t = ev?.data?.title
-      if (typeof t === 'string' && t.trim()) { title = t.trim(); break }
-    }
+    if (!ev || ev.type !== 'session/title') continue
+    const title = titleTextOf({ title: ev?.data?.title })
+    if (title) return title
   }
-  if (title) return title
   return safeTitle(header || {}, { title: '' })
 }
 

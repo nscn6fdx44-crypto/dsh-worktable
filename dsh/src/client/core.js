@@ -1316,12 +1316,25 @@ export function setPrimarySession(pid, sid) {
   toast('已设为主对话', 'ok')
 }
 
-/** 会话标题能不能直接当项目名（排除空、等于 id、形如 session-xxx） */
+/**
+ * 会话标题能不能直接当项目名（排除空、等于 id、形如 session-xxx）。
+ *
+ * `session.titled === false` 是宿主明确说的「这条会话还没有自己的名字」，
+ * 此时 `title` 只是工作目录名兜底 —— 默认工作区恰好叫 `default-workspace`，
+ * 以前就把它当会话名了，项目跟着叫 `default-workspace`。这时候不给名字，
+ * 让项目落到「未命名项目」，等宿主把标题折叠出来再补（enrichProjectName）；
+ * 除非会话就在自己的项目目录里跑，那目录名本身还是有意义的名字。
+ */
 function sessionTitleOf(session) {
   const sid = String(session?.id || '')
   const raw = String(session?.title || '').trim()
+  const dir = baseName(session?.cwd || '')
+  if (session?.titled === false) {
+    const wsDir = baseName(store?.defaults?.workspace || '') || 'default-workspace'
+    return dir && dir !== wsDir ? dir : ''
+  }
   if (raw && raw !== sid && !/^session-[\w-]+$/i.test(raw)) return raw
-  return baseName(session?.cwd || '') || ''
+  return dir || ''
 }
 
 /**
@@ -1361,7 +1374,7 @@ export function createFromSession(session) {
     /* 先按老行为弹编辑窗（用户随时能自己填）；有 id 的话同时去补快照，
        查到就自动改名并关掉编辑窗 —— 但从宿主拖进来的绝大多数是这一种。 */
     openModal('edit', pid)
-    toast('这条对话没有标题也没有工作目录，先给它起个名字', 'info')
+    toast('这条对话还没有名字，先给它起一个', 'info')
     if (sid) enrichProjectName(pid, sid)
     return pid
   }

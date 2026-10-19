@@ -2285,6 +2285,25 @@ check('补拉快照后自动改成会话标题', healed.name === '后到的会�
 check('自动改名同时补上工作目录', healed.path === 'C:\\demo\\late', healed.path)
 check('自动改名后关掉编辑窗', !mod.store.modal, JSON.stringify(mod.store.modal))
 
+/* ②b 宿主说「这条会话还没有名字」（title 只是工作目录兜底）：别把目录名当会话名 */
+fakeSessions.sessions.push({ id: 'session-noname-0001', title: 'default-workspace', cwd: 'C:\\Users\\demo\\default-workspace', titled: false, state: 'idle', createdAt: 12, updatedAt: NOW })
+await mod.loadSessions()
+const noNameId = mod.createFromSession({ id: 'session-noname-0001' })
+const noName = mod.store.projects.find((p) => p.id === noNameId)
+check('会话没名字时，默认工作区目录名不会被当成项目名',
+  noName && noName.name === '未命名项目', noName && noName.name)
+check('没名字也照样带上会话的工作目录', noName.path === 'C:\\Users\\demo\\default-workspace', noName.path)
+check('没名字时弹编辑窗让人自己起', mod.store.modal && mod.store.modal.kind === 'edit', JSON.stringify(mod.store.modal))
+mod.closeModal()
+
+/* ②c 没名字、但会话是在自己的项目目录里跑的：目录名就是有意义的项目名 */
+fakeSessions.sessions.push({ id: 'session-noname-0002', title: 'my-app', cwd: 'C:\\work\\my-app', titled: false, state: 'idle', createdAt: 13, updatedAt: NOW })
+await mod.loadSessions()
+const dirNamedId = mod.createFromSession({ id: 'session-noname-0002' })
+const dirNamed = mod.store.projects.find((p) => p.id === dirNamedId)
+check('没名字但不在默认工作区时，退回目录名', dirNamed && dirNamed.name === 'my-app', dirNamed && dirNamed.name)
+mod.closeModal()
+
 /* ③ 真的查不到（会话不存在）：不猜名字，停在编辑窗 */
 const n2 = mod.store.projects.length
 const ghostId = mod.createFromSession({ id: 'session-ffffffff-0000-1111-2222-333333333333' })

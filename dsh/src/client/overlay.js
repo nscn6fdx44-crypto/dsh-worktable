@@ -277,7 +277,8 @@ function SessionRow({ session, timing }) {
   },
     el('span', { className: 'light ' + st, 'aria-hidden': 'true' }),
     el('div', { className: 'ov-main' },
-      el('b', { className: 'ov-title', title: session.id }, session.title || session.id),
+      /* titled === false 表示宿主只是拿工作目录名兜底，别把 default-workspace 当会话名 */
+      el('b', { className: 'ov-title', title: session.id }, session.titled === false ? '未命名会话' : (session.title || session.id)),
       el('span', { className: 'ov-sub mono', title: session.cwd || '' }, shortPath(session.cwd || '未记录工作目录', 52)),
     ),
     timing

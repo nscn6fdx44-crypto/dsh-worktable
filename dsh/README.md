@@ -1,4 +1,4 @@
-# trae-usage-worktable（DSH 插件 · 0.10.4）
+# trae-usage-worktable（DSH 插件 · 0.10.5）
 
 > DeepSeek Harness 侧边栏的完整工作台。本目录是 `nscn6fdx44-crypto/dsh-worktable`
 > 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的**独立实现**：
@@ -16,11 +16,11 @@
 ```
 
 重开 DSH → 侧边栏出现「工作台」（托盘图标旁的 `🧰` 工作台卡片）→ 打开带 token 的网页端，
-访问 `/api/trae-worktable/health`，返回里的 `version` 应等于 `package.json` 的版本（当前 `0.10.4`）。
+访问 `/api/trae-worktable/health`，返回里的 `version` 应等于 `package.json` 的版本（当前 `0.10.5`）。
 
 分发 / 升级 / 卸载 / 排查见下方「安装」一节。
 
-## 能力（0.10.4）
+## 能力（0.10.5）
 
 | 半侧 | 文件 | 内容 |
 |---|---|---|
@@ -42,9 +42,9 @@
 3. **项目列表**：按「分组」归组，点一行进入工作区；每行状态灯跟随绑定对话，也可点击手工覆盖；
 4. **不再单列宿主会话**——那份列表与项目列表信息重复，宿主会话统一在「绑定对话」里选；
 5. 右击项目：编辑 / 绑定对话 / 删除（模式项随窗口模式一起删了）；
-6. **拖放添加项目**（0.8.12，0.10.4 修好命名）：宿主侧边栏 / 总览「◉ 宿主会话」里的会话行都能**拖到左侧工作台**，
+6. **拖放添加项目**（0.8.12，0.10.4 修好拖拽，0.10.5 修好取名）：宿主侧边栏 / 总览「◉ 宿主会话」里的会话行都能**拖到左侧工作台**，
    松手即用该会话新建项目并绑定；落点是**某个项目**时改成**绑到那个项目**（不再凭空多一个）。
-   项目名按会话标题自动取（宿主只给会话 id 时先落占位名，补拉一次 `/sessions` 后自动改名）；
+   项目名就是**会话在宿主侧边栏上的那个名字**（宿主只给会话 id 时先落占位名，补拉一次 `/sessions` 后自动改名）；
    同一条会话重复拖只会进已有项目。也认拖进来的目录路径（Windows 绝对路径 / `file://`）→ 按目录建项目。
 
 > 状态来源（0.8.2 起）：**以 DSH 自己的 `agent.status` 为准**——host 通过 `ctx.agents.get(sessionId)`
@@ -219,7 +219,7 @@
 已知边界：Windows 上走 ConPTY，个别旧版本可能丢输出（`useConpty` 已默认打开）；
 `backlog` 只留输出、不保留滚动语义，切回来看到的是「最近 240KB 重放」，不是逐像素复原的屏幕。
 
-### 拖拽建项目 / 绑定（0.10.4）
+### 拖拽建项目 / 绑定（0.10.4，0.10.5 修好取名）
 
 宿主侧边栏的会话行可以直接拖到工作台：
 
@@ -231,8 +231,15 @@
 | 会话已在别的项目上 | 拒绝并说明在哪个项目，不会一话两绑 |
 | 拖的是目录 | 按目录建项目 / 给空目录项目补工作目录（已有值不覆盖） |
 
-取名：会话标题 → 工作目录名 → 「未命名项目」+ 编辑窗。宿主行只带 `session-<uuid>` 时，
-先落占位名，**补拉一次 `/sessions` 后自动改名并关掉编辑窗**；真查不到（会话已删）才留着让人手填。
+取名：**会话名照抄宿主侧边栏**（0.10.5 起）→ 「未命名项目」+ 编辑窗。宿主行只带
+`session-<uuid>` 时，先落占位名，**补拉一次 `/sessions` 后自动改名并关掉编辑窗**；
+真查不到（会话已删）才留着让人手填。
+
+会话名不是 header 上的字段，而是宿主把整条事件日志折叠出来的（最后一个 `session/title`，
+通常就在 seq 14 附近）。所以 `/sessions` 现在直接调 `sessionQuery.readTitleSnapshots(ids)` 批量问，
+不再自己扫尾部 400 条事件 —— 那样长会话永远取不到标题，会掉到兜底的工作目录名，
+默认工作区就叫 `default-workspace`。行上的 `titled: false` 表示「这只是目录名」，
+界面据此显示「未命名会话」，项目也不会拿它当名字。
 
 拖拽细节见「已知坑」第 9 条：宿主的 `effectAllowed` 是 `move`，我们的 `dropEffect` 必须兼容，
 否则浏览器不派发 `drop` —— 这是以前「拖过去没反应」的根因。
@@ -356,7 +363,7 @@ worktree / 子模块，删了会连带毁掉主仓库，直接拒绝并提示手
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/health` | 版本 / 平台 / 服务可用性 / 上限常量 |
-| GET | `/sessions` | `{ ok, at, source, counts:{running,waiting,done,idle,total}, sessions:[{id,title,cwd,state,live,agent,updatedAt,turns}] }` |
+| GET | `/sessions` | `{ ok, at, source, counts:{running,waiting,done,idle,total}, sessions:[{id,title,titled,cwd,state,live,agent,updatedAt,turns}] }` |
 | GET | `/defaults` | `{ workspace, home, platform, shell }`（新建项目的默认目录） |
 | POST | `/transcript` | `{ sessionId, limit }` → `{ ok, title, cwd, messages:[{id,role,text,time}], truncated }` |
 | POST | `/session/create` | `{ cwd? }` → `{ ok, sessionId, agentPreset? }`：调宿主 `sessionController.create` **真新建一条会话**（与 GUI「新会话」同一条链路） |
@@ -819,6 +826,8 @@ package/lib/index.js     package/lib/client.js     package/README.md    package/
    并且声明 `effectAllowed = 'move'`。两个后果：
    ① 我们这边 `dragover` 的 `dropEffect` 必须是 `move`（或至少兼容），写死 `copy` 会让浏览器
    **根本不派发 drop**；② 载荷里没有标题和 cwd，必须拿 id 回查 `/sessions` 才有名字（0.10.4 修）。
+   而 `/sessions` 的标题又必须问 `sessionQuery.readTitleSnapshots`（0.10.5 修）：
+   `session/title` 事件写在日志开头，只扫尾部 400 条的长会话永远取不到，会掉到目录名兜底。
    工作台自己的行仍然写 `application/x-dsh-session`（带标题 + cwd），两条来源都要认。
    侧边栏整块是落点，同时兼容 `text/plain` / `text/uri-list` / 拖文件。
 10. **「＋ 新建对话」必须走宿主 `sessionController.create`**：客户端服务的 `createSession` /
