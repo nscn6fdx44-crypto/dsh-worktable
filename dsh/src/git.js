@@ -12,7 +12,7 @@
  *   4. 只跑白名单里的子命令（见 OPS），不接受客户端拼命令行；文件路径一律走 `--` 之后。
  */
 import { execFile } from 'node:child_process'
-import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -465,6 +465,58 @@ export async function gitSetRemote(cwd, { name = 'origin', url = '' } = {}) {
   const args = names.includes(name) ? ['remote', 'set-url', name, target] : ['remote', 'add', name, target]
   const res = await runGit(cwd, args)
   return { ok: res.ok, error: res.ok ? '' : (res.err || res.error) }
+}
+
+/** 真实路径，顺带展开 Windows 8.3 短名（tmpdir 常返回 JINSHU~1） */
+function realish(p) {
+  try {
+    return realpathSync.native(p)
+  } catch {
+    return resolve(p)
+  }
+}
+
+/**
+ * 取消初始化：删掉 `.git` 目录，工作区文件一个都不动（等于 `rm -rf .git`）。
+ *
+ * 三条硬约束，缺一条都不干：
+ *   1. 调用方必须显式传 `confirm: true` —— 服务端不信 UI 的默认值；
+ *   2. 必须在**仓库根**执行 —— 在子目录里放开就是「把上层仓库连锅端」；
+ *   3. `.git` 必须是目录 —— 是文件说明这是 worktree / 子模块，删了会连带毁掉主仓库，
+ *      这种情况直接拒绝，让用户去终端自己处理。
+ */
+export async function gitUninit(cwd, { confirm = false } = {}) {
+  if (confirm !== true) return { ok: false, error: '删除 .git 需要显式确认' }
+  if (!(await isRepo(cwd))) return { ok: false, error: '这里不是 git 仓库' }
+
+  const root = await repoRoot(cwd)
+  if (!root) return { ok: false, error: '定位不到仓库根目录' }
+  if (realish(root).toLowerCase() !== realish(cwd).toLowerCase()) {
+    return { ok: false, error: '只能在仓库根目录取消初始化（当前在子目录）' }
+  }
+
+  const dotGit = join(root, '.git')
+  let lst = null
+  try {
+    lst = lstatSync(dotGit)
+  } catch {
+    return { ok: false, error: '.git 不存在' }
+  }
+  if (lst.isSymbolicLink()) return { ok: false, error: '.git 是符号链接，请手动处理' }
+  if (!lst.isDirectory()) {
+    return { ok: false, error: '这是 worktree 或子模块的 .git 文件，删掉会连带损坏主仓库，请手动处理' }
+  }
+
+  /* 主仓库里挂 worktree 时 .git/worktrees 有内容：只删主 .git 会让那些 worktree 变孤儿，提醒但允许 */
+  const hasWorktrees = existsSync(join(dotGit, 'worktrees'))
+
+  try {
+    rmSync(dotGit, { recursive: true, force: true })
+  } catch (e) {
+    return { ok: false, error: `删除失败：${e?.message || e}` }
+  }
+
+  return { ok: true, removed: dotGit, hadWorktrees: hasWorktrees }
 }
 
 /* ============================ 克隆 ============================ */
@@ -951,6 +1003,7 @@ export async function gitDispatch(cwd, body) {
     })
     case 'reset': return gitReset(cwd, { commit: String(body?.commit || 'HEAD'), mode: String(body?.mode || 'soft') })
     case 'init': return gitInit(cwd, { branch: String(body?.branch || 'main') })
+    case 'uninit': return gitUninit(cwd, { confirm: body?.confirm === true })
     case 'remote': return gitSetRemote(cwd, { name: String(body?.name || 'origin'), url: String(body?.url || '') })
     default:
       return { ok: false, error: '未知 op：' + op }

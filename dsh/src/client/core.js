@@ -2738,6 +2738,11 @@ export function scmInit(pid) {
   return scmAct(pid, 'init', {}, { label: '已初始化仓库' })
 }
 
+/** 取消初始化：删掉 .git，工作区文件保留。必须二次确认后调用 */
+export function scmUninit(pid) {
+  return scmAct(pid, 'uninit', { confirm: true }, { label: '已取消初始化，文件都还在' })
+}
+
 export async function scmDiff(pid, file, { staged = false } = {}) {
   const project = projectOf(pid)
   if (!project?.path || !file) return

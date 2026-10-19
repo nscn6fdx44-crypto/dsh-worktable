@@ -420,6 +420,25 @@ check('git 显示提交内容', gshow.ok === true && gshow.diff.includes('a.txt'
 const gmsg = await call(BASE + '/git', { path: repoDir, op: 'commit', message: '' })
 check('git 空提交说明被拒', gmsg.status === 400 && /提交说明不能为空/.test(gmsg.body), gmsg.body.slice(0, 60))
 
+/* 取消初始化（删 .git）：三条硬约束都得拦住 */
+const gun0 = await call(BASE + '/git', { path: repoDir, op: 'uninit' })
+check('git uninit 不带确认 → 400', gun0.status === 400 && /显式确认/.test(gun0.body), gun0.body.slice(0, 60))
+
+const subDir = join(repoDir, 'sub')
+mkdirSync(subDir, { recursive: true })
+const gunSub = await call(BASE + '/git', { path: subDir, op: 'uninit', confirm: true })
+check('git uninit 在子目录 → 400（不能端掉上层仓库）', gunSub.status === 400 && /仓库根/.test(gunSub.body), gunSub.body.slice(0, 70))
+check('git uninit 被拦后 .git 还在', existsSync(join(repoDir, '.git')))
+
+const gun1 = await call(BASE + '/git', { path: repoDir, op: 'uninit', confirm: true })
+check('git uninit 带确认 → 删掉 .git', gun1.status === 200 && JSON.parse(gun1.body).ok === true, gun1.body.slice(0, 80))
+check('git uninit 后 .git 没了、工作区文件还在',
+  !existsSync(join(repoDir, '.git')) && existsSync(join(repoDir, 'a.txt')))
+const gs5 = JSON.parse((await call(BASE + '/git', { path: repoDir, op: 'status' })).body)
+check('git uninit 后 status 报 repo:false（不炸）', gs5.ok === true && gs5.repo === false, String(gs5.repo))
+const gun2 = await call(BASE + '/git', { path: repoDir, op: 'uninit', confirm: true })
+check('git uninit 重复调用 → 400 不是 500', gun2.status === 400, gun2.status + ' ' + gun2.body.slice(0, 50))
+
 rmSync(repoDir, { recursive: true, force: true })
 
 

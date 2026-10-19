@@ -1490,3 +1490,11 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 .wt-scope .gh-repo:hover { background: var(--panel-2); color: var(--txt); }
 .wt-scope .chk { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--txt-dim); padding: 3px 0; cursor: pointer; }
 .wt-scope .chk input { accent-color: var(--amber); }
+
+/* 危险区：取消初始化 */
+.wt-scope .scm-danger {
+  border: 1px solid rgba(232,115,74,.24); border-radius: 9px;
+  padding: 8px 9px; background: rgba(232,115,74,.05);
+}
+.wt-scope .scm-danger .hint { margin: 6px 0 0; font-size: 11px; line-height: 1.55; color: var(--txt-mute); }
+.wt-scope .scm-danger .mini-btn.danger { background: rgba(232,115,74,.10); }

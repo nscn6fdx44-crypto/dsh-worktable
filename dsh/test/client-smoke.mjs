@@ -2082,6 +2082,19 @@ mod.scmSetView(pid6, 'branches')
 const scmBrTree = render(overlayComp)
 check('分支视图列出本地/远程/标签',
   textOf(scmBrTree).includes('本地分支') && textOf(scmBrTree).includes('远程分支') && textOf(scmBrTree).includes('标签'), '')
+
+/* 取消初始化：危险区按钮 + 请求必须带 confirm */
+const dangerBtns = allByClass(scmBrTree, /(^|\s)scm-danger(\s|$)/)
+check('分支视图有「取消初始化」危险区', dangerBtns.length === 1 && textOf(dangerBtns[0]).includes('取消初始化'), String(dangerBtns.length))
+check('危险区说明写明「只删 .git、文件保留」', textOf(dangerBtns[0]).includes('文件一个都不动') || textOf(dangerBtns[0]).includes('只删 .git'), '')
+
+const uninitBefore = gitOps.filter((o) => o.op === 'uninit').length
+await mod.scmUninit(pid6)
+check('取消初始化发 op=uninit 且带 confirm:true',
+  gitOps.filter((o) => o.op === 'uninit').length === uninitBefore + 1 &&
+  gitOps.some((o) => o.op === 'uninit' && o.confirm === true),
+  'ops=' + gitOps.map((o) => o.op).join(','))
+
 mod.scmSetView(pid6, 'history')
 const scmHiTree = render(overlayComp)
 check('历史视图列出提交并可回退', textOf(scmHiTree).includes('整理构建脚本') && textOf(scmHiTree).includes('回退'), '')

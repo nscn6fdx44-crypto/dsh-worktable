@@ -28,7 +28,7 @@ import {
   deleteCustom, buildCustomPrompt, fillHostInput, setCustomPrompt, setCustomRequirement,
   /* 源代码管理 / GitHub */
   scmOf, loadScm, scmStage, scmUnstage, scmDiscard, scmSetMessage, scmCommit,
-  scmFetch, scmPull, scmPush, scmCheckout, scmBranchOp, scmTagOp, scmReset, scmInit,
+  scmFetch, scmPull, scmPush, scmCheckout, scmBranchOp, scmTagOp, scmReset, scmInit, scmUninit,
   scmDiff, scmShowCommit, scmClearDiff, scmSetView, setScmInsecure,
   loadGh, loadGhRepos, ghUploadRepo,
 } from './core.js'
@@ -499,6 +499,25 @@ export function ScmPane({ project }) {
           onChange: (e) => setScmInsecure(e.target.checked),
         }),
         el('span', null, '跳过证书校验（本机吊销检查连不上时用）'),
+      ),
+
+      el('div', { className: 'scm-sec-head' }, el('span', null, '取消初始化')),
+      el('div', { className: 'scm-danger' },
+        el('button', {
+          type: 'button',
+          className: 'mini-btn danger',
+          disabled: !!scm.busy,
+          title: '等价于在仓库根执行 rm -rf .git',
+          onClick: () => {
+            if (confirm === 'uninit') {
+              setConfirm('')
+              scmUninit(pid)
+            } else ask('uninit')
+          },
+        }, confirm === 'uninit' ? '再点一次确认删除 .git' : '删除 .git（取消初始化）'),
+        el('p', { className: 'hint' },
+          '项目文件一个都不动，只删 .git 目录 —— 等于把「仓库」变回「普通文件夹」。' +
+          '提交历史、分支、标签会一起没掉；如果已经推到 GitHub，远端那份不受影响，随时能重新克隆回来。'),
       ),
     ) : null,
 

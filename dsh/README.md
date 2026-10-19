@@ -1,4 +1,4 @@
-# trae-usage-worktable（DSH 插件 · 0.10.0）
+# trae-usage-worktable（DSH 插件 · 0.10.1）
 
 > DeepSeek Harness 侧边栏的完整工作台。本目录是 `nscn6fdx44-crypto/dsh-worktable`
 > 对上游 [Aisland-SJL/dsh-worktable](https://github.com/Aisland-SJL/dsh-worktable) 的**独立实现**：
@@ -16,11 +16,11 @@
 ```
 
 重开 DSH → 侧边栏出现「工作台」（托盘图标旁的 `🧰` 工作台卡片）→ 打开带 token 的网页端，
-访问 `/api/trae-worktable/health`，返回里的 `version` 应等于 `package.json` 的版本（当前 `0.10.0`）。
+访问 `/api/trae-worktable/health`，返回里的 `version` 应等于 `package.json` 的版本（当前 `0.10.1`）。
 
 分发 / 升级 / 卸载 / 排查见下方「安装」一节。
 
-## 能力（0.10.0）
+## 能力（0.10.1）
 
 | 半侧 | 文件 | 内容 |
 |---|---|---|
@@ -251,6 +251,13 @@
 > 退让顺序是「原样 → 只关吊销检查 → 用户勾选时关证书校验」，默认**不会**偷偷关掉校验；
 > 勾选开关在克隆窗和「分支 → 远程」里，勾一次会记住，推送 / 拉取一起生效。
 
+**取消初始化**（0.10.1）：等价于在仓库根执行 `rm -rf .git` —— 只删 `.git` 目录，项目文件一个都不动，
+提交历史 / 分支 / 标签一起没掉；已经推到 GitHub 的那份不受影响。入口在「分支」视图底部的危险区，
+按钮要点两次（第一次变成「再点一次确认删除 .git」，4 秒后自动复原）。
+服务端另有三条硬约束，不只靠 UI 拦：① 请求必须带 `confirm: true`；② 必须在仓库根
+（在子目录调用会拒绝，否则会把上层仓库端掉）；③ `.git` 必须是目录 —— 是文件说明这是
+worktree / 子模块，删了会连带毁掉主仓库，直接拒绝并提示手动处理。
+
 ### 让位与侧边栏稳定性（0.8.48 – 0.8.52）
 
 连续五个版本修的是同一族问题，建议一起验收：
@@ -342,6 +349,7 @@
 | `tag` | `action:'create'\|'delete', name, message?, target?` | 标签管理（带说明用 `-a`） |
 | `reset` | `commit, mode:'soft'\|'mixed'\|'hard'` | 回退；界面只暴露 soft（改动回到工作区） |
 | `init` `remote` | `branch?` / `name, url` | 初始化仓库 / 设置远程 |
+| `uninit` | `confirm:true` | **取消初始化**：删 `.git`，工作区文件不动（0.10.1）。三条硬约束见下 |
 
 ### 多项目并排（0.8.44）
 

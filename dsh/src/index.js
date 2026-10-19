@@ -75,7 +75,7 @@ const TERM_TIMEOUT_MS = 120_000
 const GIT_TIMEOUT_MS = 10_000
 /* 会改动仓库 / 工作区的 git 操作：要求目录落在可写白名单内 */const GIT_WRITE_OPS = new Set([
   'stage', 'unstage', 'discard', 'commit', 'fetch', 'pull', 'push',
-  'checkout', 'branch', 'tag', 'reset', 'init', 'remote',
+  'checkout', 'branch', 'tag', 'reset', 'init', 'uninit', 'remote',
 ])
 /* 探测本地开发服务器：超时要短（3.5s 已经比「人觉得卡了」长） */
 const PROBE_TIMEOUT_MS = 3_500
