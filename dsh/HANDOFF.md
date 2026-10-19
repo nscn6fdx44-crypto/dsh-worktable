@@ -16,8 +16,8 @@
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
 | 运行中的实例 | `/api/trae-worktable/health` → 重启前仍是 **0.8.52**；PTY 是 host 侧改动，**必须完整重启 DSH** 才生效 |
 | 自测基线 | host **140** + client **518** 全通过（`npm test`） |
-| tag | `v0.9.0` 待打（提交后打 tag 并推送） |
-| Release | `v0.9.0` 待发布；包 `trae-usage-worktable-0.9.0.tgz`（218.8 KB，sha256 `ec7fc69e…b955e1`）已打包 |
+| tag | `v0.9.0` **已打并推送**（带注释，指向 `8e3d8a5`） |
+| Release | `v0.9.0` **已发布**，附件 `trae-usage-worktable-0.9.0.tgz`（224018 字节，sha256 `ec7fc69e…b955e1`）下载回本地逐字节校验一致 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
 
 ---
