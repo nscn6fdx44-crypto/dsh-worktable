@@ -365,3 +365,21 @@ cd $repo; npm run build; npm test
 **通用规律（以后遇到同类问题先看这条）**：宿主在 `document` 冒泡阶段管事的时候，
 `stopPropagation()` 只解决「别让它处理」，不解决「它已经改掉的状态谁来复位」——
 必须自己补一次等价事件，或者干脆在捕获阶段就别让它收到。
+---
+
+## 14. 拖 .html 进自定义窗口（0.10.7 之后）：拿不到路径时读内容兜底
+
+**问题**：把 `C:\...\Desktop\index.html` 拖进「自定义」窗格，提示「没认出拖进来的是哪个文件」。
+
+**根因**：新版 Electron 不再提供 `File.path`（改用 `webUtils.getPathForFile`），而 Windows 资源管理器拖拽的 `text/uri-list` 也不一定可读 →
+`readChatDrop()` 里「取路径」的三条路全断，返回 null。
+
+**修法**：
+1. `readChatDrop()` 现在把 **文件对象本身** 也带出来：`{ kind:'file', value, name, file }`，
+   `dt.files` 为空时再从 `dt.items[].getAsFile()` 取；`uri-list`/`text/plain` 分支也补上 `name`。
+2. 新增 `fileToText(file)`（`file.text()` → `FileReader` 兜底）：**没有路径就直接读内容**。
+3. `CustomPane` 的拖放改成 async 三级处理：
+   - 有路径且是 `.html` → 老行为（`kind:'file'`，预览可带同目录 css/js/图片）；
+   - 无路径但是 `.html` → 读内容建 `kind:'html'` 快照，提示「想跟随磁盘文件就点『选文件』」；
+   - 其它 → toast 里带上 `dropSummary(e)`（`types=[…] files=[…] paths=[…]`），方便定位。
+4. `dropToChat()` 对「有文件没路径」给出明确提示，不再静默失败。

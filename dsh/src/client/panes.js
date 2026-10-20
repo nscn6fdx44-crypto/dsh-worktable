@@ -22,6 +22,7 @@ import {
   ARTIFACT_FILE, loadArtifacts, openArtifact, sendArtifactToChat,
   openModal, siteUrlOf, cycleStatus, updateProject, projectOf, toast, listMediaDir, openTab,
   dragFilePayload, dragUrlPayload, sendPathToChat, sendUrlToChat, sendToChat,
+  fileToText, dropSummary,
   readChatDrop, FILE_DRAG, resetHostDropMask,
   webSync, webGoto, webGotoSmart, webSearch, webSetEngine, SEARCH_ENGINES, webHome, webCloseHome,
   webBack, webForward, webReload, webLoaded, webProbe,
@@ -1706,18 +1707,38 @@ export function CustomPane({ project }) {
   }
 
   /** 拖进来的东西就地变成「网页文件」草稿（不弹任何确认框） */
-  const takeDropped = (e) => {
+  const takeDropped = async (e) => {
     const payload = readChatDrop(e)
     const path = payload && payload.kind === 'file' ? String(payload.value || '').trim() : ''
-    if (!path) { toast('没认出拖进来的是哪个文件 —— 用「选文件…」挑吧', 'warn'); return false }
-    if (!isHtmlFile(path)) { toast('只收 .html / .htm / .xhtml；其它文件交给文件 / 媒体窗格', 'warn'); return false }
+    const name = (payload && payload.name) || (path ? (path.split(/[\\/]/).pop() || '') : '')
     if (dirty) { toast('当前改动还没保存 —— 先点「保存」，再来拖', 'warn'); return false }
-    newCustomDraft('file', 'preview')
-    editCustom({ name: fileStemOf(path), body: path, pid: project?.id || '' })
-    setPicking(false)
-    setNonce((n) => n + 1)
-    toast('已放进自定义窗口；要留着就点「保存」', 'ok')
-    return true
+
+    /* ① 有磁盘路径的 .html：按路径存，预览能带同目录的 css/js/图片 */
+    if (path) {
+      if (!isHtmlFile(path)) { toast('只收 .html / .htm / .xhtml；其它文件交给文件 / 媒体窗格', 'warn'); return false }
+      newCustomDraft('file', 'preview')
+      editCustom({ name: fileStemOf(path), body: path, pid: project?.id || '' })
+      setPicking(false)
+      setNonce((n) => n + 1)
+      toast('已放进自定义窗口；要留着就点「保存」', 'ok')
+      return true
+    }
+
+    /* ② 拿不到路径（新版 Electron 不给 File.path）：直接读文件内容做快照 */
+    if (payload && payload.file && isHtmlFile(name)) {
+      const text = await fileToText(payload.file)
+      if (!text.trim()) { toast('读不到「' + name + '」的内容（可能是空文件或权限问题）', 'warn'); return false }
+      newCustomDraft('html', 'preview')
+      editCustom({ name: fileStemOf(name) || '本地网页', body: text, pid: project?.id || '' })
+      setPicking(false)
+      setNonce((n) => n + 1)
+      toast('已读入「' + name + '」的内容（快照）；想跟随磁盘文件就点「选文件」按路径加', 'ok')
+      return true
+    }
+
+    if (name && !isHtmlFile(name)) { toast('只收 .html / .htm / .xhtml；其它文件交给文件 / 媒体窗格', 'warn'); return false }
+    toast('没认出拖进来的是什么 —— ' + dropSummary(e) + '；也可以点「选文件」按路径挑', 'warn')
+    return false
   }
 
   const onDrop = (e) => {
@@ -1725,7 +1746,8 @@ export function CustomPane({ project }) {
     e.preventDefault()
     e.stopPropagation()
     setDropHover(false)
-    takeDropped(e)
+    /* 异步：可能需要读文件内容 */
+    Promise.resolve(takeDropped(e)).catch(() => {})
     /* 宿主的 onDrop 被我们挡住了，它自己的 dragActive 得有人替它关 */
     resetHostDropMask()
   }

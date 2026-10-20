@@ -2416,6 +2416,30 @@ mod.dropOnWorktable(fakeEvt({ 'text/plain': 'session-cwd-0001' }))
 check('已绑定的会话再拖到空白处 → 进已有项目，不重复建',
   mod.store.projects.length === n3, n3 + ' → ' + mod.store.projects.length)
 
+/* ---------- ㉘ 拖 .html 进自定义窗口（含拿不到路径的兜底） ---------- */
+const fakeHtml = { name: 'index.html', path: '', text: async () => '<!doctype html><h1>hi</h1>' }
+const dtFiles = { types: ['Files'], files: [fakeHtml], items: [{ kind: 'file', getAsFile: () => fakeHtml }], getData: () => '' }
+const filePayload = mod.readChatDrop({ dataTransfer: dtFiles })
+check('拿不到路径也带回文件对象', !!filePayload && filePayload.kind === 'file' && filePayload.value === '' && filePayload.name === 'index.html', JSON.stringify({ v: filePayload && filePayload.value, n: filePayload && filePayload.name }))
+check('带回的 file 能读内容', !!(filePayload && filePayload.file) && typeof filePayload.file.text === 'function', '')
+const textIn = await mod.fileToText(fakeHtml)
+check('fileToText 读出 html', textIn.includes('<h1>hi</h1>'), textIn.slice(0, 30))
+check('isHtmlFile 认 .html/.htm/.xhtml', mod.isHtmlFile('index.html') && mod.isHtmlFile('A.HTM') && mod.isHtmlFile('x.xhtml'), '')
+check('isHtmlFile 拒绝非 html', !mod.isHtmlFile('a.txt') && !mod.isHtmlFile('shot.png'), '')
+check('dropSummary 报出 types 与文件名', String(mod.dropSummary({ dataTransfer: dtFiles })).includes('Files') && String(mod.dropSummary({ dataTransfer: dtFiles })).includes('index.html'), String(mod.dropSummary({ dataTransfer: dtFiles })))
+
+/* 从资源管理器拖（只有 uri-list，没有 Files）也能拿到路径 + 文件名 */
+const uriPayload = mod.readChatDrop({ dataTransfer: { types: ['text/uri-list'], files: [], getData: (k) => (k === 'text/uri-list' ? 'file:///C:/Users/jinshuaiyu/Desktop/index.html' : '') } })
+check('uri-list 还原路径与文件名', !!uriPayload && uriPayload.value === 'C:\\Users\\jinshuaiyu\\Desktop\\index.html' && uriPayload.name === 'index.html', JSON.stringify(uriPayload))
+
+/* 自定义窗口空态仍然有拖放提示 */
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+mod.openTab(pid6, 'custom')
+const cuTree = render(overlayComp)
+check('自定义窗提示可直接拖 .html 进来', textOf(cuTree).includes('.html') && (textOf(cuTree).includes('拖') || textOf(cuTree).includes('自定义窗口')), textOf(cuTree).slice(0, 80))
+
 const failed = results.filter((r) => !r)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)
 process.exit(failed.length ? 1 : 0)

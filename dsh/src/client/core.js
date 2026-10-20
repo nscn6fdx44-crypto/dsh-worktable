@@ -1626,8 +1626,24 @@ export function readChatDrop(e) {
       const o = JSON.parse(raw)
       return o && o.url ? { kind: 'url', value: o.url, title: o.title || '' } : null
     }
-    if (dt.files && dt.files.length && dt.files[0] && dt.files[0].path) {
-      return { kind: 'file', value: String(dt.files[0].path) }
+    /* 真实文件对象：新版 Electron 拿不到 File.path（被 webUtils 取代），
+       但文件本身在 —— 把 file 一并带出去，调用方可以读内容兜底 */
+    let file = null
+    try {
+      if (dt.files && dt.files.length) file = dt.files[0]
+      if (!file && dt.items && dt.items.length) {
+        for (let i = 0; i < dt.items.length; i += 1) {
+          const it = dt.items[i]
+          if (it && it.kind === 'file' && typeof it.getAsFile === 'function') {
+            file = it.getAsFile()
+            if (file) break
+          }
+        }
+      }
+    } catch { file = null }
+    if (file) {
+      const p = typeof file.path === 'string' ? file.path : ''
+      return { kind: 'file', value: p, name: String(file.name || ''), file }
     }
     const uris = String(dt.getData('text/uri-list') || '').split(/\r?\n/).filter((x) => x && !x.startsWith('#'))
     const first = uris[0] || String(dt.getData('text/plain') || '').trim()
@@ -1638,9 +1654,9 @@ export function readChatDrop(e) {
     if (/^https?:\/\//i.test(first)) return { kind: 'url', value: first }
     if (/^file:\/\//i.test(first)) {
       const p = decodeURI(first.replace(/^file:\/\/+/i, '')).replace(/\//g, '\\')
-      return { kind: 'file', value: p }
+      return { kind: 'file', value: p, name: String(p).split(/[\\\\/]/).pop() || '' }
     }
-    return { kind: 'file', value: first }
+    return { kind: 'file', value: first, name: String(first).split(/[\\\\/]/).pop() || '' }
   } catch { return null }
 }
 
@@ -1733,6 +1749,33 @@ export function sendToChat(payload) {
   return !!ok
 }
 
+/** 读拖进来的文件内容（路径拿不到时的兜底；html 自定义窗口用） */
+export async function fileToText(file) {
+  if (!file) return ''
+  try {
+    if (typeof file.text === 'function') return String(await file.text())
+    if (typeof FileReader === 'function') {
+      return await new Promise((resolve, reject) => {
+        const fr = new FileReader()
+        fr.onload = () => resolve(String(fr.result || ''))
+        fr.onerror = () => reject(fr.error || new Error('读取失败'))
+        fr.readAsText(file)
+      })
+    }
+  } catch { /* 读不了就返回空串 */ }
+  return ''
+}
+
+/** 诊断用：把这次拖放看到的东西摊平（拖不进来时点一下「看看它收到了什么」） */
+export function dropSummary(e) {
+  const dt = e && e.dataTransfer
+  if (!dt) return '没有 dataTransfer'
+  const types = dt.types ? Array.prototype.slice.call(dt.types) : []
+  const names = dt.files && dt.files.length ? Array.prototype.map.call(dt.files, (f) => String((f && f.name) || '')) : []
+  const paths = dt.files && dt.files.length ? Array.prototype.map.call(dt.files, (f) => String((f && f.path) || '')) : []
+  return 'types=[' + types.join(',') + '] files=[' + names.join(',') + '] paths=[' + paths.join(',') + ']'
+}
+
 export function sendPathToChat(path) { return sendToChat({ kind: 'file', value: path }) }
 export function sendUrlToChat(url, title) { return sendToChat({ kind: 'url', value: url, title }) }
 
@@ -1746,6 +1789,11 @@ export function dropToChat(e) {
   const payload = readChatDrop(e)
   setChatDropHover(false)
   if (!payload) return false
+  /* 文件对象有、但宿主没给磁盘路径：说清楚，别静默失败 */
+  if (payload.kind === 'file' && !payload.value) {
+    toast('拿到文件「' + (payload.name || '未知') + '」但没有磁盘路径（宿主没暴露），请从工作台的文件管理器里拖', 'warn')
+    return false
+  }
   return sendToChat(payload)
 }
 
