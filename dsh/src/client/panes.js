@@ -22,6 +22,7 @@ import {
   ARTIFACT_FILE, loadArtifacts, openArtifact, sendArtifactToChat,
   openModal, siteUrlOf, cycleStatus, updateProject, projectOf, toast, listMediaDir, openTab,
   dragFilePayload, dragUrlPayload, sendPathToChat, sendUrlToChat, sendToChat,
+  readChatDrop, FILE_DRAG,
   webSync, webGoto, webGotoSmart, webSearch, webSetEngine, SEARCH_ENGINES, webHome, webCloseHome,
   webBack, webForward, webReload, webLoaded, webProbe,
   webSetViewport, webOpenExternal, webSetMore,
@@ -1604,6 +1605,7 @@ export function CustomPane({ project }) {
   const [targetPid, setTargetPid] = useState(project?.id || '')
   const [nonce, setNonce] = useState(0)
   const [picking, setPicking] = useState(false)
+  const [dropHover, setDropHover] = useState(false)
 
   useEffect(() => {
     if (store.custom.state === 'idle') loadCustom()
@@ -1619,7 +1621,9 @@ export function CustomPane({ project }) {
   const isUrl = draft?.kind === 'url'
   const isFile = draft?.kind === 'file'
   const isNew = !!draft && !draft.id
-  const dirty = !!draft && !!cu.item && (draft.name !== cu.item.name || draft.body !== cu.item.body || draft.kind !== cu.item.kind)
+  /* 草稿和「已保存的那个」不是同一条时不算改脏（新建草稿本来就没有存过） */
+  const dirty = !!draft && !!cu.item && draft.id === cu.item.id
+    && (draft.name !== cu.item.name || draft.body !== cu.item.body || draft.kind !== cu.item.kind)
 
   const makePrompt = () => {
     const text = buildCustomPrompt(targetProject, requirement, draft?.name || '')
@@ -1669,6 +1673,58 @@ export function CustomPane({ project }) {
     setNonce((n) => n + 1)
   }
 
+  /* ---------- 拖一个本地网页进来 ----------
+   * 宿主给整个窗口挂了 drop 处理器：文件掉进来它自己会弹窗（还可能是宿主自己的
+   * 「要不要加进对话 / 打开这个文件」那种），把工作台整个挡住。所以这里必须
+   * preventDefault + stopPropagation，把事件就地吃掉，再自己接住这个文件。 */
+  const isFileDrag = (e) => {
+    const dt = e && e.dataTransfer
+    if (!dt) return false
+    const types = dt.types ? Array.prototype.slice.call(dt.types) : []
+    if (types.indexOf(FILE_DRAG) >= 0) return true
+    if (types.indexOf('Files') >= 0) return true
+    return types.indexOf('text/uri-list') >= 0 && !!dt.files && dt.files.length > 0
+  }
+
+  const onDragOver = (e) => {
+    if (!isFileDrag(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    try { e.dataTransfer.dropEffect = 'copy' } catch { /* 某些环境只读 */ }
+    if (!dropHover) setDropHover(true)
+  }
+
+  const onDragLeave = (e) => {
+    if (!dropHover) return
+    /* 移到自己的子元素上也会触发 dragleave，别把高亮抖掉 */
+    const to = e && e.relatedTarget
+    if (to && e.currentTarget && e.currentTarget.contains(to)) return
+    setDropHover(false)
+  }
+
+  /** 拖进来的东西就地变成「网页文件」草稿（不弹任何确认框） */
+  const takeDropped = (e) => {
+    const payload = readChatDrop(e)
+    const path = payload && payload.kind === 'file' ? String(payload.value || '').trim() : ''
+    if (!path) { toast('没认出拖进来的是哪个文件 —— 用「选文件…」挑吧', 'warn'); return false }
+    if (!isHtmlFile(path)) { toast('只收 .html / .htm / .xhtml；其它文件交给文件 / 媒体窗格', 'warn'); return false }
+    if (dirty) { toast('当前改动还没保存 —— 先点「保存」，再来拖', 'warn'); return false }
+    newCustomDraft('file', 'preview')
+    editCustom({ name: fileStemOf(path), body: path, pid: project?.id || '' })
+    setPicking(false)
+    setNonce((n) => n + 1)
+    toast('已放进自定义窗口；要留着就点「保存」', 'ok')
+    return true
+  }
+
+  const onDrop = (e) => {
+    if (!isFileDrag(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    setDropHover(false)
+    takeDropped(e)
+  }
+
   if (cu.state === 'loading' && !cu.items.length) {
     return el('div', { className: 'pane-body' }, el('p', { className: 'wt-mute' }, '读取自定义窗口…'))
   }
@@ -1693,7 +1749,7 @@ export function CustomPane({ project }) {
     stage = el('div', { className: 'pane-empty' },
       el('span', { className: 'pe-ico' }, '❖'),
       el('p', null, '自定义窗口'),
-      el('p', { className: 'hint' }, '把常用的小工具做成工作台里的一个窗格：一句话描述让 AI 写、自己贴一段 HTML，或者直接指向磁盘上的一个 .html 文件。内容存在本机 DSH 主目录，不写进项目仓库。'),
+      el('p', { className: 'hint' }, '把常用的小工具做成工作台里的一个窗格：一句话描述让 AI 写、自己贴一段 HTML，或者直接指向磁盘上的一个 .html 文件（把它拖进这个窗格也行）。内容存在本机 DSH 主目录，不写进项目仓库。'),
       el('div', { className: 'pe-actions' },
         el('button', { type: 'button', className: 'btn small', onClick: () => openNew('html') }, '✨ 新建一个'),
         el('button', { type: 'button', className: 'mini-btn', onClick: () => loadCustom() }, '⟳ 重新读取'),
@@ -1772,7 +1828,7 @@ export function CustomPane({ project }) {
     stage = isFile
       ? el('div', { className: 'cu-urlbox' },
         el('p', { className: 'cu-hint' },
-          '填一个本地网页的绝对路径，或点「选文件」挑。预览时由 /asset 托管：同目录下的 css / js / 图片会一起加载。'),
+          '填一个本地网页的绝对路径，或点「选文件」挑，也可以把 .html 直接从资源管理器拖进这个窗格。预览时由 /asset 托管：同目录下的 css / js / 图片会一起加载。'),
         el('div', { className: 'cu-filebar' },
           el('input', {
             className: 'mono cu-url', value: body, spellCheck: false,
@@ -1826,7 +1882,12 @@ export function CustomPane({ project }) {
         })
   }
 
-  return el('div', { className: 'pane-body cu-body' },
+  return el('div', {
+    className: 'pane-body cu-body' + (dropHover ? ' cu-dropping' : ''),
+    onDragOver,
+    onDragLeave,
+    onDrop,
+  },
     el('div', { className: 'cu-side' },
       el('div', { className: 'cu-side-head' },
         el('span', null, '窗口'),
@@ -1889,7 +1950,16 @@ export function CustomPane({ project }) {
         }, cu.busy === 'deleting' ? '删除中…' : '删除'),
       ),
 
-      el('div', { className: 'cu-stage' }, stage),
+      el('div', { className: 'cu-stage' },
+        stage,
+        dropHover
+          ? el('div', { className: 'cu-dropto' },
+            el('span', { className: 'cu-dropto-ico' }, '❐'),
+            el('span', null, '松手 → 放进这个窗格'),
+            el('span', { className: 'cu-dropto-hint' }, '只收 .html / .htm / .xhtml'),
+          )
+          : null,
+      ),
 
       el('div', { className: 'cu-foot' },
         cu.file ? el('span', { className: 'mono', title: cu.file }, '库：' + shortPath(cu.file, 46)) : null,

@@ -885,6 +885,61 @@ await new Promise((r) => setTimeout(r, 20))
 overlay = render(overlayComp)
 check('删除后库清空、左栏回到空态', customStore.length === 0 && textOf(overlay).includes('还没有保存过'), customStore.length)
 
+/* ---------- 把 .html 直接拖进自定义窗格（0.10.7） ---------- */
+clickByLabel(overlay, '＋ 网页文件')
+overlay = render(overlayComp)
+const cuRoot = () => allByClass(overlay, /(^|\s)cu-body(\s|$)/)[0]
+check('自定义窗格根节点接住了拖放', !!cuRoot() && typeof cuRoot().props.onDrop === 'function')
+
+const fakeDrop = (types, files) => {
+  const ev = {
+    defaultPrevented: false, stopped: false, relatedTarget: null,
+    preventDefault() { this.defaultPrevented = true },
+    stopPropagation() { this.stopped = true },
+    dataTransfer: {
+      types, files, dropEffect: '',
+      getData: () => '', setData() {},
+    },
+  }
+  ev.currentTarget = cuRoot()
+  return ev
+}
+
+const dropHtml = fakeDrop(['Files'], [{ path: 'C:\\demo\\tpl\\index.html' }])
+cuRoot().props.onDrop(dropHtml)
+overlay = render(overlayComp)
+check('拖入 html：事件被就地吃掉（不然会冒到宿主弹它自己的窗）', dropHtml.defaultPrevented && dropHtml.stopped)
+check('拖入 html：落成网页文件草稿', mod.store.custom.draft?.kind === 'file' && mod.store.custom.draft.body === 'C:\\demo\\tpl\\index.html', JSON.stringify(mod.store.custom.draft))
+check('拖入 html：没起名字时用文件名顶上', mod.store.custom.draft?.name === 'index', mod.store.custom.draft?.name)
+check('拖入 html：直接进预览', mod.store.custom.view === 'preview', mod.store.custom.view)
+
+const dropTxt = fakeDrop(['Files'], [{ path: 'C:\\demo\\tpl\\notes.txt' }])
+cuRoot().props.onDrop(dropTxt)
+overlay = render(overlayComp)
+check('拖入非网页：同样拦下，别让它冒到宿主', dropTxt.defaultPrevented && dropTxt.stopped)
+check('拖入非网页：草稿不动', mod.store.custom.draft?.body === 'C:\\demo\\tpl\\index.html', mod.store.custom.draft?.body)
+
+const dropTab = fakeDrop(['text/plain'], [])
+cuRoot().props.onDrop(dropTab)
+check('拖标签页经过窗格：不抢（留给换格子那套）', !dropTab.defaultPrevented && !dropTab.stopped)
+
+/* 兜底：没被具体窗格接住的系统文件，整块工作区也得吃掉，别让它冒到宿主 */
+const mainNode = allByClass(overlay, /(^|\s)pane-main(\s|$)/)[0]
+const overEv = {
+  defaultPrevented: false, stopped: false, relatedTarget: null,
+  preventDefault() { this.defaultPrevented = true },
+  stopPropagation() { this.stopped = true },
+  dataTransfer: { types: ['Files'], files: [{ path: 'C:\\demo\\x.html' }], getData: () => '', dropEffect: '' },
+}
+overEv.currentTarget = mainNode
+if (mainNode && typeof mainNode.props.onDragOver === 'function') mainNode.props.onDragOver(overEv)
+check('整块工作区也吃掉系统文件拖拽（宿主别弹窗）', !!(mainNode && overEv.defaultPrevented && overEv.stopped))
+
+/* 收尾：清场，后面几段还要看到干净的空态 */
+customStore.length = 0
+mod.store.custom = { ...mod.store.custom, state: 'idle', items: [], active: '', item: null, draft: null, view: 'prompt', busy: '', error: '', prompt: '' }
+overlay = render(overlayComp)
+
 /* 回到全部项目 */
 clickByLabel(overlay, '≡ 项目')
 overlay = render(overlayComp)

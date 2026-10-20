@@ -25,6 +25,7 @@ import {
   overviewProjects, setOverview, OVERVIEW_SORTS, OVERVIEW_FILTERS,
   runProject, stopProject, openRunPort,
   setSideProject, setSideSplit, sideProjectOf, readChatDrop, dropToChat, setChatDropHover,
+  openHtmlWindow, isHtmlFile, toast,
 } from './core.js'
 import { InfoPane, FilesPane, ScmPane, TermPane, WebPane, CustomPane, MediaPane, NotesPane } from './panes.js'
 
@@ -663,17 +664,43 @@ function MainPane({ project, ui, nest, slot = 0 }) {
     if (key) moveTabToCell(project.id, key, idx)
   }
 
+  /* 系统文件（资源管理器拖进来的）看类型：拖的是文件，不是我们自己的标签 */
+  const osFileDrag = (e) => {
+    const dt = e && e.dataTransfer
+    if (!dt) return false
+    const types = dt.types ? Array.prototype.slice.call(dt.types) : []
+    if (types.indexOf('Files') >= 0) return true
+    return types.indexOf('text/uri-list') >= 0 && !!dt.files && dt.files.length > 0
+  }
+
+  /* 没被具体窗格接住的系统文件，就地吃掉：宿主自己也给整窗挂了 drop 处理器，
+     让它接着冒泡会弹宿主自己的窗，把工作台整个挡住（0.10.6 用户报的就是这个）。 */
+  const swallowOsDrop = (e, doOpen) => {
+    if (!osFileDrag(e)) return false
+    e.preventDefault()
+    e.stopPropagation()
+    if (!doOpen) return true
+    const payload = readChatDrop(e)
+    const path = payload && payload.kind === 'file' ? String(payload.value || '').trim() : ''
+    if (!path) { toast('没认出拖进来的是哪个文件', 'warn'); return true }
+    if (isHtmlFile(path)) openHtmlWindow(path, project.id)
+    else toast('这个窗格收不了它：网页拖进「自定义」窗格，其它文件用「文件」窗格打开', 'warn')
+    return true
+  }
+
   return el('div', {
     className: 'pane pane-main' + (nest ? ' pane-nest' : '') + (isB ? ' pane-b' : '') + (over ? ' drag-over' : ''),
     onDragOver: (e) => {
-      if (!dragTabKey) return
-      e.preventDefault()
-      if (!over) setOver(true)
+      if (dragTabKey) { e.preventDefault(); if (!over) setOver(true); return }
+      swallowOsDrop(e, false)
     },
     onDragLeave: (e) => {
       if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget)) setOver(false)
     },
-    onDrop: dropHere,
+    onDrop: (e) => {
+      if (!dragTabKey && swallowOsDrop(e, true)) return
+      dropHere(e)
+    },
   },
     el('div', { className: 'pane-head tabhead' },
       edge.left || edge.right
