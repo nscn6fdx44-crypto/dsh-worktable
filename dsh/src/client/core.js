@@ -61,7 +61,6 @@ export function normState(raw) {
  * 文本文件一律交给系统程序打开，网页（.html）交给自定义窗口预览。
  */
 export const PANE_TABS = [
-  { id: 'editor', label: '编辑器', icon: '◆' },
   { id: 'files', label: '文件管理器', icon: '🗂' },
   { id: 'scm', label: '源代码管理', icon: '⑂' },
   { id: 'term', label: '终端', icon: '›_' },
@@ -342,7 +341,8 @@ function normalizeProject(raw) {
  * （甚至是当时唯一的标签页），统一清掉并把槽位改到还活着的标签页上，
  * 免得一开项目就撞见一个打不开的空窗。
  */
-const RETIRED_TAB_KINDS = new Set([])   /* 0.10.9：编辑器回归，不再有任何「已下架」的标签页 */
+/* 编辑器不再是标签页（0.10.10 起它挂在文件管理器右侧），老版本存的 editor 标签页要清掉 */
+const RETIRED_TAB_KINDS = new Set(['editor'])
 
 export function stripRetiredTabs(ui) {
   let changed = false
@@ -2728,8 +2728,8 @@ export function openFile(path, pid) {
   if (!target) return
   if (isMediaKind(viewKindOf(baseName(target)))) { openMedia(pid, target); return }
   if (isHtmlFile(target)) { openHtmlWindow(target, pid); return }
-  /* 文本 / 代码 / Markdown：开「编辑器」标签页（0.10.9 回归，和上游一致） */
-  if (pid) openTab(pid, 'editor')
+  /* 文本 / 代码 / Markdown：在文件管理器右侧打开编辑器面板（不占标签页） */
+  if (pid) openTab(pid, 'files')
   openTextFile(pid, target)
   return true
 }

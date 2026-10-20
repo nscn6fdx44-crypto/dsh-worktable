@@ -362,7 +362,8 @@ check('样式只注入一次', styleNodes.length === 1, styleNodes.length)
 
 /* ---------- 渲染工具 ---------- */
 function expand(node, depth = 0) {
-  if (node == null || depth > 26) return node
+  /* 深度上限 26 → 46：文件管理器右侧的编辑器面板嵌得很深，旧的截断会漏断言 */
+  if (node == null || depth > 46) return node
   if (Array.isArray(node)) return node.map((n) => expand(n, depth + 1))
   if (typeof node !== 'object') return node
   const type = node.type
@@ -657,9 +658,9 @@ const mig = mod.stripRetiredTabs({
     activeTab: 'editor', secondTab: 'editor', cells: ['editor', 'files', '', ''],
   },
 })
-check('迁移：editor 标签页被保留（0.10.9 起不再下架）', mig.ui.p1.tabs.some((t) => t.kind === 'editor'), JSON.stringify(mig.ui.p1.tabs))
-check('迁移：activeTab 保留在 editor 上', mig.ui.p1.activeTab === 'editor', mig.ui.p1.activeTab)
-check('迁移：四格槽位里的 editor 也保留', mig.ui.p1.cells.includes('editor'), JSON.stringify(mig.ui.p1.cells))
+check('迁移：editor 标签页被清掉（它挂在文件管理器右侧）', !mig.ui.p1.tabs.some((t) => t.kind === 'editor'), JSON.stringify(mig.ui.p1.tabs))
+check('迁移：activeTab 落到还活着的标签页', mig.ui.p1.activeTab === 'files', mig.ui.p1.activeTab)
+check('迁移：四格槽位里的 editor 也清掉', !mig.ui.p1.cells.includes('editor'), JSON.stringify(mig.ui.p1.cells))
 check('迁移：本来就干净的不标记 changed', mod.stripRetiredTabs({ p2: { tabs: [{ key: 'files', kind: 'files' }], activeTab: 'files' } }).changed === false, '')
 
 /* 双击文本文件：不再进内置编辑器，交给系统默认程序 */
@@ -673,7 +674,7 @@ check('双击文本文件 → 打开内联编辑器（不弹系统程序）',
   opens.length === opensBeforeMd && mod.store.editor.state === 'ok' && String(mod.store.editor.path).endsWith('README.md'),
   mod.store.editor.state + ' / ' + mod.store.editor.path)
 check('编辑器窗格回来了（ed-body 出现）', allByClass(overlay, /(^|\s)ed-body(\s|$)/).length >= 1, allByClass(overlay, /ed-body/).length)
-check('「＋ 窗口」菜单里有编辑器', textOf(overlay).includes('编辑器'), textOf(overlay).slice(0, 140))
+check('「＋ 窗口」菜单里没有编辑器（它不是标签页）', !textOf(overlay).includes('◆ 编辑器'), textOf(overlay).slice(0, 160))
 
 /* 双击图片 / PDF：统一走媒体窗 */
 clickByLabel(overlay, '文件管理器')
@@ -2458,16 +2459,18 @@ const savedOk = await mod.saveEditor()
 check('保存走 /fs/write 且清掉脏标记', savedOk === true && writes.length === writesBefore + 1 && mod.editorDirty() === false, 'writes+' + (writes.length - writesBefore))
 check('保存的路径与内容正确', String(writes[writes.length - 1].path).endsWith('README.md') && String(writes[writes.length - 1].text).includes('改过了'), JSON.stringify(writes[writes.length - 1]).slice(0, 80))
 
-mod.openTab(pid6, 'editor')
+mod.openTab(pid6, 'files')
 const edTree = render(overlayComp)
-check('编辑器是独立窗格（ed-body 在标签页里）', allByClass(edTree, /(^|\s)ed-body(\s|$)/).length >= 1, allByClass(edTree, /ed-body/).length)
+const edPanelTree = render(() => ({ type: mod.EditorPane, props: { project: mod.store.projects.find((x) => x.id === pid6) }, children: [] }))
+check('编辑器在文件管理器右侧弹出', allByClass(edTree, /(^|\s)fx-editor-dock(\s|$)/).length === 1 && allByClass(edPanelTree, /(^|\s)ed-body(\s|$)/).length >= 1, allByClass(edTree, /fx-editor-dock/).length + ' / ' + allByClass(edPanelTree, /ed-body/).length)
 check('编辑器有 textarea 且带内容', (() => {
-  const area = collect(edTree).find((n) => n.type === 'textarea' && /ed-area/.test(String(n.props && n.props.className || '')))
+  const area = collect(edPanelTree).find((n) => n.type === 'textarea' && /ed-area/.test(String(n.props && n.props.className || '')))
   return !!area && String(area.props.value).includes('改过了')
 })(), '')
 check('编辑器标题显示文件名', textOf(edTree).includes('README.md'), '')
-check('编辑器有保存按钮', collect(edTree).some((n) => n.type === 'button' && textOf(n).trim() === '保存'), '')
-check('编辑器标签页存在且是当前页', mod.uiOf(pid6).tabs.some((x) => x.kind === 'editor') && String(mod.uiOf(pid6).activeTab).startsWith('editor'), mod.uiOf(pid6).activeTab)
+check('编辑器有保存按钮', collect(edPanelTree).some((n) => n.type === 'button' && textOf(n).trim() === '保存'), '')
+check('编辑器不占标签页，仍停在文件管理器', !mod.uiOf(pid6).tabs.some((x) => x.kind === 'editor') && String(mod.uiOf(pid6).activeTab).startsWith('files'), mod.uiOf(pid6).activeTab)
+check('面板有拖动把手（可调宽度）', allByClass(edTree, /(^|\s)fx-editor-grip(\s|$)/).length === 1, '')
 
 mod.setEditorView('preview')
 check('Markdown 可切预览', mod.store.editor.view === 'preview', mod.store.editor.view)
@@ -2524,11 +2527,10 @@ mod.openMedia(pid6, 'C:\\pics\\x.png')
 mod.closeTab(pid6, 'media')
 check('关掉媒体标签 → 清掉预览路径', !mod.store.media.path, String(mod.store.media.path))
 
-/* 编辑器：有内容 → 关标签 → 清空 */
+/* 编辑器：有内容 → 点面板的 ✕ → 清空 */
 await mod.openTextFile(pid6, 'C:\\projects\\smart-car\\README.md')
-mod.openTab(pid6, 'editor')
-mod.closeTab(pid6, 'editor')
-check('关掉编辑器标签 → 内容清空（state idle）', mod.store.editor.state === 'idle', mod.store.editor.state)
+mod.closeEditor(true)
+check('关掉编辑器面板 → 内容清空（state idle）', mod.store.editor.state === 'idle', mod.store.editor.state)
 
 /* 工作台关闭：清掉所有临时态并还宿主边距 */
 mod.store.open = true

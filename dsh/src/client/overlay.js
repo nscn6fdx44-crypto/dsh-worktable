@@ -827,7 +827,6 @@ export class PaneBoundary extends Component {
 }
 
 function renderPane(kind, project) {
-  if (kind === 'editor') return el(EditorPane, { project })
   if (kind === 'files') return el(FilesPane, { project })
   if (kind === 'scm') return el(ScmPane, { project })
   if (kind === 'info') return el(InfoPane, { project })
