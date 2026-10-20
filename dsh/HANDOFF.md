@@ -11,13 +11,13 @@
 | --- | --- |
 | 仓库目录 | `C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh`（git 顶层是上一级 `2026-10-16-23-21-22`，插件在 `dsh/` 子目录） |
 | 远端 | `https://github.com/nscn6fdx44-crypto/dsh-worktable.git` |
-| 分支 / 最近提交 | `dsh-plugin` / 0.10.6：`feat(0.10.6): 下架编辑器窗格 / 标签条左右滑 / 自定义窗口放本地 html`（见 `git log -1`） |
+| 分支 / 最近提交 | `dsh-plugin` / 0.10.6：`feat(0.10.6): 下架编辑器窗格 / 标签条左右滑 / 自定义窗口放本地 html`（`0ce8d5f`，tag `v0.10.6`） |
 | 版本 | `package.json` = `dsh.plugin.json` = **0.10.6** |
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
 | 运行中的实例 | 客户端会热更，但 **host 路由必须完整重启 DSH** 才生效（`/asset`、`/gh/status`、`op:uninit` 在旧实例上会 401/404） |
 | 自测基线 | host **188** + client **585** 全通过（`npm test`） |
 | tag | 0.10.0 / 0.10.1 / 0.10.2 / 0.10.3 / 0.10.4 / 0.10.5 / `v0.10.6` **全部已打并推送** |
-| Release | 0.10.0（417235810）、0.10.1（417246640）、0.10.2（417267258）、0.10.3（417344262）、0.10.4（417364793）、0.10.5（417385825）、0.10.6（见 Release 列表）都已发布；0.10.6 附件 **254354 字节 / 248.4 KB**、sha256 `7a2921e10311c0f18a6edcf5333fd7656eacfd57ac3e0b76adbc5acbaecaadeb`，下载回本地逐字节校验一致 |
+| Release | 0.10.0（417235810）、0.10.1（417246640）、0.10.2（417267258）、0.10.3（417344262）、0.10.4（417364793）、0.10.5（417385825）、**0.10.6（417899693，附件 id 657887031）** 都已发布；0.10.6 附件 **254354 字节 / 248.4 KB**、sha256 `7a2921e10311c0f18a6edcf5333fd7656eacfd57ac3e0b76adbc5acbaecaadeb`，下载回本地逐字节校验一致 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
 
 ---
