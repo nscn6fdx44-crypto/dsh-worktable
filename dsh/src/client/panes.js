@@ -606,8 +606,6 @@ function diffLines(text) {
  *      · ＋ 新建文件夹 · 搜索过滤 · 表头点排序 · 删除走系统回收站，不做硬删。
  */
 export function FilesPane({ project }) {
-  const edState = store.editor
-  const edOpen = !!edState && edState.state !== 'idle'
   useStore()
   const tree = store.tree
   const view = store.fs
@@ -795,11 +793,6 @@ export function FilesPane({ project }) {
             : null,
         ),
     ),
-
-    /* 右侧编辑器面板：点文件就地打开，不占标签页 */
-    edOpen
-      ? el(EditorDock, { project })
-      : null,
 
     /* 状态栏 */
     el('div', { className: 'fx-foot' },
@@ -2014,21 +2007,19 @@ export function CustomPane({ project }) {
 
 /* ============================ 文件管理器右侧的编辑器面板 ============================ */
 
-/** 右侧面板外壳：宽度可拖（280 ~ 面板宽-240），内容就是 EditorPane */
-function EditorDock({ project }) {
+/** 工作台右侧的编辑器停靠栏：宽度可拖（280 ~ 1200），宽度记在 wt.editorW */
+export function EditorDock({ project }) {
   useStore()
-  const [width, setWidth] = useState(420)
+  const width = store.editorDockW || 460
   const drag = useRef(null)
   const down = (e) => {
     e.preventDefault()
     e.stopPropagation()
-    const box = e.currentTarget.parentElement
-    const max = Math.max(320, (box && box.clientWidth ? box.clientWidth : 900) - 240)
-    drag.current = { sx: e.clientX, sw: width, max }
+    drag.current = { sx: e.clientX, sw: width }
     const move = (ev) => {
       if (!drag.current) return
-      const next = Math.max(280, Math.min(drag.current.max, drag.current.sw + (drag.current.sx - ev.clientX)))
-      setWidth(Math.round(next))
+      const next = drag.current.sw + (drag.current.sx - ev.clientX)
+      setEditorDockWidth(next)
     }
     const up = () => {
       drag.current = null
@@ -2038,10 +2029,10 @@ function EditorDock({ project }) {
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
   }
-  return el('div', { className: 'fx-editor-dock', style: { width: width + 'px' } },
+  return el('div', { className: 'ws-editor-dock', style: { width: width + 'px' } },
     el('div', {
-      className: 'fx-editor-grip', title: '拖动调整编辑器宽度', role: 'separator',
-      onPointerDown: down, onDoubleClick: () => setWidth(420),
+      className: 'ws-editor-grip', title: '拖动调整编辑器宽度（双击复位 460）', role: 'separator',
+      onPointerDown: down, onDoubleClick: () => setEditorDockWidth(460),
     }, el('i', null)),
     el(EditorPane, { project }),
   )

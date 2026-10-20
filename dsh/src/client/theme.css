@@ -1643,3 +1643,17 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 }
 .wt-scope .fx-editor-grip i { width: 3px; height: 44px; border-radius: 2px; background: rgba(var(--amber-rgb), .30); }
 .wt-scope .fx-editor-grip:hover i { background: rgba(var(--amber-rgb), .8); height: 64px; }
+/* ---------- 工作台右侧编辑器停靠栏（0.10.11） ---------- */
+.wt-scope .ws-editor-dock {
+  flex: 0 0 auto; position: relative; display: flex; flex-direction: column; min-width: 280px; max-width: 62%;
+  border-left: 1px solid rgba(var(--amber-rgb), .35);
+  background: linear-gradient(180deg, rgba(20, 18, 14, .97), rgba(14, 13, 11, .98));
+  box-shadow: -18px 0 40px -30px #000;
+}
+.wt-scope .ws-editor-dock .ed-body { height: 100%; }
+.wt-scope .ws-editor-grip {
+  position: absolute; left: -4px; top: 0; bottom: 0; width: 9px; z-index: 4;
+  cursor: col-resize; display: flex; align-items: center; justify-content: center;
+}
+.wt-scope .ws-editor-grip i { width: 3px; height: 46px; border-radius: 2px; background: rgba(var(--amber-rgb), .30); }
+.wt-scope .ws-editor-grip:hover i { background: rgba(var(--amber-rgb), .8); height: 66px; }

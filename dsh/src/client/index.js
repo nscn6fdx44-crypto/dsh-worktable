@@ -48,14 +48,14 @@ import {
   readDrop, dropOnWorktable, dropOnProject, canDropOnWorktable, pickDropEffect, normSessionId,
   startSessionDrag, createFromSession,
   fileToText, dropSummary,
-  openTextFile, editText, saveEditor, setEditorView, closeEditor, editorDirty, closeWorkbench,
+  openTextFile, editText, saveEditor, setEditorView, closeEditor, editorDirty, closeWorkbench, editorDockWidth, setEditorDockWidth,
   termAppend, setFsQuery,
 } from './core.js'
 import { el } from './ui.js'
 import { WorktableSidebar, sideModeOf } from './sidebar.js'
 import { pickDock, remeasure, undockedBox } from './hostdock.js'
 import { MainView, PaneBoundary } from './overlay.js'
-import { kindOfMediaPath, mediaRowsOf, webRowsOf, EditorPane } from './panes.js'
+import { kindOfMediaPath, mediaRowsOf, webRowsOf, EditorPane, EditorDock } from './panes.js'
 
 const PANEL_ID = 'trae-usage-worktable'
 const OVERLAY_ID = PANEL_ID + '-main'
@@ -77,7 +77,7 @@ export { store, openFile, createSessionInDir, switchHostSession, searchUrl, webG
   overviewProjects, setOverview, setGridTab,
   handleHotkey, HOTKEYS,
   setRunConfig, runProject, stopProject, openRunPort, hydrate, termExec, termRun, termCtrlC,
-  setSideProject, setSideSplit, sideProjectOf, enterProject, kindOfMediaPath, mediaRowsOf, listMediaDir, sideModeOf, pickDock, remeasure, undockedBox, EditorPane,
+  setSideProject, setSideSplit, sideProjectOf, enterProject, kindOfMediaPath, mediaRowsOf, listMediaDir, sideModeOf, pickDock, remeasure, undockedBox, EditorPane, EditorDock,
   /* 源代码管理 / GitHub（离线自测出口） */
   loadScm, loadGit, scmStage, scmUnstage, scmDiscard, scmSetMessage, scmCommit,
   scmFetch, scmPull, scmPush, scmCheckout, scmBranchOp, scmTagOp, scmReset, scmInit, scmUninit,

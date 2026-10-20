@@ -670,9 +670,10 @@ overlay = render(overlayComp)
 allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('README.md')).props.onDoubleClick()
 await new Promise((r) => setTimeout(r, 40))
 overlay = render(overlayComp)
-check('双击文本文件 → 打开内联编辑器（不弹系统程序）',
+check('双击文本文件 → 在工作台右侧打开编辑器（不弹系统程序）',
   opens.length === opensBeforeMd && mod.store.editor.state === 'ok' && String(mod.store.editor.path).endsWith('README.md'),
   mod.store.editor.state + ' / ' + mod.store.editor.path)
+mod.closeEditor(true)
 check('编辑器窗格回来了（ed-body 出现）', allByClass(overlay, /(^|\s)ed-body(\s|$)/).length >= 1, allByClass(overlay, /ed-body/).length)
 check('「＋ 窗口」菜单里没有编辑器（它不是标签页）', !textOf(overlay).includes('◆ 编辑器'), textOf(overlay).slice(0, 160))
 
@@ -2460,9 +2461,12 @@ check('保存走 /fs/write 且清掉脏标记', savedOk === true && writes.lengt
 check('保存的路径与内容正确', String(writes[writes.length - 1].path).endsWith('README.md') && String(writes[writes.length - 1].text).includes('改过了'), JSON.stringify(writes[writes.length - 1]).slice(0, 80))
 
 mod.openTab(pid6, 'files')
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
 const edTree = render(overlayComp)
 const edPanelTree = render(() => ({ type: mod.EditorPane, props: { project: mod.store.projects.find((x) => x.id === pid6) }, children: [] }))
-check('编辑器在文件管理器右侧弹出', allByClass(edTree, /(^|\s)fx-editor-dock(\s|$)/).length === 1 && allByClass(edPanelTree, /(^|\s)ed-body(\s|$)/).length >= 1, allByClass(edTree, /fx-editor-dock/).length + ' / ' + allByClass(edPanelTree, /ed-body/).length)
+check('编辑器停靠在工作台右侧', allByClass(edTree, /(^|\s)ws-editor-dock(\s|$)/).length === 1 && allByClass(edPanelTree, /(^|\s)ed-body(\s|$)/).length >= 1, allByClass(edTree, /ws-editor-dock/).length + ' / ' + allByClass(edPanelTree, /ed-body/).length)
 check('编辑器有 textarea 且带内容', (() => {
   const area = collect(edPanelTree).find((n) => n.type === 'textarea' && /ed-area/.test(String(n.props && n.props.className || '')))
   return !!area && String(area.props.value).includes('改过了')
@@ -2470,7 +2474,7 @@ check('编辑器有 textarea 且带内容', (() => {
 check('编辑器标题显示文件名', textOf(edTree).includes('README.md'), '')
 check('编辑器有保存按钮', collect(edPanelTree).some((n) => n.type === 'button' && textOf(n).trim() === '保存'), '')
 check('编辑器不占标签页，仍停在文件管理器', !mod.uiOf(pid6).tabs.some((x) => x.kind === 'editor') && String(mod.uiOf(pid6).activeTab).startsWith('files'), mod.uiOf(pid6).activeTab)
-check('面板有拖动把手（可调宽度）', allByClass(edTree, /(^|\s)fx-editor-grip(\s|$)/).length === 1, '')
+check('面板有拖动把手（可调宽度）', allByClass(edTree, /(^|\s)ws-editor-grip(\s|$)/).length === 1, '')
 
 mod.setEditorView('preview')
 check('Markdown 可切预览', mod.store.editor.view === 'preview', mod.store.editor.view)
