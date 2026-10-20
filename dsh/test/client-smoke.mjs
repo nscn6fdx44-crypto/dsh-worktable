@@ -59,8 +59,9 @@ const fakeTree = {
     { name: 'app.js', dir: false, size: 512, mtime: NOW },
     { name: 'shot.png', dir: false, size: 4096, mtime: NOW },
     { name: 'manual.pdf', dir: false, size: 8192, mtime: NOW },
+    { name: 'index.html', dir: false, size: 640, mtime: NOW },
   ],
-  total: 6, truncated: false,
+  total: 7, truncated: false,
 }
 const fakeFile = { path: 'C:\\projects\\smart-car\\README.md', name: 'README.md', size: 18, text: '# smart car\n固件说明\n', truncated: false }
 const fakeJs = { path: 'C:\\projects\\smart-car\\app.js', name: 'app.js', size: 62, text: 'const a = 1\n// 注释\nfunction go() { return "x" }\n', truncated: false }
@@ -581,7 +582,7 @@ check('打开文件管理器不再弹系统窗口', reveals.length === 0, JSON.s
 check('面板画出目录条目', textOf(overlay).includes('README.md') && textOf(overlay).includes('main.c'), textOf(overlay).slice(0, 140))
 check('面板有面包屑 + 三列表头', allByClass(overlay, /(^|\s)fx-crumbs(\s|$)/).length === 1 && allByClass(overlay, /(^|\s)fx-th(\s|$)/).length === 3,
   allByClass(overlay, /(^|\s)fx-th(\s|$)/).length)
-check('面板显示条目数与大小列', textOf(overlay).includes('6 项') && textOf(overlay).includes('2.0 KB'), textOf(overlay).slice(0, 160))
+check('面板显示条目数与大小列', textOf(overlay).includes('7 项') && textOf(overlay).includes('2.0 KB'), textOf(overlay).slice(0, 160))
 
 /* 单击选中 */
 const fileRow = allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('README.md'))
@@ -647,132 +648,103 @@ check('置灰的删除点了也不发请求', deletes.length === deletesBefore, 
 deletableBlock = ''
 overlay = render(overlayComp)
 
-/* 编辑器：不再从文件列表点，空态直接填路径 */
-overlay = openPaneIn(overlay, '编辑器')
-overlay = render(overlayComp)
-check('编辑器空态有路径输入与「打开」按钮', allByClass(overlay, /ed-open/).length === 1 && textOf(overlay).includes('打开'), textOf(overlay).slice(0, 100))
+/* ---------- ③ 编辑器已下架：文件按类型分流 ---------- */
 
-/* 回到文件管理器，双击文件 → 直接进编辑器 */
-clickByLabel(overlay, '文件管理器')
-overlay = render(overlayComp)
-const rowForOpen = allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('README.md'))
-rowForOpen.props.onDoubleClick()
-await new Promise((r) => setTimeout(r, 40))
-overlay = render(overlayComp)
-check('双击文件切到编辑器标签页', textOf(overlay).includes('README.md') && allByClass(overlay, /ed-area|editor-body/).length >= 1, textOf(overlay).slice(0, 140))
-check('编辑器正文载入文件内容', JSON.stringify(overlay).includes('固件说明') || textOf(overlay).includes('18 B'), textOf(overlay).slice(0, 120))
+/* 老版本存下来的 ui 里还挂着 editor 标签页：迁移时必须清掉，槽位让给还活着的标签 */
+const mig = mod.stripRetiredTabs({
+  p1: {
+    tabs: [{ key: 'editor', kind: 'editor', title: '编辑器' }, { key: 'files', kind: 'files', title: '文件管理器' }],
+    activeTab: 'editor', secondTab: 'editor', cells: ['editor', 'files', '', ''],
+  },
+})
+check('迁移：editor 标签页被清掉', !mig.ui.p1.tabs.some((t) => t.kind === 'editor'), JSON.stringify(mig.ui.p1.tabs))
+check('迁移：activeTab 落到还活着的标签页', mig.ui.p1.activeTab === 'files', mig.ui.p1.activeTab)
+check('迁移：四格槽位里也不再有 editor', !mig.ui.p1.cells.includes('editor'), JSON.stringify(mig.ui.p1.cells))
+check('迁移：本来就干净的不标记 changed', mod.stripRetiredTabs({ p2: { tabs: [{ key: 'files', kind: 'files' }], activeTab: 'files' } }).changed === false, '')
 
-/* ---------- ③b 编辑器行号栏：git 改动标记（0.10.2） ---------- */
-mod.setEditorView('edit')
-overlay = render(overlayComp)
-const edLines = String(mod.store.editor.text).split('\n')
-check('编辑视图左边有行号栏', allByClass(overlay, /(^|\s)ed-gutter(\s|$)/).length === 1, '')
-const growRows = allByClass(overlay, /(^|\s)ed-grow(\s|$)/)
-check('行号栏行数 = 文件行数', growRows.length === edLines.length, growRows.length + ' vs ' + edLines.length)
-
-fakeLineMap = { ok: true, repo: true, file: 'README.md', marks: [{ line: 1, kind: 'add' }, { line: 2, kind: 'del' }], adds: 1, mods: 0, dels: 1 }
-await mod.loadFileMarks(mod.store.editor.path)
-check('标记按行号写进 store',
-  mod.store.editor.markState === 'ok' && mod.store.editor.marks[0] === 'add' && mod.store.editor.marks[1] === 'del',
-  JSON.stringify(mod.store.editor.marks))
-overlay = render(overlayComp)
-const growAfter = allByClass(overlay, /(^|\s)ed-grow(\s|$)/)
-check('新增行带 add 类', growAfter.filter((n) => /(^|\s)add(\s|$)/.test(String(n.props.className))).length === 1, '')
-check('删除锚点带 del 类', growAfter.filter((n) => /(^|\s)del(\s|$)/.test(String(n.props.className))).length === 1, '')
-check('标题栏显示改动统计', textOf(overlay).includes('+1') && textOf(overlay).includes('−1'), textOf(overlay).slice(0, 160))
-
-fakeLineMap = { ok: true, repo: false, marks: [], adds: 0, mods: 0, dels: 0 }
-await mod.loadFileMarks(mod.store.editor.path)
-check('不在 git 仓库里 → markState 回到 idle（行号栏不染色）', mod.store.editor.markState === 'idle', mod.store.editor.markState)
-
-/* 大文件：413 不再是一堵墙 —— 给「只读预览」和「用系统程序打开」两条出路 */
-readCase = 'big'
+/* 双击文本文件：不再进内置编辑器，交给系统默认程序 */
+const opensBeforeMd = opens.length
 clickByLabel(overlay, '文件管理器')
 overlay = render(overlayComp)
 allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('README.md')).props.onDoubleClick()
 await new Promise((r) => setTimeout(r, 40))
 overlay = render(overlayComp)
-check('大文件报错时点明原因', textOf(overlay).includes('文件过大'), textOf(overlay).slice(0, 140))
-check('大文件报错给出系统程序出口', textOf(overlay).includes('用系统默认程序打开'), textOf(overlay).slice(-140))
-check('大文件报错给出只读预览出口', textOf(overlay).includes('只读预览前'), textOf(overlay).slice(-140))
+check('双击文本文件 → 调 /fs/open 交给系统程序',
+  opens.length === opensBeforeMd + 1 && String(opens[opens.length - 1].path).endsWith('README.md'),
+  JSON.stringify(opens[opens.length - 1]))
+check('内置编辑器窗格已经不存在', allByClass(overlay, /editor-body/).length === 0, '')
+check('「＋ 窗口」菜单里没有编辑器', !textOf(overlay).includes('编辑器'), textOf(overlay).slice(0, 140))
 
-const opensBefore = opens.length
-clickByLabel(overlay, '用系统默认程序打开')
-await new Promise((r) => setTimeout(r, 20))
-check('点「用系统默认程序打开」会调 /fs/open', opens.length === opensBefore + 1, opens.length - opensBefore)
-
-clickByLabel(overlay, '只读预览前')
-await new Promise((r) => setTimeout(r, 40))
-overlay = render(overlayComp)
-const roArea = allByClass(overlay, /ed-area/)[0]
-check('只读预览能显示开头内容', !!roArea && String(roArea.props.value).includes('前 256 KB'), roArea && String(roArea.props.value).slice(0, 30))
-check('只读预览有提示条与三个出口', allByClass(overlay, /ed-note/).length >= 1 && ['看开头', '看结尾', '用系统程序打开'].every((t) => textOf(overlay).includes(t)), textOf(overlay).slice(0, 160))
-check('只读预览的 textarea 是 readOnly', !!roArea && roArea.props.readOnly === true)
-const saveBtn = collect(overlay).find((n) => n.props && typeof n.props.onClick === 'function' && textOf(n).trim() === '保存')
-check('只读预览时保存按钮置灰', saveBtn && saveBtn.props.disabled === true, saveBtn && saveBtn.props.disabled)
-const writesBefore = writes.length
-if (saveBtn) saveBtn.props.onClick()
-await new Promise((r) => setTimeout(r, 20))
-check('只读预览点了保存也不写盘（不会把文件截断写回）', writes.length === writesBefore, writes.length - writesBefore)
-readCase = ''
-overlay = render(overlayComp)
-
-/* ---------- 渲染层：Markdown 预览 / 代码高亮 / 图片与 PDF 内嵌 ---------- */
-
-/* 重新正常打开 README.md（上一段把它留在了「只读预览」态） */
-clickByLabel(overlay, '文件管理器')
-overlay = render(overlayComp)
-allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('README.md')).props.onDoubleClick()
-await new Promise((r) => setTimeout(r, 40))
-overlay = render(overlayComp)
-
-const mdNode = allByClass(overlay, /ed-preview ed-md/)[0]
-const mdHtml = mdNode ? String(mdNode.props.dangerouslySetInnerHTML?.__html || '') : ''
-check('Markdown 文件默认进渲染预览', !!mdNode, allByClass(overlay, /ed-preview/).length)
-check('Markdown 标题渲染成 <h1>', /<h1[^>]*>smart car<\/h1>/.test(mdHtml), mdHtml.slice(0, 80))
-check('渲染预览态没有原文 textarea', allByClass(overlay, /ed-area/).length === 0)
-check('有「预览 / 编辑」切换', textOf(overlay).includes('预览') && textOf(overlay).includes('编辑'), textOf(overlay).slice(0, 90))
-check('标签栏标出文件类型', textOf(overlay).includes('Markdown'), textOf(overlay).slice(0, 90))
-
-clickByLabel(overlay, '编辑')
-overlay = render(overlayComp)
-const editArea = allByClass(overlay, /ed-area/)[0]
-check('切到「编辑」后回到原文 textarea', !!editArea && String(editArea.props.value).includes('smart car'), editArea && String(editArea.props.value).slice(0, 30))
-check('编辑态 textarea 可写（不是只读预览）', !!editArea && editArea.props.readOnly === false)
-
-/* 代码文件：默认高亮只读 */
-clickByLabel(overlay, '文件管理器')
-overlay = render(overlayComp)
-allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('app.js')).props.onDoubleClick()
-await new Promise((r) => setTimeout(r, 40))
-overlay = render(overlayComp)
-const hlCode = allByClass(overlay, /ed-pre/)[0]
-const hlHtml = hlCode ? String(collect(hlCode).find((n) => n.props && n.props.dangerouslySetInnerHTML)?.props.dangerouslySetInnerHTML.__html || '') : ''
-check('js 文件走语法高亮', !!hlCode && /hl-k/.test(hlHtml), hlHtml.slice(0, 90))
-check('关键字标成 hl-k', /class="hl-k">const</.test(hlHtml), hlHtml.slice(0, 90))
-check('注释与字符串也上色', /class="hl-c"/.test(hlHtml) && /class="hl-s"/.test(hlHtml), hlHtml.slice(0, 120))
-
-/* 图片 / PDF：不读文本，直接内嵌 */
-const readsBeforeImg = reads.length
+/* 双击图片 / PDF：统一走媒体窗 */
 clickByLabel(overlay, '文件管理器')
 overlay = render(overlayComp)
 allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('shot.png')).props.onDoubleClick()
 await new Promise((r) => setTimeout(r, 40))
 overlay = render(overlayComp)
-const imgNode = allByClass(overlay, /ed-media-img/)[0]
-check('图片文件内嵌成 <img>', !!imgNode, allByClass(overlay, /ed-media/).length)
-check('图片 src 指向 /fs/raw', !!imgNode && /\/fs\/raw\?path=/.test(String(imgNode.props.src)) && String(imgNode.props.src).includes('shot.png'), imgNode && imgNode.props.src)
-check('图片不再走 /fs/read（不走文本通道）', reads.length === readsBeforeImg, reads.length - readsBeforeImg)
-check('媒体态没有保存按钮', !collect(overlay).some((n) => n.props && typeof n.props.onClick === 'function' && textOf(n).trim() === '保存'))
+const mediaImg = allByClass(overlay, /media-img/)[0]
+check('双击图片 → 媒体窗内嵌 <img>', !!mediaImg && /\/fs\/raw\?path=/.test(String(mediaImg.props.src)), mediaImg && mediaImg.props.src)
+check('图片没走文本通道', !reads.some((pth) => String(pth).endsWith('.png')), reads.join(','))
 
 clickByLabel(overlay, '文件管理器')
 overlay = render(overlayComp)
 allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('manual.pdf')).props.onDoubleClick()
 await new Promise((r) => setTimeout(r, 40))
 overlay = render(overlayComp)
-const pdfFrame = allByClass(overlay, /ed-media-frame/)[0]
-check('PDF 内嵌成 iframe', !!pdfFrame && /manual\.pdf/.test(String(pdfFrame.props.src)), pdfFrame && pdfFrame.props.src)
-check('PDF 也给了系统程序出口', textOf(overlay).includes('用系统程序打开'), textOf(overlay).slice(0, 90))
+const mediaPdf = allByClass(overlay, /media-frame/)[0]
+check('双击 PDF → 媒体窗 iframe', !!mediaPdf && /manual\.pdf/.test(String(mediaPdf.props.src)), mediaPdf && mediaPdf.props.src)
+
+/* ---------- ③b 本地网页：双击 .html 直接进自定义窗口 ---------- */
+clickByLabel(overlay, '文件管理器')
+overlay = render(overlayComp)
+allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('index.html')).props.onDoubleClick()
+await new Promise((r) => setTimeout(r, 40))
+overlay = render(overlayComp)
+const cuDraft = mod.store.custom.draft || {}
+check('双击 html → 自定义窗口拿到 file 草稿', cuDraft.kind === 'file', JSON.stringify(cuDraft))
+check('草稿 body 是文件绝对路径', String(cuDraft.body).endsWith('index.html'), String(cuDraft.body))
+check('窗口名自动取文件名（去掉扩展名）', cuDraft.name === 'index', String(cuDraft.name))
+const cuPrev = allByClass(overlay, /(^|\s)cu-preview(\s|$)/)[0]
+const cuIframe = cuPrev ? collect(cuPrev).find((n) => n.type === 'iframe') : null
+const cuSrc = String((cuIframe && cuIframe.props.src) || '')
+check('预览用 /asset 托管（相对 css / js 能跟着文件目录走）', /\/asset\/[A-Za-z0-9_-]+\/index\.html$/.test(cuSrc), cuSrc)
+check('本地网页的 iframe 不带 allow-same-origin',
+  !!cuIframe && !String(cuIframe.props.sandbox).includes('allow-same-origin'), cuIframe && cuIframe.props.sandbox)
+
+/* 路径 → 托管地址：目录编进第一段，文件名跟在后面 */
+const assetUrl = mod.htmlUrl('C:\\projects\\smart-car\\index.html')
+check('htmlUrl 拼成 /asset/<令牌>/文件名', /\/asset\/[A-Za-z0-9_-]+\/index\.html$/.test(assetUrl), assetUrl)
+check('同目录的两个文件共用同一个目录令牌',
+  mod.htmlUrl('C:\\projects\\smart-car\\app.css').replace(/\/[^/]+$/, '') === assetUrl.replace(/\/[^/]+$/, ''), '')
+check('b64url 不含 + / = 这些会破坏路径的字符', !/[+/=]/.test(mod.b64url('C:\\中文 目录\\a.html')), mod.b64url('C:\\中文 目录\\a.html'))
+
+/* 选文件列表只留目录与网页文件 */
+const wr = mod.webRowsOf([{ name: 'a.html' }, { name: 'b.css' }, { name: 'src', dir: true }, { name: 'c.htm' }, { name: 'd.md' }])
+check('选文件列表只留目录 + .html/.htm',
+  wr.length === 3 && wr.map((x) => x.name).join(',') === 'a.html,src,c.htm', JSON.stringify(wr.map((x) => x.name)))
+
+/* 新建「网页文件」：编辑视图给出路径框与选文件入口 */
+mod.newCustomDraft('file', 'edit')
+overlay = render(overlayComp)
+check('新建网页文件草稿落在编辑视图', mod.store.custom.view === 'edit' && mod.store.custom.draft.kind === 'file', mod.store.custom.view)
+check('编辑视图有路径框', allByClass(overlay, /(^|\s)cu-filebar(\s|$)/).length === 1, '')
+check('有「选文件…」与「预览」两个入口', textOf(overlay).includes('选文件') && textOf(overlay).includes('预览'), textOf(overlay).slice(0, 160))
+
+/* 只收绝对路径：相对路径不落库 */
+mod.editCustom({ name: '坏路径', body: 'index.html' })
+const customBefore = customStore.length
+await mod.saveCustom()
+check('相对路径不落库', customStore.length === customBefore, customStore.length - customBefore)
+
+/* 绝对路径能存下来，kind 保持 file */
+mod.editCustom({ name: '本地网页', body: 'C:\\projects\\smart-car\\index.html' })
+const savedHtml = await mod.saveCustom()
+check('绝对路径存成 kind=file',
+  !!savedHtml && savedHtml.kind === 'file' && String(savedHtml.body).endsWith('index.html'),
+  JSON.stringify(savedHtml && { kind: savedHtml.kind, body: savedHtml.body }))
+
+/* 收拾干净：后面还要测自定义窗格的空态 */
+customStore.length = 0
+mod.store.custom = { ...mod.store.custom, state: 'idle', items: [], active: '', item: null, draft: null, view: 'prompt', busy: '', error: '', prompt: '' }
 
 /* 打开终端标签页 */
 clickByLabel(overlay, '终端')
@@ -781,7 +753,7 @@ const termIn = allByClass(overlay, /term-in/)[0]
 check('终端窗格渲染输入行', !!termIn)
 check('终端窗格显示提示符', textOf(overlay).includes('❯'))
 check('终端显示当前目录', textOf(overlay).includes('smart-car') || textOf(overlay).includes('C:\\projects'), textOf(overlay).slice(0, 80))
-check('终端标签页与编辑器并存', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 4, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
+check('终端标签页与其它窗格并存', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 5, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
 
 /* 打开浏览器标签页 */
 clickByLabel(overlay, '浏览器')
@@ -848,7 +820,7 @@ clickByLabel(overlay, '🚀 系统浏览器')
 await new Promise((r) => setTimeout(r, 20))
 check('绝对地址交给系统浏览器', webOpens.length === webOpensBefore + 1 && webOpens[webOpens.length - 1].url === 'http://localhost:5173/', JSON.stringify(webOpens[webOpens.length - 1]))
 
-check('多个标签页并存', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 5, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
+check('多个标签页并存', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 6, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
 check('当前窗格内容仍在渲染', !!allByClass(overlay, /wb-stage/)[0] || textOf(overlay).includes('浏览器窗格'))
 
 /* 关闭当前标签 */
@@ -1076,40 +1048,6 @@ check('小窗提示只写 localStorage', modalText.includes('localStorage'))
   check('joinFs 处理 POSIX 根', R.joinFs('/a/b', '../c') === '/a/c', R.joinFs('/a/b', '../c'))
 }
 
-/* ---------- ③ 编辑器未保存改动不被静默覆盖 ---------- */
-/* 造一个「有未保存改动」的编辑器状态（state=ok、文本≠已保存、非媒体、非片段） */
-Object.assign(mod.store.editor, {
-  state: 'ok', path: 'C:\\x\\A.md', name: 'A.md', kind: 'md',
-  text: '我改了一大堆，还没存', saved: '原始内容', partial: false, truncated: false,
-})
-/* confirm 做成计数器：用来确认守卫「是否真的问过」 */
-let confirmCalls = 0
-/* 用户取消 → openFile 应直接返回，既不切编辑器、也不发 /fs/read，且 confirm 被问了一次 */
-globalThis.window.confirm = () => { confirmCalls += 1; return false }
-const readsBeforeBlock = reads.length
-await mod.openFile('C:\\x\\B.md')
-check('③ 有未保存改动 + 用户取消 → 不覆盖、不发读请求、confirm 被问',
-  mod.store.editor.path === 'C:\\x\\A.md' && reads.slice(readsBeforeBlock).every((p) => p !== 'C:\\x\\B.md') && confirmCalls === 1,
-  'path=' + mod.store.editor.path + ' reads+=' + (reads.length - readsBeforeBlock) + ' confirm=' + confirmCalls)
-/* 用户确认 → 才允许覆盖，并真正发起 /fs/read 去加载新文件（confirm 再问一次） */
-globalThis.window.confirm = () => { confirmCalls += 1; return true }
-const readsBeforeAllow = reads.length
-await mod.openFile('C:\\x\\C.md')
-check('③ 用户确认后 → 发起 /fs/read 加载新文件（confirm 再问一次）',
-  reads.slice(readsBeforeAllow).some((p) => p === 'C:\\x\\C.md') && confirmCalls === 2,
-  JSON.stringify(reads.slice(readsBeforeAllow)) + ' confirm=' + confirmCalls)
-/* 重开「同一文件」：path 一致，守卫应被跳过（不再调 confirm），但仍会正常加载 */
-Object.assign(mod.store.editor, {
-  state: 'ok', path: 'C:\\x\\A.md', name: 'A.md', kind: 'md',
-  text: '我又改了', saved: 'saved', partial: false, truncated: false,
-})
-const confirmBeforeSame = confirmCalls
-await mod.openFile('C:\\x\\A.md')
-check('③ 重开同一文件 → 不经确认守卫（confirm 不被调用）',
-  confirmCalls === confirmBeforeSame,
-  'confirm=' + confirmCalls)
-delete globalThis.window.confirm
-
 /* ---------- 拖拽：会话 → 工作台 = 新项目 ---------- */
 mod.store.open = true
 mod.store.view = 'grid'
@@ -1207,6 +1145,11 @@ ctx.get = (name) => {
   if (name === 'sessions') return fakeClientSessions()
   return undefined
 }
+
+/* 收拾干净：后面还要测自定义窗格的空态 */
+customStore.length = 0
+mod.store.custom = { ...mod.store.custom, state: 'idle', items: [], active: '', item: null, draft: null, view: 'prompt', busy: '', error: '', prompt: '' }
+
 
 const sw1 = await mod.switchHostSession('s-apple')
 check('切对话：调用宿主 openSession', sw1.ok === true && uiCalls.includes('s-apple'), JSON.stringify(uiCalls))
@@ -1327,6 +1270,8 @@ mod.store.modal = null
 mod.store.open = true
 mod.store.view = 'project'
 mod.store.activeId = mod.store.projects[0].id
+/* 先落到文件管理器：这一条测的是「工作区空态不重复摆入口」，别被别的窗格空态影响 */
+mod.openTab(mod.store.projects[0].id, 'files')
 const projTree = render(overlayComp)
 check('空态不再有第二排打开按钮', allByClass(projTree, /(^|\s)pe-actions(\s|$)/).length === 0, allByClass(projTree, /pe-actions/).length)
 const tabAdd = allByClass(projTree, /(^|\s)tab-add(\s|$)/)[0]
@@ -1557,9 +1502,13 @@ const mediaView = render(overlayComp)
 const mInput = allByClass(mediaView, /(^|\s)media-input(\s|$)/)[0]
 check('媒体窗跟着产物换预览', !!mInput && String(mInput.props.value).endsWith('arch.png'), mInput ? String(mInput.props.value) : '')
 
+const opensBeforeArt = opens.length
 const openMd = collect(artRows[2]).find((n) => n.type === 'button' && textOf(n).trim() === '打开')
 openMd.props.onClick({ preventDefault() {}, stopPropagation() {} })
-check('文本/文档产物进编辑器', mod.uiOf(pid6).activeTab === 'editor' && String(mod.store.editor.path).endsWith('report.md'), mod.store.editor.path + ' @ ' + mod.uiOf(pid6).activeTab)
+await new Promise((r) => setTimeout(r, 20))
+check('文本/文档产物交给系统程序打开',
+  opens.length === opensBeforeArt + 1 && String(opens[opens.length - 1].path).endsWith('report.md'),
+  JSON.stringify(opens[opens.length - 1]) + ' @ ' + mod.uiOf(pid6).activeTab)
 
 /* ---------- ⑨ 项目模板 ---------- */
 check('模板至少 5 种', mod.PROJECT_TEMPLATES.length >= 5 && mod.PROJECT_TEMPLATES.some((x) => x.id === 'frontend') && mod.PROJECT_TEMPLATES.some((x) => x.id === 'writing'), String(mod.PROJECT_TEMPLATES.length))

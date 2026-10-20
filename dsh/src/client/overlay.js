@@ -3,12 +3,12 @@
  *
  * 两种视图 **都只在对话左侧那块**：宿主会话区被右推，右侧始终是 DSH 自己的对话（真能打字）。
  *   grid    总览（项目 / 宿主会话 / 运行中 三个页签）
- *   project 项目工作区（文件 / 编辑器 / 终端 / 浏览器 / 自定义 / 项目信息 标签页）
+ *   project 项目工作区（文件 / 源代码管理 / 终端 / 浏览器 / 自定义 / 媒体 / 笔记 标签页）
  * 两者共用同一套外壳：dock-head + ws + pane-main + 右边缘 dock-edge（拖动改宽度）。
  *
  * 让位几何全部来自 hostdock.js，组件只消费 geo，不直接碰宿主 DOM。
  */
-import { Component, useRef, useState } from 'react'
+import { Component, useRef, useState, useEffect } from 'react'
 import { el, Light, Splitter, ContextMenu, Toasts } from './ui.js'
 import { ModalHost } from './modals.js'
 import { useHostDock, remeasure, undockedBox, anchorLeft } from './hostdock.js'
@@ -26,7 +26,7 @@ import {
   runProject, stopProject, openRunPort,
   setSideProject, setSideSplit, sideProjectOf, readChatDrop, dropToChat, setChatDropHover,
 } from './core.js'
-import { InfoPane, FilesPane, ScmPane, EditorPane, TermPane, WebPane, CustomPane, MediaPane, NotesPane } from './panes.js'
+import { InfoPane, FilesPane, ScmPane, TermPane, WebPane, CustomPane, MediaPane, NotesPane } from './panes.js'
 
 export function MainView() {
   useStore()
@@ -600,7 +600,58 @@ function MainPane({ project, ui, nest, slot = 0 }) {
   const activeKey = cellKeyOf(ui, idx) || fallback
   const active = tabs.find((t) => t.key === activeKey) || null
 
-  const titleOf = (t) => (t.kind === 'editor' ? (store.editor.name || '编辑器') : t.title)
+  /* 标签页条能不能左右滑：只有溢出了才出箭头，滑到头就把那侧箭头按掉 */
+  const tabsRef = useRef(null)
+  const [edge, setEdge] = useState({ left: false, right: false })
+  const syncEdge = () => {
+    const box = tabsRef.current
+    if (!box) return
+    const left = box.scrollLeft > 2
+    const right = box.scrollLeft + box.clientWidth < box.scrollWidth - 2
+    setEdge((cur) => (cur.left === left && cur.right === right ? cur : { left, right }))
+  }
+
+  useEffect(() => { syncEdge() }, [tabs.length, activeKey])
+  useEffect(() => {
+    const onResize = () => syncEdge()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  /* 竖直滚轮 → 横向滑。React 的 onWheel 是被动监听（preventDefault 会被忽略并告警），
+     所以这里手挂一个 passive:false 的原生监听。横向滚轮/触控板横扫本来就能滚，不拦。 */
+  useEffect(() => {
+    const box = tabsRef.current
+    if (!box) return undefined
+    const onWheel = (e) => {
+      if (box.scrollWidth <= box.clientWidth) return
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return
+      e.preventDefault()
+      box.scrollLeft += e.deltaY
+      syncEdge()
+    }
+    box.addEventListener('wheel', onWheel, { passive: false })
+    return () => box.removeEventListener('wheel', onWheel)
+  }, [])
+
+  /* 切到一个被挤出视野的标签页时，把它带回来 */
+  useEffect(() => {
+    const box = tabsRef.current
+    if (!box) return
+    const on = box.querySelector('.tab.on')
+    if (on && typeof on.scrollIntoView === 'function') on.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    syncEdge()
+  }, [activeKey, tabs.length])
+
+  const nudge = (dir) => {
+    const box = tabsRef.current
+    if (!box) return
+    const step = Math.max(120, Math.round(box.clientWidth * 0.6))
+    if (typeof box.scrollBy === 'function') box.scrollBy({ left: dir * step, behavior: 'smooth' })
+    else box.scrollLeft += dir * step
+  }
+
+  const titleOf = (t) => t.title || ''
   const pick = (key) => setCellTab(project.id, idx, key)
 
   const dropHere = (e) => {
@@ -625,7 +676,13 @@ function MainPane({ project, ui, nest, slot = 0 }) {
     onDrop: dropHere,
   },
     el('div', { className: 'pane-head tabhead' },
-      el('div', { className: 'tabs' },
+      edge.left || edge.right
+        ? el('button', {
+          type: 'button', className: 'tab-scroll', title: '往左滑（滚轮也能左右滑）',
+          disabled: !edge.left, onClick: () => nudge(-1),
+        }, '‹')
+        : null,
+      el('div', { className: 'tabs', ref: tabsRef, onScroll: syncEdge },
         tabs.length
           ? tabs.map((t) => el('div', {
             key: t.key,
@@ -653,6 +710,12 @@ function MainPane({ project, ui, nest, slot = 0 }) {
           ))
           : el('span', { className: 'tab-empty' }, '工作区'),
       ),
+      edge.left || edge.right
+        ? el('button', {
+          type: 'button', className: 'tab-scroll', title: '往右滑（滚轮也能左右滑）',
+          disabled: !edge.right, onClick: () => nudge(1),
+        }, '›')
+        : null,
       el('div', { className: 'tab-add' },
         el('button', {
           type: 'button',
@@ -732,5 +795,13 @@ function renderPane(kind, project) {
   if (kind === 'custom') return el(CustomPane, { project })
   if (kind === 'media') return el(MediaPane, { project })
   if (kind === 'notes') return el(NotesPane, { project })
-  return el(EditorPane, { project })
+  /* 0.10.6 下架了编辑器；老版本存下的 editor 标签页由 core.stripRetiredTabs 清掉，
+     这里再兜一层：真遇到不认识的 kind 就给个能自己走开的空窗，别白屏。 */
+  return el('div', { className: 'pane-body' },
+    el('div', { className: 'pane-empty' },
+      el('span', { className: 'pe-ico' }, '◫'),
+      el('p', null, '这个窗口已经不在了'),
+      el('p', { className: 'hint' }, '「' + String(kind || '未知') + '」不是当前版本的窗格类型，关掉这个标签页，用「＋ 窗口」重新开一个。'),
+    ),
+  )
 }

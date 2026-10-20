@@ -41,7 +41,8 @@ import {
   scmFetch, scmPull, scmPush, scmCheckout, scmBranchOp, scmTagOp, scmReset, scmInit, scmUninit,
   scmDiff, scmShowCommit, scmClearDiff, scmSetView, scmOf,
   loadGh, ghLogin, ghLogout, loadGhRepos, ghUploadRepo, cloneRepo,
-  loadFileMarks, setEditorView, editText,
+  htmlUrl, b64url, isHtmlFile, openHtmlWindow, stripRetiredTabs,
+  newCustomDraft, editCustom, setCustomView, saveCustom,
   fileUrlOf, chatTextForFile, chatTextForUrl, readChatDrop, sendToChat, sendPathToChat, sendUrlToChat,
   readDrop, dropOnWorktable, dropOnProject, canDropOnWorktable, pickDropEffect, normSessionId,
   startSessionDrag, createFromSession,
@@ -50,7 +51,7 @@ import { el } from './ui.js'
 import { WorktableSidebar, sideModeOf } from './sidebar.js'
 import { pickDock, remeasure, undockedBox } from './hostdock.js'
 import { MainView, PaneBoundary } from './overlay.js'
-import { kindOfMediaPath, mediaRowsOf } from './panes.js'
+import { kindOfMediaPath, mediaRowsOf, webRowsOf } from './panes.js'
 
 const PANEL_ID = 'trae-usage-worktable'
 const OVERLAY_ID = PANEL_ID + '-main'
@@ -61,7 +62,7 @@ export { VERSION }
 export { computeDock, attachHost, applyDock, releaseDock, dockAspect } from './hostdock.js'
 /* 离线自测出口：目录浏览器的纯展示层（克隆弹窗用），数据全从 props 来 */
 export { DirView, dirOnly } from './modals.js'
-/* 离线自测出口：暴露编辑器状态与 openFile，便于断言「未保存改动不被覆盖」守卫 */
+/* 离线自测出口：暴露 store 与 openFile（现在只负责按类型分流） */
 export { store, openFile, createSessionInDir, switchHostSession, searchUrl, webGotoSmart, setTheme, resetTheme, themeStyle, themeAttrs, webHome, openSearch, moveProjectBefore, setProjectFolder,
   LAYOUTS, setLayout, setSecondTab, setSplit, setSplitB, uiOf,
   paneCountOf, cellKeyOf, setCellTab, moveTabToCell, openTab, closeTab, updateProject,
@@ -78,8 +79,9 @@ export { store, openFile, createSessionInDir, switchHostSession, searchUrl, webG
   scmFetch, scmPull, scmPush, scmCheckout, scmBranchOp, scmTagOp, scmReset, scmInit, scmUninit,
   scmDiff, scmShowCommit, scmClearDiff, scmSetView, scmOf,
   loadGh, ghLogin, ghLogout, loadGhRepos, ghUploadRepo, cloneRepo,
-  /* 编辑器行号栏的改动标记（离线自测出口） */
-  loadFileMarks, setEditorView, editText,
+  /* 本地网页托管 / 老标签页迁移（离线自测出口） */
+  htmlUrl, b64url, isHtmlFile, openHtmlWindow, stripRetiredTabs, webRowsOf,
+  newCustomDraft, editCustom, setCustomView, saveCustom,
   /* 拖拽建项目（离线自测出口） */
   readDrop, dropOnWorktable, dropOnProject, canDropOnWorktable, pickDropEffect, normSessionId,
   startSessionDrag, createFromSession, loadSessions,

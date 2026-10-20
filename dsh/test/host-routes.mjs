@@ -554,6 +554,41 @@ const siteFile = await getSite(BASE + '/site/p-test/plain.txt')
 check('/site 直出普通文件', siteFile.status === 200 && siteFile.body === 'plain', siteFile.status + ' ' + siteFile.body.slice(0, 20))
 check('/site 普通文件 mime', String(siteFile.headers['content-type']).includes('text/plain'), siteFile.headers['content-type'])
 
+/* ============================ 本地网页托管（/asset） ============================ */
+
+const assetDir = join(tmp, 'web')
+mkdirSync(assetDir, { recursive: true })
+writeFileSync(join(assetDir, 'index.html'), '<h1>本地网页</h1><link rel="stylesheet" href="app.css">', 'utf8')
+writeFileSync(join(assetDir, 'app.css'), 'h1{color:red}', 'utf8')
+writeFileSync(join(assetDir, 'secret.txt'), 'nope', 'utf8')
+const assetToken = (p) => Buffer.from(p, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+
+function getAsset(url) {
+  return new Promise((resolve) => {
+    const handler = routeOf(BASE + '/asset', 'prefix')
+    if (!handler) return resolve({ status: 404, body: 'no route', headers: {} })
+    handler({ method: 'GET', url }, makeRes(resolve))
+  })
+}
+
+const assetTok = assetToken(assetDir)
+const assetHtml = await getAsset(BASE + '/asset/' + assetTok + '/index.html')
+check('/asset 直出本地 html', assetHtml.status === 200 && assetHtml.body.includes('本地网页'), assetHtml.status + ' ' + assetHtml.body.slice(0, 30))
+check('/asset html mime 正确', String(assetHtml.headers['content-type']).includes('text/html'), assetHtml.headers['content-type'])
+check('/asset 用 CSP 沙箱下发页面（脚本跑、不给同源身份）',
+  String(assetHtml.headers['content-security-policy'] || '').includes('sandbox'), assetHtml.headers['content-security-policy'])
+const assetCss = await getAsset(BASE + '/asset/' + assetTok + '/app.css')
+check('/asset 同目录 css 也能取到（相对路径靠同一段令牌）', assetCss.status === 200 && assetCss.body.includes('color:red'), assetCss.status)
+check('/asset css mime 正确', String(assetCss.headers['content-type']).includes('text/css'), assetCss.headers['content-type'])
+const assetTxt = await getAsset(BASE + '/asset/' + assetTok + '/secret.txt')
+check('/asset 不给网页读 .txt（只放行网页资源）', assetTxt.status === 415, assetTxt.status + ' ' + assetTxt.body.slice(0, 40))
+const assetUp = await getAsset(BASE + '/asset/' + assetTok + '/%2e%2e%2fpackage.json')
+check('/asset 挡 ../ 越界', assetUp.status === 403, assetUp.status + ' ' + assetUp.body.slice(0, 40))
+const assetBad = await getAsset(BASE + '/asset/not_base64/index.html')
+check('/asset 目录令牌无效 → 400', assetBad.status === 400, assetBad.status + ' ' + assetBad.body.slice(0, 40))
+const assetMiss = await getAsset(BASE + '/asset/' + assetTok + '/nope.html')
+check('/asset 文件不存在 → 404', assetMiss.status === 404, assetMiss.status)
+
 /* ============================ 终端 ============================ */
 
 const termOut = await new Promise((resolve) => {
@@ -689,6 +724,15 @@ const cUrl = await call(BASE + '/custom/save', { name: '监控页', kind: 'url',
 check('custom/save 网址型归一成 http', JSON.parse(cUrl.body).item.body === 'http://localhost:3000/dash')
 const cBadUrl = await call(BASE + '/custom/save', { name: '坏', kind: 'url', body: 'javascript:alert(1)' })
 check('custom/save 挡掉 javascript: 网址', cBadUrl.status === 400)
+
+/* 0.10.6：自定义窗口可以指向磁盘上的一个 html 文件 */
+const cFile = await call(BASE + '/custom/save', { name: '本地网页', kind: 'file', body: join(tmp, 'web', 'index.html') })
+const cFileJ = JSON.parse(cFile.body)
+check('custom/save 接受 kind=file + 绝对路径', cFile.status === 200 && cFileJ.item.kind === 'file' && cFileJ.item.body.endsWith('index.html'), cFile.body.slice(0, 120))
+const cRel = await call(BASE + '/custom/save', { name: '相对', kind: 'file', body: 'index.html' })
+check('custom/save 拒绝相对路径的 file', cRel.status === 400, cRel.status)
+const cNotHtml = await call(BASE + '/custom/save', { name: '不是网页', kind: 'file', body: join(tmp, 'plain.txt') })
+check('custom/save 拒绝非 .html 的 file', cNotHtml.status === 400, cNotHtml.status)
 
 const cDel = await call(BASE + '/custom/delete', { id: cid })
 const cGone = await call(BASE + '/custom/get', { id: cid })

@@ -55,12 +55,14 @@ export function normState(raw) {
 
 /**
  * 工作区标签页。工作台里 **没有左栏**：项目信息 / 文件浏览都是标签页，
- * 和编辑器、终端、浏览器、自定义窗口平级，标签页本身就把整块让位区占满。
+ * 和终端、浏览器、自定义窗口平级，标签页本身就把整块让位区占满。
+ *
+ * 0.10.6 起不再自带「编辑器」：它和宿主的编辑器 / 系统默认程序重复，
+ * 文本文件一律交给系统程序打开，网页（.html）交给自定义窗口预览。
  */
 export const PANE_TABS = [
   { id: 'files', label: '文件管理器', icon: '🗂' },
   { id: 'scm', label: '源代码管理', icon: '⑂' },
-  { id: 'editor', label: '编辑器', icon: '◆' },
   { id: 'term', label: '终端', icon: '›_' },
   { id: 'web', label: '浏览器', icon: '◍' },
   { id: 'custom', label: '自定义', icon: '❖' },
@@ -239,16 +241,6 @@ export const store = {
   tree: { state: 'idle', pid: '', path: '', name: '', parent: '', writable: true, entries: [], total: 0, truncated: false, error: '', at: 0 },
   /* 文件管理器的视图偏好（排序 / 过滤 / 选中项），纯前端 */
   fs: { sort: 'name', dir: 1, query: '', sel: '', busy: '', menu: null },
-  editor: {
-    state: 'idle', path: '', name: '', text: '', saved: '', error: '', truncated: false,
-    /* partial = 只读了文件的一段（大文件只读预览）；这种状态**禁止保存**，否则会把文件截断写回 */
-    partial: false, tail: false, binary: false, errorCode: 0, size: 0, limit: 0, previewBytes: 0, saving: false,
-    /* kind 决定正文怎么画（markdown / code / image / pdf / video / audio / text）；
-       view 是用户的看法（preview 渲染 / edit 原文），媒体类没有 preview/edit 之分 */
-    kind: 'text', view: 'edit', mediaUrl: '',
-    /* 行号栏的 git 改动标记（0.10.2）：marks[i] 对应第 i+1 行，值是 'add' / 'mod' / 'del' */
-    marks: [], markState: 'idle', markAdds: 0, markMods: 0, markDels: 0, markNote: '',
-  },
   terms: {},                    // { [pid]: { id, cwd, busy, lines: [] } }
   git: { state: 'idle', repo: false, branch: '', changes: [], counts: null, error: '', log: [], branches: [] },
   /* 源代码管理窗（0.10.0）：一个仓库的完整读写视图 —— 暂存 / 提交 / 推送 / 分支 / 标签 / 历史 */
@@ -342,11 +334,45 @@ function normalizeProject(raw) {
   }
 }
 
+/**
+ * 0.10.6 下架了「编辑器」窗格。老版本存下来的 wt.ui.v2 里可能还挂着 editor 标签页
+ * （甚至是当时唯一的标签页），统一清掉并把槽位改到还活着的标签页上，
+ * 免得一开项目就撞见一个打不开的空窗。
+ */
+const RETIRED_TAB_KINDS = new Set(['editor'])
+
+export function stripRetiredTabs(ui) {
+  let changed = false
+  const out = {}
+  for (const [pid, raw] of Object.entries(ui || {})) {
+    if (!raw || typeof raw !== 'object') { out[pid] = raw; continue }
+    const tabs = Array.isArray(raw.tabs) ? raw.tabs : []
+    const kept = tabs.filter((t) => !RETIRED_TAB_KINDS.has(String(t && t.kind || '')))
+    if (kept.length !== tabs.length) changed = true
+    const alive = (k) => (kept.some((t) => t.key === k) ? k : '')
+    const activeTab = alive(raw.activeTab) || (kept[0] && kept[0].key) || ''
+    if (activeTab !== raw.activeTab) changed = true
+    const next = { ...raw, tabs: kept, activeTab }
+    if (raw.secondTab !== undefined) {
+      next.secondTab = alive(raw.secondTab)
+      if (next.secondTab !== raw.secondTab) changed = true
+    }
+    if (Array.isArray(raw.cells)) {
+      next.cells = raw.cells.map(alive)
+      if (next.cells.some((k, i) => k !== raw.cells[i])) changed = true
+    }
+    out[pid] = next
+  }
+  return { ui: out, changed }
+}
+
 export function hydrate() {
   const rawProjects = readLS(LS.projects, [])
   const legacyBind = readLS(LS.bindings, {})
   const legacyLayouts = readLS(LS.layouts, {})
-  const ui = readLS(LS.ui, {})
+  const migratedUi = stripRetiredTabs(readLS(LS.ui, {}))
+  const ui = migratedUi.ui
+  if (migratedUi.changed) writeLS(LS.ui, ui)
 
   const projects = (Array.isArray(rawProjects) ? rawProjects : []).map((p) => {
     const rec = normalizeProject(p)
@@ -2027,7 +2053,7 @@ export async function loadArtifacts(pid) {
   }
 }
 
-/** 打开一个产物：网址进浏览器、按扩展名挑媒体窗或编辑器 */
+/** 打开一个产物：网址进浏览器、文件按类型交给媒体窗 / 自定义窗口 / 系统程序 */
 export function openArtifact(item) {
   const pid = store.activeId || (store.projects[0] && store.projects[0].id) || ''
   if (!item || !pid) return
@@ -2038,10 +2064,8 @@ export function openArtifact(item) {
     webGotoSmart(item.url)
     return
   }
-  const name = String(item.path || '').split(/[\\/]/).pop() || ''
-  const kind = viewKindOf(name)
-  if (['image', 'pdf', 'video', 'audio'].includes(kind)) openMedia(pid, item.path)
-  else openFile(item.path, pid)
+  /* 剩下的按类型分流：媒体 → 媒体窗、网页 → 自定义窗口、其它 → 系统程序 */
+  openFile(item.path, pid)
 }
 
 /** 把某个产物做成一条可发送的说明，塞进宿主输入框（不自动发送） */
@@ -2436,235 +2460,69 @@ export async function openExternal(path, opts = {}) {
   }
 }
 
-/* ============================ 编辑器 ============================ */
-
-let fileToken = 0
+/* ============================ 打开文件（0.10.6 起没有内置编辑器） ============================ */
 
 /** 媒体文件的原始字节地址（<img src> / <iframe src> 只能 GET，走不了 apiPost） */
 export function rawUrl(p) {
   return API + '/fs/raw?path=' + encodeURIComponent(String(p || ''))
 }
 
-/** 编辑器是否处于「有未保存改动」（与 EditorPane 里的 dirty 判定完全一致） */
-function editorDirty() {
-  const ed = store.editor
-  if (ed.state !== 'ok') return false
-  const kind = ed.kind || viewKindOf(ed.name)
-  if (isMediaKind(kind)) return false
-  if (ed.partial || ed.truncated) return false
-  return ed.text !== ed.saved
-}
-
-/** 切换 / 覆盖前若有未保存改动，问一句（与 CustomPane.guardDirty 同手法）。返回 false = 用户取消 */
-function confirmDiscardEditor() {
-  if (!editorDirty()) return true
-  if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-    return window.confirm('当前文件有未保存的改动，继续会丢失，确定？')
-  }
-  return true
+/** UTF-8 → base64url（btoa 只吃 latin1，先转成字节再编） */
+export function b64url(text) {
+  const bytes = new TextEncoder().encode(String(text ?? ''))
+  let bin = ''
+  for (let i = 0; i < bytes.length; i += 1) bin += String.fromCharCode(bytes[i])
+  const b64 = typeof btoa === 'function' ? btoa(bin) : ''
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
 /**
- * 打开文件。
- * @param {string} path
- * @param {string} [pid] 项目 id（有就把编辑器标签页切过去）
- * @param {{mode?:'auto'|'head'|'tail'|'full', bytes?:number, forceText?:boolean}} [opts]
- *   auto（默认）＝小的整份读、大的自动降级成只读预览；
- *   head / tail ＝ 明确只看开头 / 结尾（大日志就用这个）；
- *   full ＝ 我就要整份，超上限就报 413。
- *   forceText ＝ 就算图片 / PDF 也当文本读（排查「为什么预览不出来」时用）。
+ * 本地网页的托管地址（iframe 的 src）。
+ * 目录编成 /asset/<base64url(dir)>，文件名跟在后面 —— 这样页面里
+ * <link href="style.css">、<img src="logo.png"> 这些相对路径会自然落到同一目录，
+ * 不会被解析到 API 根上（srcDoc 做不到这一点，那正是「放不进 html 文件」的原因）。
  */
-export async function openFile(path, pid, opts = {}) {
+export function htmlUrl(p) {
+  const target = String(p || '')
+  const tie = Math.max(target.lastIndexOf('\\'), target.lastIndexOf('/'))
+  let dir = tie > 0 ? target.slice(0, tie) : target
+  const name = tie >= 0 ? target.slice(tie + 1) : target
+  /* 盘符根（C:）要补一个分隔符，否则 Node 的 resolve 会当成「当前盘的工作目录」 */
+  if (/^[a-zA-Z]:$/.test(dir)) dir += '\\'
+  return API + '/asset/' + b64url(dir) + '/' + encodeURIComponent(name)
+}
+
+const HTML_FILE_RE = /\.(html?|xhtml)$/i
+
+/** 是不是一个网页文件 */
+export function isHtmlFile(p) {
+  return HTML_FILE_RE.test(String(p || ''))
+}
+
+/** 把本地 html 放进「自定义窗口」预览（草稿状态，点「保存」才留下） */
+export function openHtmlWindow(path, pid) {
+  const target = String(path || '').trim()
+  if (!target) return ''
+  const name = baseName(target).replace(HTML_FILE_RE, '') || '本地网页'
+  newCustomDraft('file', 'preview')
+  editCustom({ name, body: target })
+  if (pid) openTab(pid, 'custom')
+  toast('已放进自定义窗口；要留着就点「保存」', 'ok')
+  return target
+}
+
+/**
+ * 打开一个文件（没有内置编辑器之后的统一入口）：
+ *   图片 / PDF / 音视频 → 媒体窗内嵌预览
+ *   .html / .htm        → 自定义窗口（走 /fs/html，相对资源能一起加载）
+ *   其它（文本 / 代码）  → 系统默认程序
+ */
+export function openFile(path, pid) {
   const target = String(path || '')
   if (!target) return
-  /* 用另一个文件覆盖一个「有未保存改动」的编辑器时，先问一句，别默默吃掉用户的改动 */
-  if (target !== store.editor.path && !confirmDiscardEditor()) return
-  const name = baseName(target)
-  const kind = viewKindOf(name)
-
-  /* 图片 / PDF / 音视频：文本通道只会得到 415，直接交给浏览器渲染 */
-  if (isMediaKind(kind) && !opts.forceText) {
-    const token = ++fileToken
-    emit({
-      editor: {
-        ...store.editor,
-        state: 'ok', path: target, name, kind, view: 'preview',
-        text: '', saved: '', error: '', errorCode: 0, binary: false,
-        partial: false, truncated: false, tail: false, size: 0,
-        mediaUrl: rawUrl(target),
-        marks: [], markState: 'idle', markAdds: 0, markMods: 0, markDels: 0, markNote: '',
-      },
-    })
-    if (pid) openTab(pid, 'editor')
-    setEditorTabTitle(pid, name)
-    /* 体积另问一次（拿不到就算了，不挡预览） */
-    apiPost('/fs/stat', { path: target }, { timeout: 8000 }).then((d) => {
-      if (token !== fileToken) return
-      emit({ editor: { ...store.editor, size: Number(d?.size) || 0 } })
-    }).catch(() => {})
-    return
-  }
-
-  const token = ++fileToken
-  emit({
-    editor: {
-      ...store.editor, state: 'loading', path: target, name, kind,
-      error: '', errorCode: 0, binary: false, partial: false, mediaUrl: '',
-      marks: [], markState: 'idle', markAdds: 0, markMods: 0, markDels: 0, markNote: '',
-    },
-  })
-  if (pid) openTab(pid, 'editor')
-  try {
-    const body = { path: target }
-    if (opts.mode) body.mode = opts.mode
-    if (opts.bytes) body.bytes = opts.bytes
-    const data = await apiPost('/fs/read', body, { timeout: 30_000 })
-    if (token !== fileToken) return
-    const partial = !!data.partial
-    const truncated = !!data.truncated
-    emit({
-      editor: {
-        state: 'ok',
-        path: data.path || target,
-        name: data.name || name,
-        kind,
-        /* 只看到片段时不进渲染预览：拿半截 Markdown 渲染出来只会误导，
-           这时候让用户直接看原文（只读），跟「只读 · 开头/结尾」的语义一致。 */
-        view: (partial || truncated || !hasPreview(kind)) ? 'edit' : 'preview',
-        text: String(data.text ?? ''),
-        saved: String(data.text ?? ''),
-        error: '',
-        errorCode: 0,
-        mediaUrl: '',
-        /* partial 与 truncated 都意味着「你看到的不是完整文件」→ 一律只读 */
-        partial,
-        truncated,
-        tail: data.mode === 'tail',
-        binary: !!data.binary,
-        size: Number(data.size) || 0,
-        limit: Number(data.limit) || 0,
-        previewBytes: Number(data.previewBytes) || 0,
-      },
-    })
-    setEditorTabTitle(pid, data.name || name)
-    /* 行号栏标记：文件读进来之后再算，失败不影响编辑 */
-    loadFileMarks(store.editor.path).catch(() => {})
-    /* 行号栏标记：文件读进来之后再算，失败不影响编辑 */
-    loadFileMarks(store.editor.path).catch(() => {})
-  } catch (err) {
-    if (token !== fileToken) return
-    const info = err?.data || {}
-    emit({
-      editor: {
-        ...store.editor,
-        state: 'error',
-        path: target,
-        name,
-        kind,
-        view: 'edit',
-        error: String(err?.message ?? err),
-        errorCode: Number(err?.status) || 0,
-        size: Number(info.size) || 0,
-        limit: Number(info.limit) || 0,
-        previewBytes: Number(info.previewBytes) || 0,
-        binary: info.code === 'binary',
-      },
-    })
-  }
-}
-
-function setEditorTabTitle(pid, title) {
-  if (!pid || !title) return
-  const ui = uiOf(pid)
-  const tabs = ui.tabs.map((t) => (t.kind === 'editor' ? { ...t, title } : t))
-  patchUi(pid, { tabs })
-}
-
-/** 切「预览 / 编辑」（Markdown 与代码才有意义） */
-export function setEditorView(view) {
-  const v = view === 'preview' ? 'preview' : 'edit'
-  if (store.editor.view === v) return
-  emit({ editor: { ...store.editor, view: v } })
-}
-
-export function editText(text) {
-  emit({ editor: { ...store.editor, text: String(text ?? '') } })
-}
-
-export async function saveFile() {
-  const ed = store.editor
-  if (!ed.path || ed.state !== 'ok') return
-  if (isMediaKind(ed.kind)) {
-    toast('图片 / PDF / 音视频没有可写的文本内容', 'info')
-    return
-  }
-  /* 只读预览绝不能写回：写回去就是「用一个片段覆盖整个文件」，等于把文件毁了 */
-  if (ed.partial || ed.truncated) {
-    toast('这是只读预览（文件太大，只读了一段），不能在编辑器里保存', 'warn')
-    return
-  }
-  if (ed.text === ed.saved) { toast('没有改动需要保存', 'info'); return }
-  emit({ editor: { ...ed, saving: true } })
-  try {
-    await apiPost('/fs/write', { path: ed.path, text: ed.text }, { timeout: 25_000 })
-    emit({ editor: { ...store.editor, saved: store.editor.text, saving: false, size: new Blob([store.editor.text]).size } })
-    treeCache.delete(store.tree.path)
-    toast('已保存 ' + ed.name, 'ok')
-    /* 存完行号栏的改动标记要重算：刚写的行可能变成「已修改」，也可能整体归零 */
-    loadFileMarks(store.editor.path).catch(() => {})
-  } catch (err) {
-    emit({ editor: { ...store.editor, saving: false } })
-    toast('保存失败：' + String(err?.message ?? err), 'warn')
-  }
-}
-
-/* ---------------- 编辑器行号栏的 git 改动标记（0.10.2） ---------------- */
-
-/**
- * 给当前打开的文件算一份「行级改动地图」。
- *
- * 为什么不是整份 diff：编辑器只需要知道「第几行是什么颜色」，
- * 让 host 把 hunk 头翻成行号，前端就不用解析 patch，几千行的文件也不会卡。
- * 文件不在任何仓库里是正常情况（markState 回到 idle，行号栏不显示任何标记）。
- */
-export async function loadFileMarks(path) {
-  const target = String(path || '')
-  if (!target) return null
-  if (store.editor.path !== target) return null
-  const dir = dirName(target)
-  if (!dir) return null
-  emit({ editor: { ...store.editor, markState: 'loading' } })
-  try {
-    const out = await apiPost('/git', { path: dir, op: 'linemap', file: target }, { timeout: 20_000 })
-    if (store.editor.path !== target) return null
-    if (out?.ok === false) {
-      emit({ editor: { ...store.editor, marks: [], markState: 'error', markNote: String(out.error || '') } })
-      return out
-    }
-    /* 行数按当前文本算：host 给的是 HEAD 对新文件的行号，两边可能差一两行（比如末尾没换行） */
-    const total = String(store.editor.text || '').split('\n').length
-    const marks = new Array(Math.max(total, 0)).fill('')
-    for (const m of out.marks || []) {
-      const idx = Number(m.line) - 1
-      if (idx >= 0 && idx < marks.length) marks[idx] = m.kind
-    }
-    emit({
-      editor: {
-        ...store.editor,
-        marks,
-        markState: out.repo === false || out.outside ? 'idle' : 'ok',
-        markAdds: Number(out.adds) || 0,
-        markMods: Number(out.mods) || 0,
-        markDels: Number(out.dels) || 0,
-        markNote: out.outside ? '文件不在仓库里' : '',
-      },
-    })
-    return out
-  } catch (err) {
-    if (store.editor.path !== target) return null
-    emit({ editor: { ...store.editor, marks: [], markState: 'error', markNote: String(err?.message ?? err) } })
-    return null
-  }
+  if (isMediaKind(viewKindOf(baseName(target)))) { openMedia(pid, target); return }
+  if (isHtmlFile(target)) { openHtmlWindow(target, pid); return }
+  openExternal(target)
 }
 
 /* ============================ 终端 ============================ */
@@ -3501,7 +3359,11 @@ export async function loadCustom(opts = {}) {
     const items = (Array.isArray(data?.items) ? data.items : []).map(customMetaOf)
     const active = items.some((it) => it.id === store.custom.active) ? store.custom.active : (items[0]?.id || '')
     emit({ custom: { ...store.custom, state: 'ready', items, active, file: String(data?.file || ''), error: '' } })
-    if (active && (!store.custom.item || store.custom.item.id !== active)) await openCustom(active, { quiet: opts.quiet })
+    /* 正在编辑一份还没保存的新草稿时别抢：例如「双击 html 直接开窗」刚建好草稿，
+       这时候列表回来再 openCustom 会把草稿冲掉 */
+    const pending = store.custom.draft
+    const keepDraft = !!pending && !pending.id && (String(pending.body || '').trim() !== '' || String(pending.name || '').trim() !== '')
+    if (active && !keepDraft && (!store.custom.item || store.custom.item.id !== active)) await openCustom(active, { quiet: opts.quiet })
     return items
   } catch (err) {
     emit({ custom: { ...store.custom, state: 'error', error: String(err?.message ?? err) } })
@@ -3536,22 +3398,26 @@ export async function openCustom(id, opts = {}) {
   }
 }
 
-/** 新建一份草稿（还没落盘，保存时才由宿主发号） */
+/**
+ * 新建一份草稿（还没落盘，保存时才由宿主发号）。
+ * kind：html＝手写 / 贴一段 HTML；url＝嵌一个网址；file＝指向本地一个 .html 文件。
+ */
 export function newCustomDraft(kind = 'html', view = '') {
+  const k = kind === 'url' ? 'url' : (kind === 'file' ? 'file' : 'html')
   emit({
     custom: {
       ...store.custom,
       active: '',
       item: null,
-      view: view || (kind === 'url' ? 'edit' : 'prompt'),
+      view: view || (k === 'url' || k === 'file' ? 'edit' : 'prompt'),
       busy: '',
       error: '',
       prompt: '',
       draft: {
         id: '',
         name: '',
-        kind: kind === 'url' ? 'url' : 'html',
-        body: kind === 'url' ? '' : CUSTOM_PRESET,
+        kind: k,
+        body: k === 'html' ? CUSTOM_PRESET : '',
         pid: store.web.pid || '',
       },
     },
@@ -3580,11 +3446,25 @@ export async function saveCustom() {
     toast('窗口地址不合法：只支持 http / https', 'warn')
     return null
   }
+  /* 本地网页：必须是绝对路径的 .html / .htm —— 相对路径在宿主那边没法解析 */
+  if (draft.kind === 'file') {
+    const p = body.trim()
+    if (!/^([a-zA-Z]:[\\/]|[\\/]{2}|[\\/])/.test(p)) {
+      toast('先选一个本地网页文件（绝对路径）', 'warn')
+      return null
+    }
+    if (!isHtmlFile(p)) {
+      toast('只支持 .html / .htm / .xhtml 文件', 'warn')
+      return null
+    }
+  }
+  /* 没起名字就用文件名顶上，省得落成「未命名窗口」 */
+  const name = String(draft.name || '').trim() || (draft.kind === 'file' ? baseName(body).replace(HTML_FILE_RE, '') : '')
   emit({ custom: { ...store.custom, busy: 'saving', error: '' } })
   try {
     const data = await apiPost('/custom/save', {
       id: draft.id || undefined,
-      name: draft.name || undefined,
+      name: name || undefined,
       kind: draft.kind,
       body,
       pid: draft.pid || store.web.pid || '',

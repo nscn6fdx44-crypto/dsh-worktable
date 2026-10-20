@@ -1,8 +1,8 @@
 # Trae Worktable —— DSH 插件
 
-DeepSeek Harness（DSH）侧边栏**工作台**插件：把你的项目收纳成侧边栏应用抽屉，提供可停靠的分栏工作区——文件浏览、编辑器、真 PTY 终端、内置浏览器、媒体查看、笔记、自定义窗口，以及完整的 git / GitHub 管理——全部在 DSH 内完成。
+DeepSeek Harness（DSH）侧边栏**工作台**插件：把你的项目收纳成侧边栏应用抽屉，提供可停靠的分栏工作区——文件浏览、真 PTY 终端、内置浏览器、媒体查看、笔记、自定义窗口（含直接挂本地 `.html`），以及完整的 git / GitHub 管理——全部在 DSH 内完成。
 
-> 英文说明见 [README.md](README.md) · 当前版本 **0.10.5**
+> 英文说明见 [README.md](README.md) · 当前版本 **0.10.6**
 
 需要 **DSH `0.2.0-rc.2` 或 `0.2.1-rc.2`**（Windows 桌面端）。
 
@@ -17,19 +17,19 @@ CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`�
 **方式 A —— 直接按网址装**（DSH 自己去 GitHub 下载附件）：
 
 ```powershell
-& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.5/trae-usage-worktable-0.10.5.tgz"
+& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.6/trae-usage-worktable-0.10.6.tgz"
 ```
 
 **方式 B —— 下载后装本地文件**（GitHub 慢或被墙时用）：
 
-1. 从 [v0.10.5 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.5) 把 `trae-usage-worktable-0.10.5.tgz` 下载到**你想放的任意目录**
-   （252.5 KB，sha256 `b66c7c2b6aa90f853e324c306a7e3d8061bc4c35ff4d9d3f71aa211f0886c963`）
+1. 从 [v0.10.6 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.6) 把 `trae-usage-worktable-0.10.6.tgz` 下载到**你想放的任意目录**
+   （248.4 KB，sha256 `7a2921e10311c0f18a6edcf5333fd7656eacfd57ac3e0b76adbc5acbaecaadeb`）
 2. 在 PowerShell 执行——路径换成**你自己**存放的位置：
    ```powershell
-   & "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<你下载的完整路径>\trae-usage-worktable-0.10.5.tgz"
+   & "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<你下载的完整路径>\trae-usage-worktable-0.10.6.tgz"
    ```
 
-重开 DSH —— 侧边栏即出现「工作台」面板。用 `/api/trae-worktable/health` 核对：`"version": "0.10.5"`。
+重开 DSH —— 侧边栏即出现「工作台」面板。用 `/api/trae-worktable/health` 核对：`"version": "0.10.6"`。
 
 ## 功能
 
@@ -50,8 +50,13 @@ CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`�
 - **快捷键体系**、项目模板、配置 JSON 导入导出
 - **拖到对话**——文件行或网页地址拖到顶栏，自动填成一段可发送的内容
 
-## 本版变更（0.8.48 → 0.10.5）
+## 本版变更（0.8.48 → 0.10.6）
 
+- **0.10.6** 三处界面调整：① **删掉「编辑器」窗格**（和宿主 / 系统默认程序重复），文件改为按类型分流 ——
+  图片/PDF/音视频进媒体窗、`.html` 进自定义窗口、其余交给系统默认程序；老版本存下的 `editor` 标签页会自动清掉。
+  ② **项目内标签条能左右滑**：溢出时出 `‹ ›` 箭头、滚轮直接横滚、切到被挤出去的标签自动带回、底部细滚动条提示。
+  ③ **自定义窗口能放本地 html**：新增 `kind:'file'` + `GET /asset/<目录令牌>/<相对路径>`，
+  同目录的 css / js / 图片照常加载（`srcDoc` 做不到）；只放行网页资源类型、`../` 越界 403、页面在沙箱里跑
 - **0.10.5** 项目名和**侧边栏上的会话名一模一样**：会话名是宿主折叠整条日志得到的（`session/title` 事件在日志开头），
   我们原来只扫尾部 400 条、冷会话连日志都读不到，于是掉到兜底的工作目录名 —— 默认工作区就叫 `default-workspace`。
   现在直接调 `sessionQuery.readTitleSnapshots` 批量取（60s 缓存），行上多一个 `titled` 标记区分「真名字 / 只是目录名」
@@ -59,7 +64,7 @@ CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`�
   先落项目、补拉一次再改名；拖到某个项目上是**绑定**到它（不再凭空多一个）；修掉 `effectAllowed=move` 与 `dropEffect=copy` 不兼容导致 drop 根本不派发的问题
 - **0.10.3** 克隆仓库**可以浏览目录**：「克隆到」右边加「浏览…」，内嵌目录树逐级点选、
   `↑` 回上级、一键回填；只列子目录，读得到但写不了的路径当场亮红并禁用确认
-- **0.10.2** 编辑器**行号栏显示 git 改动**：新增 / 修改 / 删除三种竖条 + `+n ~n −n` 统计，
+- **0.10.2**（0.10.6 随编辑器下架）**行号栏显示 git 改动**：新增 / 修改 / 删除三种竖条 + `+n ~n −n` 统计，
   基于 HEAD 的 `git diff -U0` 最小 hunk，保存后自动重算；文件不在仓库里就不染色
 - **0.10.1** 支持**取消初始化**（删 `.git`）：只删 `.git`，项目文件一个不动；
   服务端三条硬约束（要确认 / 必须在仓库根 / `.git` 必须是目录）

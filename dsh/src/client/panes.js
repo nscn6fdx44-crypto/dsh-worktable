@@ -1,5 +1,6 @@
 /**
- * 窗格：文件浏览 / 项目信息 / 编辑器 / 终端 / 浏览器 / 自定义。
+ * 窗格：文件浏览 / 项目信息 / 终端 / 浏览器 / 自定义 / 媒体 / 笔记。
+ * 0.10.6 起不再自带编辑器：文本交给系统默认程序，网页交给自定义窗口。
  * 全部是工作区里的标签页，没有独立左栏；对话也不在这里 —— 右栏就是宿主自己的会话区（见 hostdock.js）。
  * 每个窗格只读 store 的对应切片，动作全部来自 core。
  */
@@ -7,11 +8,11 @@ import { useState, useEffect, useRef } from 'react'
 import XTERM_CSS from '@xterm/xterm/css/xterm.css'
 import { el, Icon, Light } from './ui.js'
 import {
-  viewKindOf, isMediaKind, hasPreview, renderMarkdown, highlightCode, langOf, kindEmoji,
+  viewKindOf, kindEmoji,
 } from './render.js'
 import {
   API, store, useStore, STATES, normState, fmtSize, fmtDuration, relTime, shortPath, projEmoji,
-  loadTree, openFile, editText, saveFile, setEditorView, rawUrl,
+  loadTree, openFile, rawUrl, htmlUrl, isHtmlFile, openHtmlWindow,
   termExec, termKill, termClear, loadGit,
   workspaceDirOf, revealPath, openExternal,
   visibleEntries, setFsSort, setFsQuery, selectEntry, fsMkdir, fsRename, fsDelete, fsReveal,
@@ -598,7 +599,7 @@ function diffLines(text) {
  * SetParent 只能盖在整个窗口上、跟不了面板布局。所以列表自己画，但保留
  * 「⧉ 在系统窗口中显示」这个出口 —— 复制粘贴、拖拽、预览这些原生能力还是它强。
  *
- * 交互：单击选中 · 双击进目录 / 开文件（文件进编辑器）· 右键菜单（显示 / 重命名 / 回收站）
+ * 交互：单击选中 · 双击进目录 / 开文件（媒体进媒体窗、网页进自定义窗口、其余交给系统程序）· 右键菜单（显示 / 重命名 / 回收站）
  *      · ＋ 新建文件夹 · 搜索过滤 · 表头点排序 · 删除走系统回收站，不做硬删。
  */
 export function FilesPane({ project }) {
@@ -817,7 +818,9 @@ export function FilesPane({ project }) {
         },
           menu.isDir
             ? el('button', { type: 'button', onClick: () => { const m = menu; closeFsMenu(); go(joinPath(m.dir, m.name)) } }, '📂 进入目录')
-            : el('button', { type: 'button', onClick: () => { const m = menu; closeFsMenu(); openFile(joinPath(m.dir, m.name), project.id) } }, '◆ 在编辑器中打开'),
+            : !isHtmlFile(menu.name)
+              ? null
+              : el('button', { type: 'button', onClick: () => { const m = menu; closeFsMenu(); openHtmlWindow(joinPath(m.dir, m.name), project.id) } }, '❖ 在自定义窗口里打开'),
           menu.isDir
             ? null
             : el('button', { type: 'button', onClick: () => { const m = menu; closeFsMenu(); openExternal(joinPath(m.dir, m.name)) } }, '🚀 用系统程序打开'),
@@ -856,237 +859,6 @@ function fileEmoji(name) {
   if (/\.(mp3|wav|m4a|flac)$/i.test(name)) return '🎵'
   if (/\.(html|htm|css|scss)$/i.test(name)) return '🎨'
   return '·'
-}
-
-/* ============================ 主区：编辑器 ============================ */
-
-/** 渲染结果的缓存：store 每秒 tick 一次会重渲染，400 KB 的 Markdown 没必要每秒重排一遍 */
-let previewCache = { key: '', html: '' }
-
-function dirOf(p) {
-  const s = String(p || '')
-  const i = Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/'))
-  return i > 0 ? s.slice(0, i) : ''
-}
-
-function previewOf(ed, kind) {
-  const key = kind + '\u0000' + ed.path + '\u0000' + ed.text
-  if (previewCache.key === key) return previewCache.html
-  const html = kind === 'markdown'
-    ? renderMarkdown(ed.text, { dir: dirOf(ed.path), imageUrl: rawUrl })
-    : highlightCode(ed.text, langOf(ed.name))
-  previewCache = { key, html }
-  return html
-}
-
-const KIND_LABEL = { markdown: 'Markdown', code: '代码', image: '图片', pdf: 'PDF', video: '视频', audio: '音频', text: '文本' }
-
-export function EditorPane({ project }) {
-  useStore()
-  const ed = store.editor
-  const kind = ed.kind || viewKindOf(ed.name)
-  const media = isMediaKind(kind)
-  const canPreview = hasPreview(kind)
-  /* partial / truncated 都代表「你看到的不是完整文件」—— 一律只读，绝不写回 */
-  const readonly = ed.state === 'ok' && (ed.partial || ed.truncated)
-  const dirty = ed.state === 'ok' && !readonly && !media && ed.text !== ed.saved
-  /* 只看到片段时不进渲染预览：半截 Markdown 渲染出来只会误导 */
-  const view = (canPreview && !readonly && ed.view === 'preview') ? 'preview' : 'edit'
-  const area = useRef(null)
-  const gutter = useRef(null)
-  const [openPath, setOpenPath] = useState('')
-  const doOpen = () => {
-    const p = openPath.trim()
-    if (!p) return
-    openFile(p, project?.id)
-    setOpenPath('')
-  }
-
-  useEffect(() => {
-    const onKey = (e) => {
-      if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') {
-        e.preventDefault()
-        if (dirty) saveFile()
-      }
-    }
-    document.addEventListener('keydown', onKey, true)
-    return () => document.removeEventListener('keydown', onKey, true)
-  }, [dirty])
-
-  /* 看结尾（大日志）时直接滚到最底 */
-  useEffect(() => {
-    if (ed.tail && area.current) area.current.scrollTop = area.current.scrollHeight
-  }, [ed.tail, ed.path, ed.state])
-
-  if (ed.state === 'idle') {
-    return el('div', { className: 'pane-body' },
-      el('div', { className: 'pane-empty' },
-        el('span', { className: 'pe-ico' }, '◆'),
-        el('p', null, '还没有打开文件'),
-        el('p', { className: 'hint' }, '去「🗂 文件管理器」双击文件，或在这里填一个绝对路径。Markdown 与代码会自动渲染，图片 / PDF 直接内嵌显示；Ctrl+S 保存。'),
-        el('div', { className: 'ed-open' },
-          el('input', {
-            className: 'mono', value: openPath, autoComplete: 'off',
-            placeholder: 'C:\\projects\\demo\\README.md',
-            onChange: (e) => setOpenPath(e.target.value),
-            onKeyDown: (e) => { if (e.key === 'Enter') doOpen() },
-          }),
-          el('button', { type: 'button', className: 'btn small', onClick: doOpen }, '打开'),
-        ),
-      ),
-    )
-  }
-
-  const previewSize = ed.previewBytes ? fmtSize(ed.previewBytes) : ''
-  const limitSize = ed.limit ? fmtSize(ed.limit) : '4.0 MB'
-
-  /* ---------- 正文：媒体内嵌 / 渲染预览 / 原文编辑 ---------- */
-  let body = null
-  if (media && ed.state === 'ok') {
-    body = el('div', { className: 'ed-media' },
-      kind === 'image'
-        ? el('img', { className: 'ed-media-img', src: ed.mediaUrl, alt: ed.name })
-        : kind === 'pdf'
-          ? el('iframe', { className: 'ed-media-frame', src: ed.mediaUrl, title: ed.name })
-          : kind === 'video'
-            ? el('video', { className: 'ed-media-player', src: ed.mediaUrl, controls: true, preload: 'metadata' })
-            : el('div', { className: 'ed-media-audio' },
-              el('span', { className: 'ed-media-ico', 'aria-hidden': 'true' }, '🎵'),
-              el('audio', { src: ed.mediaUrl, controls: true, preload: 'metadata' }),
-            ),
-      el('p', { className: 'ed-media-hint' },
-        '内嵌预览来自本地文件（/fs/raw）。显示不正常就用「🚀 用系统程序打开」。'),
-    )
-  } else if (ed.state === 'loading') {
-    body = el('p', { className: 'wt-mute' }, '读取中…')
-  } else if (ed.state === 'error') {
-    body = el('div', { className: 'pane-error' },
-      el('p', null, ed.error),
-      el('p', { className: 'hint' }, ed.errorCode === 413
-        ? '编辑器只处理 ' + limitSize + ' 以内的文本；再大就该交给系统程序，或者只看开头 / 结尾。'
-        : (ed.errorCode === 415 || ed.binary)
-          ? '二进制文件没法当文本编辑 —— 用系统默认程序打开才看得到内容。'
-          : '路径或权限可能不对；也可以直接用系统程序打开它。'),
-      el('div', { className: 'ed-note-acts' },
-        ed.errorCode === 413 || ed.errorCode === 415
-          ? el('button', {
-            type: 'button', className: 'mini-btn',
-            onClick: () => openFile(ed.path, project?.id, { mode: 'head', bytes: ed.previewBytes || 262144 }),
-          }, '只读预览前 ' + (previewSize || '256 KB'))
-          : null,
-        el('button', { type: 'button', className: 'mini-btn on', onClick: () => openExternal(ed.path) }, '🚀 用系统默认程序打开'),
-        el('button', { type: 'button', className: 'mini-btn', onClick: () => revealPath(ed.path, { select: true }) }, '⧉ 在文件管理器中显示'),
-        el('button', { type: 'button', className: 'btn small', onClick: () => openFile(ed.path, project?.id) }, '重试'),
-      ),
-    )
-  } else if (view === 'preview') {
-    body = kind === 'markdown'
-      ? el('div', { className: 'ed-preview ed-md', dangerouslySetInnerHTML: { __html: previewOf(ed, kind) } })
-      : el('pre', { className: 'ed-preview ed-pre' }, el('code', { dangerouslySetInnerHTML: { __html: previewOf(ed, kind) } }))
-  } else {
-    /* ---------- 原文编辑：左侧行号栏带 git 改动标记 ---------- */
-    const lines = String(ed.text || '').split('\n')
-    const marks = Array.isArray(ed.marks) ? ed.marks : []
-    /* 几万个 DOM 节点比「没有标记」更糟：超长文件不画行号栏，只留纯编辑区 */
-    const showGutter = lines.length <= 8000
-    body = el('div', { className: 'ed-code' },
-      showGutter
-        ? el('div', { className: 'ed-gutter mono', ref: gutter, 'aria-hidden': 'true' },
-          lines.map((_, i) => {
-            const kind = marks[i] || ''
-            return el('div', { key: 'g' + i, className: 'ed-grow' + (kind ? ' ' + kind : '') },
-              el('span', { className: 'ed-gmark' }),
-              el('span', { className: 'ed-gno' }, String(i + 1)),
-            )
-          }))
-        : null,
-      el('textarea', {
-        ref: area,
-        className: 'ed-area mono',
-        spellCheck: false,
-        readOnly: readonly,
-        value: ed.text,
-        /* 行号栏跟着纵向滚，横向滚动不动它 */
-        onScroll: (e) => {
-          if (gutter.current) gutter.current.scrollTop = e.target.scrollTop
-        },
-        onChange: (e) => editText(e.target.value),
-        onKeyDown: (e) => {
-          if (e.key === 'Tab') {
-            e.preventDefault()
-            const t = e.target
-            const at = t.selectionStart
-            editText(ed.text.slice(0, at) + '  ' + ed.text.slice(t.selectionEnd))
-          }
-        },
-      }),
-    )
-  }
-
-  return el('div', { className: 'pane-body editor-body' },
-    el('div', { className: 'ed-bar' },
-      el('span', { className: 'ed-name mono', title: ed.path }, ed.name + (dirty ? ' ●' : '')),
-      el('span', { className: 'tag' }, KIND_LABEL[kind] || '文本'),
-      ed.size ? el('span', { className: 'ed-meta mono' }, fmtSize(ed.size)) : null,
-      readonly
-        ? el('span', { className: 'tag warn', title: '只读预览：文件太大，编辑器只读了一段' }, ed.tail ? '只读 · 结尾' : '只读 · 开头')
-        : ed.truncated ? el('span', { className: 'tag' }, '已截断') : null,
-
-      /* 行级改动统计：跟行号栏的彩色竖条对应得上 */
-      ed.markState === 'ok' && (ed.markAdds || ed.markMods || ed.markDels)
-        ? el('span', {
-          className: 'tag gitmark',
-          title: '相对 HEAD 的行级改动（已暂存 + 未暂存合在一起）',
-        }, ['+' + ed.markAdds, '~' + ed.markMods, '−' + ed.markDels].join(' '))
-        : null,
-
-      /* 预览 / 编辑：只对 Markdown 与代码出现 */
-      canPreview && ed.state === 'ok' && !readonly
-        ? el('span', { className: 'ed-seg' },
-          el('button', {
-            type: 'button', className: 'mini-btn' + (view === 'preview' ? ' on' : ''),
-            title: kind === 'markdown' ? '渲染成文档' : '语法高亮只读',
-            onClick: () => setEditorView('preview'),
-          }, kind === 'markdown' ? '预览' : '高亮'),
-          el('button', {
-            type: 'button', className: 'mini-btn' + (view === 'edit' ? ' on' : ''),
-            title: '看原文并编辑',
-            onClick: () => setEditorView('edit'),
-          }, '编辑'),
-        )
-        : null,
-
-      ed.state === 'ok' && !media
-        ? el('button', {
-          type: 'button', className: 'mini-btn' + (dirty ? ' on' : ''),
-          disabled: readonly,
-          title: readonly ? '只读预览不能保存（会把文件截断写回）' : '保存到磁盘 (Ctrl+S)',
-          onClick: () => saveFile(),
-        }, ed.saving ? '保存中…' : '保存')
-        : null,
-      ed.state === 'ok' && media
-        ? el('button', { type: 'button', className: 'mini-btn on', onClick: () => openExternal(ed.path) }, '🚀 用系统程序打开')
-        : null,
-      el('button', { type: 'button', className: 'mini-btn', title: '重新载入', onClick: () => openFile(ed.path, project?.id) }, '重载'),
-    ),
-
-    /* 大文件：说清楚「你只看到一段」，并给出三条正当出路 */
-    readonly
-      ? el('div', { className: 'ed-note' },
-        el('span', { className: 'ed-note-txt' },
-          '文件 ' + fmtSize(ed.size) + '，超过编辑器上限 ' + limitSize + '，'
-          + (ed.tail ? '这里只显示结尾 ' : '这里只显示开头 ') + (previewSize || '一段')
-          + '（只读，改了也不会写回）。看全文请用系统程序。'),
-        el('div', { className: 'ed-note-acts' },
-          el('button', { type: 'button', className: 'mini-btn', onClick: () => openFile(ed.path, project?.id, { mode: 'head' }) }, '看开头'),
-          el('button', { type: 'button', className: 'mini-btn', onClick: () => openFile(ed.path, project?.id, { mode: 'tail' }) }, '看结尾'),
-          el('button', { type: 'button', className: 'mini-btn on', onClick: () => openExternal(ed.path) }, '🚀 用系统程序打开'),
-        ),
-      )
-      : null,
-
-    body,
-  )
 }
 
 /* ============================ 主区：终端 ============================ */
@@ -1738,6 +1510,92 @@ const CUSTOM_VIEWS = [
   { id: 'edit', label: '编辑' },
 ]
 
+/** 上一级目录（Windows / POSIX 都按最后一层截；盘符根保留成 C:） */
+function parentDirOf(p) {
+  const s = String(p || '')
+  const i = Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/'))
+  return i > 0 ? s.slice(0, i) : ''
+}
+
+/** 去掉扩展名的文件名，给「选文件后自动起名」用 */
+function fileStemOf(p) {
+  const s = String(p || '')
+  const i = Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/'))
+  return (i >= 0 ? s.slice(i + 1) : s).replace(/\.(html?|xhtml)$/i, '')
+}
+
+/** 目录列表里只留「目录 + 网页文件」：自定义窗口挑本地 html 用 */
+export function webRowsOf(rows) {
+  return (Array.isArray(rows) ? rows : []).filter((r) => r.dir || isHtmlFile(r.name))
+}
+
+/**
+ * 挑一个本地网页。为什么自己画：<input type=file> 只给文件名，不给绝对路径，
+ * 而宿主那边必须拿到绝对路径才能托管它（相对路径解析不了）。
+ */
+export function HtmlPick({ start, onPick, onClose }) {
+  const [dir, setDir] = useState('')
+  const [parent, setParent] = useState('')
+  const [rows, setRows] = useState([])
+  const [state, setState] = useState('idle')
+  const [err, setErr] = useState('')
+
+  const list = async (target) => {
+    const t = String(target || '').trim()
+    if (!t) { setState('empty'); return }
+    setState('loading')
+    setErr('')
+    try {
+      const data = await listMediaDir(t)
+      setDir(data.path || t)
+      setParent(data.parent || '')
+      setRows(webRowsOf(data.entries))
+      setState('ok')
+    } catch (e) {
+      setState('error')
+      setErr(String((e && e.message) || e))
+    }
+  }
+
+  useEffect(() => {
+    if (String(start || '').trim()) list(start)
+    else setState('empty')
+  }, [])
+
+  return el('div', { className: 'cu-pick' },
+    el('div', { className: 'mb-head' },
+      el('span', { className: 'mono mb-dir', title: dir || String(start || '') }, shortPath(dir || String(start || '') || '（先在上面填一个目录）', 44)),
+      el('button', {
+        type: 'button', className: 'mini-btn', title: '上一级',
+        disabled: parent ? undefined : 'disabled', onClick: () => list(parent),
+      }, '↑'),
+      el('button', { type: 'button', className: 'mini-btn', title: '重新列一遍', onClick: () => list(dir || start) }, '↻'),
+      el('button', { type: 'button', className: 'mini-btn', title: '收起', onClick: onClose }, '✕'),
+    ),
+    el('div', { className: 'mb-list' },
+      state === 'empty'
+        ? el('div', { className: 'th-empty' }, '先在上面填一个目录（默认是项目目录），再点「选文件」')
+        : state === 'error'
+          ? el('div', { className: 'th-empty' }, '列目录失败：' + err)
+          : state === 'loading'
+            ? el('div', { className: 'th-empty' }, '读取中…')
+            : rows.length
+              ? rows.slice(0, 200).map((r) => el('button', {
+                key: r.name,
+                type: 'button',
+                className: 'mb-row' + (r.dir ? ' dir' : ''),
+                title: r.dir ? '进入 ' + r.name : r.name,
+                onClick: () => (r.dir ? list(joinPath(dir, r.name)) : onPick(joinPath(dir, r.name))),
+              },
+                el('span', { className: 'mb-ico' }, r.dir ? '📁' : '🌐'),
+                el('span', { className: 'mb-name' }, r.name),
+                el('span', { className: 'mb-size mono' }, r.dir ? '' : fmtSize(r.size || 0)),
+              ))
+              : el('div', { className: 'th-empty' }, '这个目录里没有 .html / .htm 文件'),
+    ),
+  )
+}
+
 export function CustomPane({ project }) {
   useStore()
   const cu = store.custom
@@ -1745,6 +1603,7 @@ export function CustomPane({ project }) {
   const requirement = cu.requirement || ''
   const [targetPid, setTargetPid] = useState(project?.id || '')
   const [nonce, setNonce] = useState(0)
+  const [picking, setPicking] = useState(false)
 
   useEffect(() => {
     if (store.custom.state === 'idle') loadCustom()
@@ -1758,6 +1617,7 @@ export function CustomPane({ project }) {
   const targetProject = projects.find((p) => p.id === targetPid) || project || null
   const body = draft ? String(draft.body || '') : ''
   const isUrl = draft?.kind === 'url'
+  const isFile = draft?.kind === 'file'
   const isNew = !!draft && !draft.id
   const dirty = !!draft && !!cu.item && (draft.name !== cu.item.name || draft.body !== cu.item.body || draft.kind !== cu.item.kind)
 
@@ -1833,7 +1693,7 @@ export function CustomPane({ project }) {
     stage = el('div', { className: 'pane-empty' },
       el('span', { className: 'pe-ico' }, '❖'),
       el('p', null, '自定义窗口'),
-      el('p', { className: 'hint' }, '把常用的小工具做成工作台里的一个窗格。一句话描述让 AI 写，或者自己贴一段 HTML。内容存在本机 DSH 主目录，不写进项目仓库。'),
+      el('p', { className: 'hint' }, '把常用的小工具做成工作台里的一个窗格：一句话描述让 AI 写、自己贴一段 HTML，或者直接指向磁盘上的一个 .html 文件。内容存在本机 DSH 主目录，不写进项目仓库。'),
       el('div', { className: 'pe-actions' },
         el('button', { type: 'button', className: 'btn small', onClick: () => openNew('html') }, '✨ 新建一个'),
         el('button', { type: 'button', className: 'mini-btn', onClick: () => loadCustom() }, '⟳ 重新读取'),
@@ -1877,44 +1737,93 @@ export function CustomPane({ project }) {
   } else if (cu.view === 'preview') {
     stage = body
       ? el('div', { className: 'cu-preview' },
-        isUrl
+        isFile
           ? el('iframe', {
-            key: 'u' + nonce,
-            src: body,
+            key: 'f' + nonce + ':' + body,
+            src: htmlUrl(body),
             title: draft.name || '自定义窗口',
-            sandbox: 'allow-scripts allow-forms allow-popups allow-same-origin',
+            sandbox: 'allow-scripts allow-forms allow-modals allow-popups allow-downloads',
           })
-          : el('iframe', {
-            key: 'h' + nonce + ':' + body.length,
-            srcDoc: body,
-            title: draft.name || '自定义窗口',
-            sandbox: 'allow-scripts allow-forms allow-modals',
-          }),
+          : isUrl
+            ? el('iframe', {
+              key: 'u' + nonce,
+              src: body,
+              title: draft.name || '自定义窗口',
+              sandbox: 'allow-scripts allow-forms allow-popups allow-same-origin',
+            })
+            : el('iframe', {
+              key: 'h' + nonce + ':' + body.length,
+              srcDoc: body,
+              title: draft.name || '自定义窗口',
+              sandbox: 'allow-scripts allow-forms allow-modals',
+            }),
       )
       : el('div', { className: 'pane-empty' },
         el('span', { className: 'pe-ico' }, '◇'),
-        el('p', null, isUrl ? '还没填地址' : '还没有内容'),
-        el('p', { className: 'hint' }, isUrl ? '切到「编辑」填一个 http/https 地址。' : '切到「编辑」写点 HTML，或者用「生成」让 AI 来做。'),
+        el('p', null, isFile ? '还没选网页文件' : isUrl ? '还没填地址' : '还没有内容'),
+        el('p', { className: 'hint' },
+          isFile
+            ? '切到「编辑」点「选文件」，挑一个磁盘上的 .html。'
+            : isUrl
+              ? '切到「编辑」填一个 http/https 地址。'
+              : '切到「编辑」写点 HTML，或者用「生成」让 AI 来做。'),
       )
   } else {
-    stage = isUrl
+    stage = isFile
       ? el('div', { className: 'cu-urlbox' },
-        el('p', { className: 'cu-hint' }, '窗口内容就是这个网址（iframe 嵌入）。跨域页面若带 X-Frame-Options，同样会白屏 —— 可以先回「生成」页用浏览器窗格探测。'),
-        el('input', {
-          className: 'mono cu-url', value: body, spellCheck: false, placeholder: 'https://example.com/dashboard',
-          onChange: (e) => editCustom({ body: e.target.value }),
-        }),
+        el('p', { className: 'cu-hint' },
+          '填一个本地网页的绝对路径，或点「选文件」挑。预览时由 /asset 托管：同目录下的 css / js / 图片会一起加载。'),
+        el('div', { className: 'cu-filebar' },
+          el('input', {
+            className: 'mono cu-url', value: body, spellCheck: false,
+            placeholder: 'C:\\projects\\demo\\index.html',
+            onChange: (e) => editCustom({ body: e.target.value }),
+          }),
+          el('button', {
+            type: 'button', className: 'mini-btn' + (picking ? ' on' : ''),
+            title: '在本机挑一个 .html 文件',
+            onClick: () => setPicking((v) => !v),
+          }, '选文件…'),
+          el('button', {
+            type: 'button', className: 'mini-btn', disabled: !body, title: '刷新预览',
+            onClick: () => { setCustomView('preview'); setNonce((n) => n + 1) },
+          }, '预览'),
+        ),
+        picking
+          ? el(HtmlPick, {
+            start: body ? parentDirOf(body) : (workspaceDirOf(project) || ''),
+            onPick: (picked) => {
+              const patch = { body: picked }
+              if (!String(draft.name || '').trim()) patch.name = fileStemOf(picked)
+              editCustom(patch)
+              setPicking(false)
+              setCustomView('preview')
+              setNonce((n) => n + 1)
+            },
+            onClose: () => setPicking(false),
+          })
+          : null,
+        el('p', { className: 'cu-hint' },
+          '页面在沙箱里跑：脚本能正常执行，但拿不到插件接口的同源身份（localStorage 会被禁用）。'),
       )
-      : el('textarea', {
-        className: 'cu-code mono',
-        spellCheck: false,
-        value: body,
-        placeholder: '<!-- 一段自包含的 HTML：可以带 <style> / <script> -->',
-        onChange: (e) => editCustom({ body: e.target.value }),
-        onKeyDown: (e) => {
-          if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') { e.preventDefault(); saveCustom() }
-        },
-      })
+      : isUrl
+        ? el('div', { className: 'cu-urlbox' },
+          el('p', { className: 'cu-hint' }, '窗口内容就是这个网址（iframe 嵌入）。跨域页面若带 X-Frame-Options，同样会白屏 —— 可以先回「生成」页用浏览器窗格探测。'),
+          el('input', {
+            className: 'mono cu-url', value: body, spellCheck: false, placeholder: 'https://example.com/dashboard',
+            onChange: (e) => editCustom({ body: e.target.value }),
+          }),
+        )
+        : el('textarea', {
+          className: 'cu-code mono',
+          spellCheck: false,
+          value: body,
+          placeholder: '<!-- 一段自包含的 HTML：可以带 <style> / <script> -->',
+          onChange: (e) => editCustom({ body: e.target.value }),
+          onKeyDown: (e) => {
+            if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') { e.preventDefault(); saveCustom() }
+          },
+        })
   }
 
   return el('div', { className: 'pane-body cu-body' },
@@ -1932,7 +1841,7 @@ export function CustomPane({ project }) {
             title: it.id,
             onClick: () => { if (guardDirty()) { openCustom(it.id); setNonce((n) => n + 1) } },
           },
-            el('span', { className: 'cu-item-ico', 'aria-hidden': 'true' }, it.kind === 'url' ? '◍' : '❖'),
+            el('span', { className: 'cu-item-ico', 'aria-hidden': 'true' }, it.kind === 'url' ? '◍' : (it.kind === 'file' ? '❐' : '❖')),
             el('span', { className: 'cu-item-name' }, it.name),
           ))
           : el('p', { className: 'cu-empty' }, '还没有保存过'),
@@ -1940,6 +1849,11 @@ export function CustomPane({ project }) {
       el('div', { className: 'cu-side-foot' },
         el('button', { type: 'button', className: 'mini-btn', onClick: () => openNew('html', 'edit') }, '＋ 自己写'),
         el('button', { type: 'button', className: 'mini-btn', onClick: () => openNew('url', 'edit') }, '＋ 网址'),
+        el('button', {
+          type: 'button', className: 'mini-btn',
+          title: '指向磁盘上的一个 .html 文件（相对路径的 css / js / 图片会一起加载）',
+          onClick: () => openNew('file', 'edit'),
+        }, '＋ 网页文件'),
       ),
     ),
 
@@ -1979,7 +1893,10 @@ export function CustomPane({ project }) {
 
       el('div', { className: 'cu-foot' },
         cu.file ? el('span', { className: 'mono', title: cu.file }, '库：' + shortPath(cu.file, 46)) : null,
-        cu.item ? el('span', { className: 'mono' }, cu.item.id + ' · ' + (cu.item.kind === 'url' ? '网址' : 'HTML') + ' · ' + fmtSize(body.length)) : null,
+        cu.item
+          ? el('span', { className: 'mono', title: cu.item.body },
+            cu.item.id + ' · ' + (cu.item.kind === 'url' ? '网址' : (cu.item.kind === 'file' ? '网页文件' : 'HTML')) + ' · ' + fmtSize(body.length))
+          : null,
         cu.error ? el('span', { className: 'cu-err' }, cu.error) : null,
       ),
     ),
@@ -1988,7 +1905,7 @@ export function CustomPane({ project }) {
 
 /* ============================ 媒体（图片 / PDF / 音视频） ============================ */
 
-/** 按扩展名决定怎么渲染；不属于媒体就交给编辑器 */
+/** 按扩展名决定怎么渲染；不属于媒体就没有对应的标签 */
 function mediaTagOf(kind) {
   if (kind === 'image') return 'img'
   if (kind === 'pdf') return 'frame'
@@ -1999,12 +1916,10 @@ function mediaTagOf(kind) {
 
 export function MediaPane({ project }) {
   useStore()
-  const ed = store.editor
-  const edIsMedia = !!ed.path && isMediaKind(viewKindOf(ed.name))
   const pushed = store.media && store.media.pid === project.id ? store.media.path : ''
-  const startDir = pushed || (edIsMedia ? ed.path : '') || workspaceDirOf(project) || ''
-  const [path, setPath] = useState(pushed || (edIsMedia ? ed.path : ''))
-  const [draft, setDraft] = useState(pushed || (edIsMedia ? ed.path : ''))
+  const startDir = pushed || workspaceDirOf(project) || ''
+  const [path, setPath] = useState(pushed || '')
+  const [draft, setDraft] = useState(pushed || '')
   const [failed, setFailed] = useState('')
   const [tip, setTip] = useState('')
   /* 选择文件：本地（object URL，不上传不写盘）或项目里浏览 */
@@ -2130,9 +2045,6 @@ export function MediaPane({ project }) {
         title: '在项目目录里挑文件（能预览缩略图）',
         onClick: toggleBrowse,
       }, '浏览项目'),
-      edIsMedia
-        ? el('button', { type: 'button', className: 'mini-btn', title: '用编辑器当前打开的文件', onClick: () => open(ed.path) }, '取编辑器文件')
-        : null,
       path
         ? el('button', { type: 'button', className: 'mini-btn', title: '用系统程序打开', onClick: () => revealPath(path, { select: false }) }, '系统打开')
         : null,
@@ -2197,7 +2109,7 @@ export function MediaPane({ project }) {
         el('p', null, path ? '这个扩展名不支持内嵌预览' : '还没有选文件'),
         el('p', { className: 'hint' },
           path
-            ? '点「用编辑器打开」看文本/源码，或「系统打开」交给系统程序。'
+            ? '这个类型没有内嵌预览：点「系统打开」交给系统程序，或把 .html 交给自定义窗口。'
             : '三种选法：点「选择文件」从本机挑、点「浏览项目」在项目目录里挑、或直接粘绝对路径。也可以把文件拖进来。'),
         el('div', { className: 'pe-actions' },
           el('button', { type: 'button', className: 'btn small', onClick: () => { if (fileRef.current) fileRef.current.click() } }, '选择文件'),

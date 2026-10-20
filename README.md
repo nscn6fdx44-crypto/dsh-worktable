@@ -2,7 +2,7 @@
 
 A **DeepSeek Harness (DSH)** side-panel *worktable* plugin: turn your projects into a side-panel app drawer with a dockable split workspace — file browser, editor, real terminal, in-app browser, media viewer, notes, custom window, and full git/GitHub management — all inside DSH.
 
-> 中文说明见 [README.zh.md](README.zh.md) · 当前版本 **0.10.5**
+> 中文说明见 [README.zh.md](README.zh.md) · 当前版本 **0.10.6**
 
 Requires **DSH `0.2.0-rc.2` or `0.2.1-rc.2`** (Windows desktop).
 
@@ -17,19 +17,19 @@ The CLI lives at `<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd` — 
 **Option A — install straight from the release URL** (DSH downloads the asset itself):
 
 ```powershell
-& "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.5/trae-usage-worktable-0.10.5.tgz"
+& "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.6/trae-usage-worktable-0.10.6.tgz"
 ```
 
 **Option B — download the file and install it locally** (use this if GitHub is slow or blocked):
 
-1. Download `trae-usage-worktable-0.10.5.tgz` from the [v0.10.5 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.5) to any folder you like
-   (252.5 KB, sha256 `b66c7c2b6aa90f853e324c306a7e3d8061bc4c35ff4d9d3f71aa211f0886c963`)
+1. Download `trae-usage-worktable-0.10.6.tgz` from the [v0.10.6 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.6) to any folder you like
+   (248.4 KB, sha256 `7a2921e10311c0f18a6edcf5333fd7656eacfd57ac3e0b76adbc5acbaecaadeb`)
 2. In PowerShell — replace the path with wherever **you** saved it:
    ```powershell
-   & "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<full path to>\trae-usage-worktable-0.10.5.tgz"
+   & "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<full path to>\trae-usage-worktable-0.10.6.tgz"
    ```
 
-Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. Verify with `/api/trae-worktable/health` → `"version": "0.10.5"`.
+Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. Verify with `/api/trae-worktable/health` → `"version": "0.10.6"`.
 
 ## What's inside
 
@@ -51,8 +51,16 @@ Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. 
 - **Keyboard shortcuts**, per-project templates, and JSON import/export for your setup
 - **Drag to chat** — drop a file row or a browser URL on the top bar and it lands in the chat input as a ready-to-send block
 
-## Latest changes (0.8.48 → 0.10.5)
+## Latest changes (0.8.48 → 0.10.6)
 
+- **0.10.6** three UI changes. (1) The **editor pane is gone** — it duplicated the host editor and your OS default
+  program; files now route by type: images / PDF / audio / video → media pane, `.html` → a custom window, everything
+  else → the OS default program. Stale `editor` tabs from older versions are migrated away on load.
+  (2) **Project tabs scroll horizontally** — `‹ ›` arrows appear on overflow, the wheel scrolls sideways, switching to
+  an off-screen tab brings it back, and a thin scrollbar sits at the bottom.
+  (3) **Custom windows can hold a local HTML file** — new `kind:'file'` plus `GET /asset/<dir-token>/<rel>`, so css /
+  js / images next to it still load (which `srcDoc` cannot do). Only web-asset types are served, `../` is rejected,
+  and the page runs inside a CSP sandbox.
 - **0.10.5** the project name now **matches the session name shown in the sidebar**. That name is folded by the
   host from the *whole* event log (the `session/title` event sits at the very beginning), while we scanned only the
   last 400 events and read nothing at all for cold sessions — so we fell back to the working-directory name, and the

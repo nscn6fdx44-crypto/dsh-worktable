@@ -11,6 +11,7 @@
  *   文件系统       POST /fs/list     POST /fs/read      POST /fs/write
  *                  POST /fs/mkdir    POST /fs/rename    POST /fs/stat
  *                  GET  /fs/raw（图片 / PDF / 音视频原始字节，内嵌预览用）
+ *                  GET  /asset/<令牌>/<rel...>（prefix：托管本地网页，令牌是所在目录的 base64url）
  *                  POST /fs/reveal（系统文件管理器）      POST /fs/open（系统默认程序）
  *   命令           POST /term/exec（NDJSON 流）          POST /term/kill
  *   版本控制       POST /git（op = status/log/branches/tags/diff/stage/unstage/discard/
@@ -98,6 +99,16 @@ const MEDIA_EXTS = new Set([
   '.pdf',
   '.mp4', '.webm', '.ogv', '.mov',
   '.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac',
+])
+
+/* /asset 托管本地网页时放行的资源：只给「网页跑起来真正需要的东西」，
+   同目录下的 .txt / .md / .db 之类不会被这个路由顺带读走 */
+const ASSET_EXTS = new Set([
+  '.html', '.htm', '.xhtml',
+  '.css', '.js', '.mjs', '.json', '.map',
+  '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.avif',
+  '.woff', '.woff2', '.ttf', '.otf',
+  '.mp4', '.webm', '.ogv', '.mp3', '.wav', '.ogg', '.m4a',
 ])
 
 
@@ -415,6 +426,56 @@ export function apply(ctx) {
     const stream = createReadStream(target)
     stream.on('error', () => { try { res.destroy() } catch { /* 已断开 */ } })
     stream.pipe(res)
+  })})
+
+  /* 本地网页托管（0.10.6）：自定义窗口的 iframe 从这里加载磁盘上的 .html。
+     为什么不用 ?path= 的查询串：那样 <link href="style.css"> 会被解析到
+     /api/trae-worktable/style.css，全 404。这里把「文件所在目录」编成路径第一段
+     （base64url），后面的相对资源自然落在同一目录，用户文件一个字都不用改。 */
+  register({ kind: 'prefix', path: BASE + '/asset', handler: guard(async (req, res) => {
+    if (!allowMethod(req, res, 'GET')) return
+    const url = new URL(req.url ?? '/', 'http://dsh.internal')
+    const rest = url.pathname.slice((BASE + '/asset').length).replace(/^\/+/, '')
+    if (!rest) return sendJson(res, 400, { error: '缺少目录令牌', code: 'no-token' })
+    const slash = rest.indexOf('/')
+    const token = slash === -1 ? rest : rest.slice(0, slash)
+    const dir = Buffer.from(String(token).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')
+    if (!dir || !isAbsolute(dir)) return sendJson(res, 400, { error: '目录令牌无效', code: 'bad-token' })
+    let rel = ''
+    try {
+      rel = slash === -1 ? '' : decodeURIComponent(rest.slice(slash + 1))
+    } catch {
+      return sendJson(res, 400, { error: '资源名编码不对', code: 'bad-uri' })
+    }
+    const base = resolve(dir)
+    const joined = resolve(base, rel || 'index.html')
+    if (!insideRoot(joined, [base])) {
+      return sendJson(res, 403, { error: '路径越界：只能读这个网页所在目录里的资源', code: 'outside' })
+    }
+    const ext = extname(joined).toLowerCase()
+    if (!ASSET_EXTS.has(ext)) {
+      return sendJson(res, 415, {
+        error: '这个类型不给网页加载（' + ext + '）', code: 'not-asset', ext, allow: [...ASSET_EXTS],
+      })
+    }
+    const target = await assertExisting(joined, 'file')
+    const st = statSync(target)
+    if (st.size > MAX_RAW_BYTES) {
+      return sendJson(res, 413, {
+        error: '文件过大（' + fmtBytes(st.size) + '），上限 ' + fmtBytes(MAX_RAW_BYTES),
+        code: 'too-large', size: st.size, limit: MAX_RAW_BYTES,
+      })
+    }
+    res.writeHead(200, {
+      'content-type': mimeOf(target),
+      'content-length': st.size,
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      /* 页面本身按「沙箱」下发：脚本照跑，但拿不到同源身份 ——
+         它没法 fetch 插件的 /api，也就没法反过来改你的文件。 */
+      'content-security-policy': 'sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads',
+    })
+    createReadStream(target).on('error', () => { try { res.destroy() } catch { /* 已断开 */ } }).pipe(res)
   })})
 
   /* 用系统文件管理器打开（Windows 资源管理器 / macOS Finder / Linux 默认）。
@@ -1643,12 +1704,18 @@ function normalizeCustomItem(raw) {
   const src = raw && typeof raw === 'object' ? raw : {}
   const id = String(src.id || '').trim()
   if (!CUSTOM_ID_RE.test(id)) return null
-  const kind = src.kind === 'url' ? 'url' : 'html'
+  /* html＝手写 / 贴进来的 HTML；url＝嵌一个网址；file＝指向磁盘上一个 .html 文件 */
+  const kind = src.kind === 'url' ? 'url' : (src.kind === 'file' ? 'file' : 'html')
   let body = String(src.body ?? '')
   if (kind === 'url') {
     const u = normUrl(body)
     if (!u) return null
     body = u.href
+  }
+  if (kind === 'file') {
+    /* 只存绝对路径：相对路径在这里没法解析，文件也可能还没生成（存的时候不 stat） */
+    body = body.trim()
+    if (!isAbsolute(body) || !/\.(html?|xhtml)$/i.test(body)) return null
   }
   if (body.length > MAX_CUSTOM_BODY) body = body.slice(0, MAX_CUSTOM_BODY)
   const name = String(src.name || '').trim().slice(0, 60) || '未命名窗口'

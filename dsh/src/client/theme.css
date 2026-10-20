@@ -567,8 +567,24 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 
 /* 标签页 */
 .wt-scope .tabhead { gap: 6px; padding: 4px 6px; }
-.wt-scope .tabs { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; overflow-x: auto; }
-.wt-scope .tabs::-webkit-scrollbar { height: 0; }
+.wt-scope .tabs {
+  display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0;
+  overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
+  /* 能不能左右滑要看得出来：留一条 3px 的细横条，不撑高标题栏 */
+  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.16) transparent;
+}
+.wt-scope .tabs::-webkit-scrollbar { height: 3px; }
+.wt-scope .tabs::-webkit-scrollbar-thumb { background: rgba(255,255,255,.16); border-radius: 3px; }
+.wt-scope .tabs::-webkit-scrollbar-track { background: transparent; }
+.wt-scope .tab-scroll {
+  flex: none; width: 18px; height: 20px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line-strong); border-radius: 6px;
+  background: rgba(255,255,255,.04); color: var(--txt-dim);
+  font-size: 13px; line-height: 1; cursor: pointer;
+}
+.wt-scope .tab-scroll:hover:not(:disabled) { color: rgb(var(--amber-ink-rgb)); border-color: rgba(var(--amber-rgb),.4); }
+.wt-scope .tab-scroll:disabled { opacity: .3; cursor: default; }
 .wt-scope .tab {
   display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 7px;
   border: 1px solid transparent; cursor: pointer; white-space: nowrap; max-width: 180px;
@@ -831,6 +847,12 @@ body.wt-dragging { cursor: col-resize !important; user-select: none !important; 
 .wt-scope .cu-code:focus { border-color: rgba(var(--amber-rgb),.36); }
 .wt-scope .cu-urlbox { flex: none; display: flex; flex-direction: column; gap: 6px; }
 .wt-scope .cu-url { width: 100%; box-sizing: border-box; padding: 6px 9px; border-radius: 8px; border: 1px solid var(--line); background: rgba(0,0,0,.3); color: var(--txt); font-size: 11.5px; outline: 0; }
+/* 本地网页：路径 + 选文件 + 预览 一行放不下就换行 */
+.wt-scope .cu-filebar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wt-scope .cu-filebar .cu-url { flex: 1 1 240px; width: auto; }
+.wt-scope .cu-pick { margin-top: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: rgba(0,0,0,.22); overflow: hidden; }
+.wt-scope .cu-pick .mb-head { padding: 5px 7px; }
+.wt-scope .cu-pick .mb-list { max-height: 220px; overflow-y: auto; }
 
 .wt-scope .cu-foot { flex: none; display: flex; gap: 10px; align-items: center; font-size: 9px; color: var(--txt-mute); white-space: nowrap; overflow: hidden; }
 .wt-scope .cu-foot > span { overflow: hidden; text-overflow: ellipsis; }

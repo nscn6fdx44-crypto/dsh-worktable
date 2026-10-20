@@ -1,6 +1,6 @@
 # 交接文档 · trae-usage-worktable（工作台）
 
-> 生成时间：2026-10-19 · 版本 **0.10.4** · 分支 `dsh-plugin`（远端默认分支）
+> 生成时间：2026-10-20 · 版本 **0.10.6** · 分支 `dsh-plugin`（远端默认分支）
 > 用途：换会话/换人接手时，靠这一份 + 仓库本身恢复全部上下文。README 讲“是什么”，这份讲“现在到哪了、怎么继续”。
 
 ---
@@ -11,13 +11,13 @@
 | --- | --- |
 | 仓库目录 | `C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh`（git 顶层是上一级 `2026-10-16-23-21-22`，插件在 `dsh/` 子目录） |
 | 远端 | `https://github.com/nscn6fdx44-crypto/dsh-worktable.git` |
-| 分支 / 最近提交 | `dsh-plugin` / 0.10.5：`fix(0.10.5): 项目名跟会话名不一致（落成 default-workspace）`（`30e0986`） |
-| 版本 | `package.json` = `dsh.plugin.json` = **0.10.5** |
+| 分支 / 最近提交 | `dsh-plugin` / 0.10.6：`feat(0.10.6): 下架编辑器窗格 / 标签条左右滑 / 自定义窗口放本地 html`（见 `git log -1`） |
+| 版本 | `package.json` = `dsh.plugin.json` = **0.10.6** |
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
-| 运行中的实例 | 客户端会热更，但 **host 路由必须完整重启 DSH** 才生效（`/gh/status`、`op:uninit` 在旧实例上会 401/404） |
-| 自测基线 | host **176** + client **599** 全通过（`npm test`） |
-| tag | 0.10.0 / 0.10.1 / 0.10.2 / 0.10.3 / 0.10.4 / `v0.10.5` **全部已打并推送**（0.10.5 指向 `30e0986`） |
-| Release | 0.10.0（417235810）、0.10.1（417246640）、0.10.2（417267258）、0.10.3（417344262）、0.10.4（417364793）、0.10.5（417385825）都已发布；0.10.5 附件 258532 字节 sha256 `b66c7c2b…6c963`，下载回本地逐字节校验一致 |
+| 运行中的实例 | 客户端会热更，但 **host 路由必须完整重启 DSH** 才生效（`/asset`、`/gh/status`、`op:uninit` 在旧实例上会 401/404） |
+| 自测基线 | host **188** + client **585** 全通过（`npm test`） |
+| tag | 0.10.0 / 0.10.1 / 0.10.2 / 0.10.3 / 0.10.4 / 0.10.5 / `v0.10.6` **全部已打并推送** |
+| Release | 0.10.0（417235810）、0.10.1（417246640）、0.10.2（417267258）、0.10.3（417344262）、0.10.4（417364793）、0.10.5（417385825）、0.10.6（见 Release 列表）都已发布；0.10.6 附件 **254354 字节 / 248.4 KB**、sha256 `7a2921e10311c0f18a6edcf5333fd7656eacfd57ac3e0b76adbc5acbaecaadeb`，下载回本地逐字节校验一致 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
 
 ---
@@ -27,14 +27,14 @@
 ```powershell
 cd C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh
 git pull --ff-only            # 可能有别的会话也在改同一个仓库（见 §11）
-npm run build && npm test     # 基线必须 171 / 595 全绿，否则先别改
+npm run build && npm test     # 基线必须 188 / 585 全绿，否则先别改
 ```
 
 要读的三处（按顺序，读这三处就能接上）：
 
-1. `src/client/core.js`（约 2860 行）—— 唯一的状态源（store / 所有动作 / 路由调用）
+1. `src/client/core.js`（约 3600 行）—— 唯一的状态源（store / 所有动作 / 路由调用）
 2. `src/client/overlay.js` + `src/client/hostdock.js` —— 主区渲染 + **让位机制**（最容易被改坏的部位）
-3. `test/client-smoke.mjs` —— 595 条断言就是行为规格书
+3. `test/client-smoke.mjs` —— 585 条断言就是行为规格书
 
 ---
 
@@ -96,18 +96,18 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 
 | 文件 | 行数 | 职责 |
 | --- | --- | --- |
-| `src/index.js` | ~1970 | host 半侧：全部 `/api/trae-worktable/*` 路由（fs / term / git / site / web / custom / transcript / session） |
-| `src/client/core.js` | ~2860 | 状态与应用层：store、项目增删改、标签页、**布局预设**、主题、产物、模板、导入导出、入驻注册表、快捷键、运行配置、媒体目录 |
+| `src/index.js` | ~2280 | host 半侧：全部 `/api/trae-worktable/*` 路由（fs / asset / term / git / site / web / custom / transcript / session） |
+| `src/client/core.js` | ~3600 | 状态与应用层：store、项目增删改、标签页、**布局预设**、主题、产物、模板、导入导出、入驻注册表、快捷键、运行配置、媒体目录 |
 | `src/client/hostdock.js` | ~340 | **让位机制**：找宿主 `centerCol`、给会话列写 `marginLeft`、测量几何、`pickDock` / `undockedBox` / `dockAspect` |
-| `src/client/overlay.js` | ~608 | 主区：`MainView`（几何 + 降级）、`Overview`（总览三页签）、`Workspace`（项目工作区）、`Panes`/`PaneSplit`（多窗格）、`PaneBoundary`（错误边界） |
-| `src/client/panes.js` | ~1540 | 各个窗格：Info / Files / Editor / Term / Web / Custom / **Media** / **Notes** |
-| `src/client/sidebar.js` | ~239 | 侧边栏卡片：状态框、项目列表、拖拽、入驻分组、`sideModeOf` 自适应 |
-| `src/client/modals.js` | ~610 | 小窗：新建/编辑/绑定（含模板、运行配置）、主题、⌘K 搜索、数据导入导出、并排选择 |
+| `src/client/overlay.js` | ~807 | 主区：`MainView`（几何 + 降级）、`Overview`（总览三页签）、`Workspace`（项目工作区）、`Panes`/`PaneSplit`（多窗格）、`PaneBoundary`（错误边界）、**标签条横滑** |
+| `src/client/panes.js` | ~2190 | 各个窗格：Info / Files / Term / Web / Custom（含 `HtmlPick` 挑本地网页）/ **Media** / **Notes** |
+| `src/client/sidebar.js` | ~254 | 侧边栏卡片：状态框、项目列表、拖拽、入驻分组、`sideModeOf` 自适应 |
+| `src/client/modals.js` | ~1059 | 小窗：新建/编辑/绑定（含模板、运行配置）、主题、⌘K 搜索、数据导入导出、并排选择 |
 | `src/client/ui.js` | ~197 | 基础件：`el`、`Icon`、`Light`、`Splitter`、`ContextMenu`、`Toasts` |
 | `src/client/render.js` | ~464 | 纯函数：`viewKindOf`、Markdown 渲染、代码高亮、格式化 |
-| `src/client/theme.css` | ~1342 | 全部样式（`.wt-scope` 作用域，CSS 变量控制主题） |
-| `test/client-smoke.mjs` | ~1884 | 客户端离线自测：stub React / document / fetch，**595 条断言** |
-| `test/host-routes.mjs` | ~626 | host 路由自测：fake webServer / sessionController，**171 条断言** |
+| `src/client/theme.css` | ~1577 | 全部样式（`.wt-scope` 作用域，CSS 变量控制主题） |
+| `test/client-smoke.mjs` | ~2298 | 客户端离线自测：stub React / document / fetch，**585 条断言** |
+| `test/host-routes.mjs` | ~855 | host 路由自测：fake webServer / sessionController，**188 条断言** |
 
 ---
 
@@ -121,6 +121,7 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 | POST | `/transcript` | 会话事件（**注意**：用 `{sessionId}` 字段；这条没包 `guard()`，见 §8） |
 | POST | `/fs/list` `/fs/read` `/fs/write` `/fs/mkdir` `/fs/rename` `/fs/delete` `/fs/stat` `/fs/deletable` `/fs/reveal` `/fs/open` | 文件系统 |
 | GET | `/fs/raw?path=` | 媒体字节（白名单：png/jpg/gif/webp/bmp/ico/avif/svg/pdf/mp4/webm/ogv/mov/mp3/wav/ogg/m4a/flac/aac） |
+| GET | `/asset/<令牌>/<rel>` | **本地网页托管**（0.10.6，prefix）：令牌 = 文件所在目录的 base64url，`rel` 为相对路径。只放行网页资源扩展名（其它 415 `not-asset`）、`../` 越界 403、HTML 响应带 `CSP: sandbox allow-scripts …`；单文件 48 MB 上限 |
 | POST | `/term/exec`（NDJSON 流）`/term/kill` | 终端 |
 | POST | `/git` | 只读 status/log/branches |
 | POST | `/project/register` | `{id, root}` 登记项目根（供 `/site` 托管） |
@@ -201,8 +202,8 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
    （来源 git-credential）→ 「克隆」能列出仓库 → 总览「⑂ 克隆」填 owner/repo 能实时刷进度。
    **再验一条 0.10.1 的**：分支视图底部危险区 → 点「删除 .git（取消初始化）」→ 按钮应变成
    「再点一次确认删除 .git」→ 再点 → 面板变回「还不是 git 仓库」，项目文件一个没少。
-   **再看一眼 0.10.2 的行号栏**：编辑视图左边应有行号；改一行字 → 该行竖条变琥珀色、标题栏
-   `+0 ~1 −0`；在中间插一行 → 只有新行是绿色；把某段整段删掉 → 留下一条红色短线。
+   ~~**再看一眼 0.10.2 的行号栏**~~（**0.10.6 随编辑器窗格下架，此验收作废**，接口与断言保留：
+   编辑视图左边应有行号；改一行字 → 该行竖条变琥珀色、标题栏 `+0 ~1 −0`）。
    **再验 0.10.3 的目录浏览**：总览「⑂ 克隆」→「克隆到」右边点「浏览…」→ 面板应从当前路径开始、
    只列文件夹 → 点一个子目录进去 → `↑` 能回上级 → 点「用这个目录」后输入框变成那个路径、面板收起；
    再翻到一个**不在工作目录 / home 下**的位置（比如 `D:\` 根）→ 应亮红「不在可写白名单内」且
@@ -216,6 +217,15 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
    `default-workspace`；总览「◉ 宿主会话」里同名行也应显示真名。若仍显示 `default-workspace`，
    先看 `GET /api/trae-worktable/sessions` 返回行上的 `titled` 是不是 `true`、`title` 是不是真名
    （`titled:false` 就是没拿到标题，看宿主 `readTitleSnapshots` 是否可用）。
+   **再验 0.10.6 的三件事**（host + client 都动了，必须**完整退出 DSH 再重开**）：
+   ① 进项目 → 标签页里**不该再有「编辑器」**（老库里存下的 `editor` 标签会自愈消失）；文件管理器双击
+   `README.md` → 应弹**系统默认程序**而不是工作台内部编辑；双击 `index.html` → 应落进「自定义」窗格并
+   渲染出页面（同目录 css / js / 图片都在）。
+   ② 标签条开到溢出 → 两端出 `‹` `›` 箭头、鼠标滚轮直接在标签条上横向滚动、点被挤到外面的标签会自动
+   滚回来。
+   ③ 自定义窗格 → 左栏 `＋ 网页文件` 或编辑态「选文件…」→ 挑一个本地 `.html` → 预览应真实渲染；
+   若一片空白，先看 Network 里 `/api/trae-worktable/asset/<令牌>/...` 的状态码（415 = 扩展名不在白名单，
+   403 = 路径越界，404 = 文件不在了）。
    **未验证项**：`/gh/upload`（会真的在你账号下建仓库，第一次用请自己确认仓库名与可见性）。
 1. ~~0.9.0 真机验收~~：重启 DSH 后看终端工具条 `PTY` 徽标是否点亮 →
    `python` 进 REPL 能交互 → `Ctrl+C` 退 REPL 但 shell 还在 → 切标签页再切回输出还在 →
@@ -224,7 +234,7 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 
 1. ~~**打 tag + 补 Release 资产**~~ —— **0.8.52 / 0.8.53 / 0.9.0 / 0.10.x 都已发**：
    tag 已推、Release 已建、附件已传并下载回来校验 sha256 一致；首页 `README.md` / `README.zh.md` /
-   `INSTALL.md` 与 `dsh/README.md` 已同步到 0.10.5（安装指向新 Release）；
+   `INSTALL.md` 与 `dsh/README.md` 已同步到 0.10.6（安装指向新 Release）；
 2. **旧功能真机验收（可延后）**：0.8.48 → 0.8.52 是一族（侧边栏 / 让位），0.8.53 是拖到会话；
    重点两条：① 展开宿主侧边栏后工作台的关闭键点得动；② 文件/网页拖到顶栏后输入框里出现【文件】/【网页】块；
 3. **媒体窗确认**：三种选法各试一次（选择文件 / 浏览项目 / 拖入）；
@@ -287,3 +297,40 @@ cd $repo; npm run build; npm test
 - **只填输入框、不自动发送**（`fillHostInput`），由用户回车；
 - 拖拽经过顶栏时有 `.drop-hover` 高亮 + 「松手 → 填进输入框」提示；
 - 纯函数都能单测：`fileUrlOf` / `chatTextForFile` / `chatTextForUrl` / `readChatDrop`（self-test 新增 12 条）。
+
+---
+
+## 13. 0.10.6 的三处改动（实现要点，改之前先读）
+
+### ① 编辑器窗格下架
+
+- `PANE_TABS` 里删掉 `{ id:'editor' }`，`store.editor` 整片删除，`EditorPane` / `previewCache` / `highlightCode`
+  调用点一并删；文件改为**按类型分流**（`core.js` 的 `openFile`）：
+  媒体 → 媒体窗、`.html/.htm/.xhtml` → 自定义窗格、其余 → `/fs/open` 交系统默认程序。
+- **老数据自愈**：`stripRetiredTabs(ui)` 在 `hydrate()` 里跑一遍，把 `RETIRED_TAB_KINDS`（当前只有 `editor`）
+  的标签摘掉、把 `activeTab` 让给还活着的标签、必要时重排 `layout` 的槽位；有变化才回写 localStorage。
+- 已经不在的窗格类型不会白屏：`overlay.js` 的 `renderPane` 末尾是兜底页「这个窗口已经不在了」。
+
+### ② 标签条横滑（`overlay.js` · `MainPane`）
+
+- `.tabs` 挂 `ref` + `onScroll={syncEdge}`，两端各一个 `.tab-scroll` 按钮（`‹` `›`，由 `edge` 状态决定 `disabled`）。
+- **坑：React 的 `onWheel` 是被动的**，`preventDefault()` 会被忽略并告警。必须
+  `box.addEventListener('wheel', fn, { passive:false })` 手动挂，卸载时解绑；
+  `Math.abs(deltaX) > Math.abs(deltaY)` 时放行（那本来就是横向滚动）。
+- **另一个坑：别给 `.tabs` 加 `scroll-behavior: smooth`** —— 滚轮一格一格地滚会变得发黏。
+  用 `overscroll-behavior-x: contain` 防止滚到底后带动外层。
+
+### ③ 自定义窗口放本地网页（`kind:'file'` + `GET /asset/<令牌>/<rel>`）
+
+- 为什么不能直接用 `srcDoc`：它**没有基地址**，`<link href="app.css">`、`<img src="a.png">` 全部解析失败。
+  解法是把**目录**编进 URL 首段（`b64url(dir)`），让 iframe 的文档地址变成 `/asset/<tok>/index.html`，
+  同目录资源自然解析到 `/asset/<tok>/...` —— **用户文件零改动**。
+- `core.js`：`b64url` / `htmlUrl(p)` / `isHtmlFile(p)` / `openHtmlWindow(path, pid)`；
+  `newCustomDraft('file')` 第三种草稿；`saveCustom` 校验「绝对路径 + html 扩展名」，没起名字就用文件主干名。
+- `panes.js`：`CustomPane` 预览分支三态（`file → htmlUrl` iframe / `url` / `srcDoc`），编辑态多一条
+  `.cu-filebar`（路径框 + `选文件…` + `预览`），`HtmlPick` 只列目录与网页文件（`webRowsOf` 纯函数，可单测）。
+- `index.js`：`ASSET_EXTS` 白名单 + `/asset` prefix 路由（`resolve` 后 `insideRoot` 挡 `../`、
+  415 挡非资源、48 MB 上限、`mimeOf` 定 Content-Type）。
+- **安全模型**：HTML 带 `CSP: sandbox allow-scripts allow-forms …`，iframe 也**不给 `allow-same-origin`** ——
+  脚本能跑，但拿不到插件同源身份（localStorage 被禁、无法反调 `/fs/write`）。这是刻意的减法，别随手放开。
+
