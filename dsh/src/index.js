@@ -473,7 +473,9 @@ export function apply(ctx) {
       'x-content-type-options': 'nosniff',
       /* 页面本身按「沙箱」下发：脚本照跑，但拿不到同源身份 ——
          它没法 fetch 插件的 /api，也就没法反过来改你的文件。 */
-      'content-security-policy': 'sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads',
+      /* 不给 allow-modals：页面里的 alert / confirm 会变成 Electron 的窗口模态框，
+         在 iframe 场景下经常「框在那儿点不动」，把整个界面卡住（0.10.7 用户报的弹窗）。 */
+      'content-security-policy': 'sandbox allow-scripts allow-forms allow-popups allow-downloads',
     })
     createReadStream(target).on('error', () => { try { res.destroy() } catch { /* 已断开 */ } }).pipe(res)
   })})

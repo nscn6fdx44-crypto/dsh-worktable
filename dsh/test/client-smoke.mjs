@@ -879,6 +879,7 @@ overlay = render(overlayComp)
 const cuFrame = iframeOf(overlay)
 check('预览用 srcDoc 渲染草稿', !!cuFrame && String(cuFrame.props.srcDoc).includes('<h2>自定义窗口</h2>'))
 check('预览沙箱不给 allow-same-origin', !!cuFrame && !/allow-same-origin/.test(String(cuFrame.props.sandbox)), cuFrame && cuFrame.props.sandbox)
+check('预览沙箱不给 allow-modals（页面 alert 会卡住整个界面）', !!cuFrame && !/allow-modals/.test(String(cuFrame.props.sandbox)), cuFrame && cuFrame.props.sandbox)
 
 clickByLabel(overlay, '删除')
 await new Promise((r) => setTimeout(r, 20))

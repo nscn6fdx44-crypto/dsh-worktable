@@ -670,7 +670,8 @@ function MainPane({ project, ui, nest, slot = 0 }) {
     if (!dt) return false
     const types = dt.types ? Array.prototype.slice.call(dt.types) : []
     if (types.indexOf('Files') >= 0) return true
-    return types.indexOf('text/uri-list') >= 0 && !!dt.files && dt.files.length > 0
+    if (types.indexOf('text/uri-list') >= 0) return true
+    return !types.length && !!dt.files && dt.files.length > 0
   }
 
   /* 没被具体窗格接住的系统文件，就地吃掉：宿主自己也给整窗挂了 drop 处理器，

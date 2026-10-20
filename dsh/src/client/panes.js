@@ -1683,7 +1683,9 @@ export function CustomPane({ project }) {
     const types = dt.types ? Array.prototype.slice.call(dt.types) : []
     if (types.indexOf(FILE_DRAG) >= 0) return true
     if (types.indexOf('Files') >= 0) return true
-    return types.indexOf('text/uri-list') >= 0 && !!dt.files && dt.files.length > 0
+    /* 资源管理器拖进来通常就是 uri-list；dragover 阶段 files 还是空的，别拿它当条件 */
+    if (types.indexOf('text/uri-list') >= 0) return true
+    return !types.length && !!dt.files && dt.files.length > 0
   }
 
   const onDragOver = (e) => {
@@ -1798,7 +1800,9 @@ export function CustomPane({ project }) {
             key: 'f' + nonce + ':' + body,
             src: htmlUrl(body),
             title: draft.name || '自定义窗口',
-            sandbox: 'allow-scripts allow-forms allow-modals allow-popups allow-downloads',
+            /* 不给 allow-modals：页面里的 alert / confirm 会变成 Electron 的窗口模态框，
+               iframe 场景下常常「框在那儿点不动」，把整个界面卡住 */
+            sandbox: 'allow-scripts allow-forms allow-popups allow-downloads',
           })
           : isUrl
             ? el('iframe', {
@@ -1811,7 +1815,7 @@ export function CustomPane({ project }) {
               key: 'h' + nonce + ':' + body.length,
               srcDoc: body,
               title: draft.name || '自定义窗口',
-              sandbox: 'allow-scripts allow-forms allow-modals',
+              sandbox: 'allow-scripts allow-forms',
             }),
       )
       : el('div', { className: 'pane-empty' },

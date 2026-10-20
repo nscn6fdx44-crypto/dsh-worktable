@@ -577,6 +577,8 @@ check('/asset 直出本地 html', assetHtml.status === 200 && assetHtml.body.inc
 check('/asset html mime 正确', String(assetHtml.headers['content-type']).includes('text/html'), assetHtml.headers['content-type'])
 check('/asset 用 CSP 沙箱下发页面（脚本跑、不给同源身份）',
   String(assetHtml.headers['content-security-policy'] || '').includes('sandbox'), assetHtml.headers['content-security-policy'])
+check('/asset 的 CSP 不放 allow-modals（页面 alert 会变成卡住的模态框）',
+  !String(assetHtml.headers['content-security-policy'] || '').includes('allow-modals'), assetHtml.headers['content-security-policy'])
 const assetCss = await getAsset(BASE + '/asset/' + assetTok + '/app.css')
 check('/asset 同目录 css 也能取到（相对路径靠同一段令牌）', assetCss.status === 200 && assetCss.body.includes('color:red'), assetCss.status)
 check('/asset css mime 正确', String(assetCss.headers['content-type']).includes('text/css'), assetCss.headers['content-type'])
