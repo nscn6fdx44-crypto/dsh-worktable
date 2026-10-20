@@ -1,6 +1,6 @@
 # 交接文档 · trae-usage-worktable（工作台）
 
-> 生成时间：2026-10-20 · 版本 **0.10.11** · 分支 `dsh-plugin`（远端默认分支）
+> 生成时间：2026-10-20 · 版本 **0.10.12** · 分支 `dsh-plugin`（远端默认分支）
 > 用途：换会话/换人接手时，靠这一份 + 仓库本身恢复全部上下文。README 讲“是什么”，这份讲“现在到哪了、怎么继续”。
 
 ---
@@ -430,23 +430,14 @@ cd $repo; npm run build; npm test
 自测：client **643**（+9）、host **189**。
 ---
 
-## 18. 0.10.10：编辑器改为「文件管理器右侧面板」
+## 20. 0.10.12：编辑器回退为独立窗格（撤销 0.10.10 / 0.10.11）
 
-需求：编辑器不要做成标签页，**在文件管理器右侧弹出**。
+用 `git revert` 撤掉了两个「把编辑器挪走」的提交（`55d1568` 0.10.10、`d7f4659` 0.10.11）：
 
-- `PANE_TABS` 去掉 `editor`；`RETIRED_TAB_KINDS` 恢复为 `['editor']`（老版本存下的 editor 标签页自动清掉）；
-- `FilesPane` 里新增 `EditorDock`：绝对定位在面板右侧（`.fx-editor-dock`），默认宽 420px，
-  左边缘 `.fx-editor-grip` 可拖动调宽（280 ~ 面板宽-240，双击复位 420）；内容直接复用 `EditorPane`；
-- `openFile()`：文本 / 代码 / Markdown → 打开/切到**文件管理器**标签页 + 在右侧面板打开该文件；媒体 → 媒体窗；`.html` → 自定义窗口；
-- 面板自己的 `✕` 关掉即清空（`closeEditor`），文件管理器列表保持原样。
+- 编辑器回到 `PANE_TABS`（`◆ 编辑器` 标签页），`RETIRED_TAB_KINDS` 清空，不再清理 editor 标签页；
+- 删掉 `EditorDock`、`.ws-editor-dock`、`.fx-editor-dock`、`wt.editorW` / `editorDockWidth()` / `setEditorDockWidth()`；
+- `openFile()`：文本/代码/Markdown → **开 editor 标签页**（媒体→媒体窗、.html→自定义，不变）；
+- 0.10.9 的两处稳定性修复**保留**：`resetPaneState()`（关窗格回初始态）、`closeWorkbench()`（关工作台彻底 + `forceClearHostMargin()`）。
 
-自测：client **644**、host **189**（测试桩 `expand` 深度从 26 提到 46，否则深层断言会被截断误报）。
----
-
-## 19. 0.10.11：编辑器停靠在**工作台右侧**（最终形态）
-
-- 位置：工作台 `.ws` 的**第一个子节点**——`<div class="ws-editor-dock">`，与左侧标签页并排，不是标签页、也不在文件管理器内部；
-- 宽度：默认 460px，左边缘 `.ws-editor-grip` 拖动调宽（280 ~ 1200，双击复位），存 `wt.editorW`；
-- 触发：文件管理器双击 / 编辑器空态填路径 / 拖文件进窗格 → `openTextFile()` → 右侧滑出；
-- 关闭：停靠栏 `✕`（有未保存改动先 confirm）；
-- `PANE_TABS` 无 editor；`RETIRED_TAB_KINDS=['editor']` 自动清理老标签页。
+教训：编辑器「在哪儿」被来回改了三次（独立窗格 → 文件管理器右侧 → 工作台右侧 → 又回独立窗格）。
+以后这类位置改动先确认一次再动手，避免反复返工与版本号空转。

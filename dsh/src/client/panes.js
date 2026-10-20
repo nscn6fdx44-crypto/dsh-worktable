@@ -2005,39 +2005,6 @@ export function CustomPane({ project }) {
 
 
 
-/* ============================ 文件管理器右侧的编辑器面板 ============================ */
-
-/** 工作台右侧的编辑器停靠栏：宽度可拖（280 ~ 1200），宽度记在 wt.editorW */
-export function EditorDock({ project }) {
-  useStore()
-  const width = store.editorDockW || 460
-  const drag = useRef(null)
-  const down = (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    drag.current = { sx: e.clientX, sw: width }
-    const move = (ev) => {
-      if (!drag.current) return
-      const next = drag.current.sw + (drag.current.sx - ev.clientX)
-      setEditorDockWidth(next)
-    }
-    const up = () => {
-      drag.current = null
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-    }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-  }
-  return el('div', { className: 'ws-editor-dock', style: { width: width + 'px' } },
-    el('div', {
-      className: 'ws-editor-grip', title: '拖动调整编辑器宽度（双击复位 460）', role: 'separator',
-      onPointerDown: down, onDoubleClick: () => setEditorDockWidth(460),
-    }, el('i', null)),
-    el(EditorPane, { project }),
-  )
-}
-
 /* ============================ 编辑器窗格（0.10.9 完整回归） ============================ */
 
 export function EditorPane({ project }) {

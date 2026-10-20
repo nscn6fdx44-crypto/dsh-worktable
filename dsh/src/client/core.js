@@ -29,7 +29,6 @@ const LS = {
   theme: 'wt.theme',
   dockVer: 'wt.dockVer',
   overview: 'wt.overview',
-  editorW: 'wt.editorW',
   gridTab: 'wt.gridTab',
   gitInsecure: 'wt.git.insecure',
   side: 'wt.side',
@@ -62,6 +61,7 @@ export function normState(raw) {
  * 文本文件一律交给系统程序打开，网页（.html）交给自定义窗口预览。
  */
 export const PANE_TABS = [
+  { id: 'editor', label: '编辑器', icon: '◆' },
   { id: 'files', label: '文件管理器', icon: '🗂' },
   { id: 'scm', label: '源代码管理', icon: '⑂' },
   { id: 'term', label: '终端', icon: '›_' },
@@ -236,7 +236,6 @@ export const store = {
   chatDropHover: false,   // 有文件/链接正拖到工作台顶栏的「对话」区
   /* 内联编辑器：文件管理器里点文件就地改，不占独立窗格 */
   editor: { pid: '', path: '', name: '', text: '', saved: '', size: 0, truncated: false, state: 'idle', view: 'edit', error: '' },
-  editorDockW: 460,   // 右侧编辑器停靠栏宽度（wt.editorW）
   /* 总览的排序 / 筛选 / 就地搜索（存 wt.overview） */
   overview: { q: '', sort: 'recent', filter: 'all' },
   media: { pid: '', path: '' },   // 媒体窗当前预览的文件（由「产物」或编辑器推过来）
@@ -343,8 +342,7 @@ function normalizeProject(raw) {
  * （甚至是当时唯一的标签页），统一清掉并把槽位改到还活着的标签页上，
  * 免得一开项目就撞见一个打不开的空窗。
  */
-/* 编辑器不再是标签页（0.10.10 起它挂在文件管理器右侧），老版本存的 editor 标签页要清掉 */
-const RETIRED_TAB_KINDS = new Set(['editor'])
+const RETIRED_TAB_KINDS = new Set([])   /* 0.10.9：编辑器回归，不再有任何「已下架」的标签页 */
 
 export function stripRetiredTabs(ui) {
   let changed = false
@@ -421,7 +419,6 @@ export function hydrate() {
     view: readLS(LS.view, 'grid') === 'project' ? 'project' : 'grid',
     terms: {},
     web: { ...store.web, engine: SEARCH_ENGINES.some((e) => e.id === engine) ? engine : 'bing' },
-    editorDockW: editorDockWidth(),
     theme: normalizeTheme(readLS(LS.theme, DEFAULT_THEME)),
     overview,
     gridTab: GRID_TABS.some((t) => t.id === readLS(LS.gridTab, '')) ? readLS(LS.gridTab, '') : 'projects',
@@ -2731,7 +2728,8 @@ export function openFile(path, pid) {
   if (!target) return
   if (isMediaKind(viewKindOf(baseName(target)))) { openMedia(pid, target); return }
   if (isHtmlFile(target)) { openHtmlWindow(target, pid); return }
-  /* 文本 / 代码 / Markdown：在工作台右侧的停靠栏打开（不占标签页、不切走当前窗格） */
+  /* 文本 / 代码 / Markdown：开「编辑器」标签页（0.10.9 回归，和上游一致） */
+  if (pid) openTab(pid, 'editor')
   openTextFile(pid, target)
   return true
 }
@@ -2804,21 +2802,6 @@ export async function saveEditor() {
     toast('保存失败：' + String((err && err.message) || err), 'warn')
     return false
   }
-}
-
-/** 右侧编辑器停靠栏的宽度（存 localStorage，跨会话记住） */
-export function editorDockWidth() {
-  const n = Number(readLS(LS.editorW, 0))
-  return Number.isFinite(n) && n >= 280 ? Math.round(Math.min(n, 1200)) : 460
-}
-
-export function setEditorDockWidth(px) {
-  const n = Number(px)
-  if (!Number.isFinite(n)) return editorDockWidth()
-  const w = Math.max(280, Math.min(1200, Math.round(n)))
-  writeLS(LS.editorW, w)
-  emit({ editorDockW: w })
-  return w
 }
 
 /** 关掉内联编辑器（有未保存改动时问一句） */

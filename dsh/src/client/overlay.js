@@ -27,7 +27,7 @@ import {
   setSideProject, setSideSplit, sideProjectOf, readChatDrop, dropToChat, setChatDropHover,
   openHtmlWindow, isHtmlFile, toast, resetHostDropMask,
 } from './core.js'
-import { EditorDock, EditorPane, InfoPane, FilesPane, ScmPane, TermPane, WebPane, CustomPane, MediaPane, NotesPane } from './panes.js'
+import { EditorPane, InfoPane, FilesPane, ScmPane, TermPane, WebPane, CustomPane, MediaPane, NotesPane } from './panes.js'
 
 export function MainView() {
   useStore()
@@ -367,8 +367,6 @@ function AddCard() {
 function Workspace({ project, ui, geo }) {
   const primary = primarySession(project)
   const sideProject = sideProjectOf(project.id)
-  /* 编辑器停靠在最右边：只要这个项目有打开的文件就显示 */
-  const editorOpen = !!store.editor && store.editor.state !== 'idle' && store.editor.pid === project.id
   const sideUi = sideProject ? uiOf(sideProject.id) : null
 
   /* 工作台右边缘：直接改让位宽度，拖的同时右侧对话跟着变宽变窄 */
@@ -463,7 +461,6 @@ function Workspace({ project, ui, geo }) {
     ),
 
     el('div', { className: 'ws' },
-      editorOpen ? el(EditorDock, { project }) : null,
       sideProject && sideUi
         ? el('div', { className: 'ws-side' },
           el('div', { className: 'ws-cell side-cell', style: { width: ((store.side && store.side.split) || 50) + '%' } },
@@ -830,6 +827,7 @@ export class PaneBoundary extends Component {
 }
 
 function renderPane(kind, project) {
+  if (kind === 'editor') return el(EditorPane, { project })
   if (kind === 'files') return el(FilesPane, { project })
   if (kind === 'scm') return el(ScmPane, { project })
   if (kind === 'info') return el(InfoPane, { project })
