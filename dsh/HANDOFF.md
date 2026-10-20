@@ -1,6 +1,6 @@
 # 交接文档 · trae-usage-worktable（工作台）
 
-> 生成时间：2026-10-20 · 版本 **0.10.7** · 分支 `dsh-plugin`（远端默认分支）
+> 生成时间：2026-10-20 · 版本 **0.10.8** · 分支 `dsh-plugin`（远端默认分支）
 > 用途：换会话/换人接手时，靠这一份 + 仓库本身恢复全部上下文。README 讲“是什么”，这份讲“现在到哪了、怎么继续”。
 
 ---
@@ -383,3 +383,20 @@ cd $repo; npm run build; npm test
    - 无路径但是 `.html` → 读内容建 `kind:'html'` 快照，提示「想跟随磁盘文件就点『选文件』」；
    - 其它 → toast 里带上 `dropSummary(e)`（`types=[…] files=[…] paths=[…]`），方便定位。
 4. `dropToChat()` 对「有文件没路径」给出明确提示，不再静默失败。
+---
+
+## 16. 0.10.8：编辑器回到「文件管理器里」，顶栏 ✕ 加固
+
+**编辑器的位置改了**：不再是一个独立窗格（0.10.6 已经下架），而是挂在**文件管理器面板底部**的内联编辑器：
+
+- 点/双击文件（文本 / 代码 / Markdown）→ 底部出现 `.fx-edit` 面板：文件名、未保存标记、大小、`👁 预览`（Markdown）、`保存`（Ctrl+S）、`✕`；
+- 状态在 `store.editor`：`openTextFile()` / `editText()` / `editorDirty()` / `saveEditor()` / `setEditorView()` / `closeEditor()`；
+- 媒体 / PDF / html 仍走原来的分流（媒体窗 / 自定义窗口），只有文本类进内联编辑器；
+- 关掉时若有未保存改动会 `confirm` 一次（`closeEditor(force)` 可跳过）。
+
+**顶栏关闭键**：
+- 两个 `.wt-close` 按钮都加了 `onPointerDown`（掐冒泡，避免被拖动/拖放逻辑吃掉）；
+- 点击执行 `closeWorkbench()`：清 `chatDropHover` → `releaseDock()`（还宿主 marginLeft）→ `open:false`；
+- CSS 上把 `.wt-close` 提到 `z-index: 8`。
+
+自测：client **634**（+18：内联编辑器全链路 + 关闭键双保险）、host **189**。

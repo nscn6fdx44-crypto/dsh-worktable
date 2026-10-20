@@ -233,6 +233,8 @@ export const store = {
   /* 并排：同一块让位区里再放一个项目的工作区（存 wt.side） */
   side: { pid: '', split: 50 },
   chatDropHover: false,   // 有文件/链接正拖到工作台顶栏的「对话」区
+  /* 内联编辑器：文件管理器里点文件就地改，不占独立窗格 */
+  editor: { pid: '', path: '', name: '', text: '', saved: '', size: 0, truncated: false, state: 'idle', view: 'edit', error: '' },
   /* 总览的排序 / 筛选 / 就地搜索（存 wt.overview） */
   overview: { q: '', sort: 'recent', filter: 'all' },
   media: { pid: '', path: '' },   // 媒体窗当前预览的文件（由「产物」或编辑器推过来）
@@ -947,7 +949,17 @@ export function enterProject(pid) {
 }
 
 export function closeOverlay() {
+  /* 关工作台要顺手把「拖放高亮」和宿主让位都收干净，
+     否则偶尔会留下 marginLeft / 高亮残留，看上去像按钮没反应 */
+  if (store.chatDropHover) emit({ chatDropHover: false })
+  try { releaseDock() } catch { /* 没锚上宿主时忽略 */ }
   emit({ open: false, modal: null, menu: null })
+}
+
+/** 顶栏 ✕ / Esc 的统一入口（外部/测试都调这个） */
+export function closeWorkbench() {
+  closeOverlay()
+  return true
 }
 
 let rootToken = 0
@@ -2648,7 +2660,89 @@ export function openFile(path, pid) {
   if (!target) return
   if (isMediaKind(viewKindOf(baseName(target)))) { openMedia(pid, target); return }
   if (isHtmlFile(target)) { openHtmlWindow(target, pid); return }
-  openExternal(target)
+  /* 文本 / 代码 / Markdown：进文件管理器里的内联编辑器（不是独立窗格） */
+  openTextFile(pid, target)
+  return true
+}
+
+
+/* ============================ 内联编辑器（文件管理器右侧/下方，不是独立窗格） ============================ */
+
+const EMPTY_EDITOR = { pid: '', path: '', name: '', text: '', saved: '', size: 0, truncated: false, state: 'idle', view: 'edit', error: '' }
+
+function editorPatch(patch) {
+  emit({ editor: { ...(store.editor || EMPTY_EDITOR), ...patch } })
+}
+
+/** 打开一个文本文件到内联编辑器（.md / 代码 / 文本都走这里） */
+export async function openTextFile(pid, path) {
+  const target = String(path || '').trim()
+  if (!target) return false
+  const name = target.split(/[\\/]/).pop() || target
+  emit({ editor: { ...EMPTY_EDITOR, pid: String(pid || ''), path: target, name, state: 'loading' } })
+  try {
+    const data = await apiPost('/fs/read', { path: target, mode: 'auto' }, { timeout: 12000 })
+    const text = String((data && data.text) || '')
+    emit({
+      editor: {
+        ...EMPTY_EDITOR,
+        pid: String(pid || ''),
+        path: target,
+        name: (data && data.name) || name,
+        text,
+        saved: text,
+        size: Number((data && data.size) || 0),
+        truncated: !!(data && (data.truncated || data.partial)),
+        state: 'ok',
+        view: 'edit',
+        error: '',
+      },
+    })
+    return true
+  } catch (err) {
+    editorPatch({ state: 'error', error: String((err && err.message) || err || '读取失败') })
+    return false
+  }
+}
+
+export function editText(text) {
+  const ed = store.editor
+  if (!ed || ed.state !== 'ok') return
+  editorPatch({ text: String(text == null ? '' : text) })
+}
+
+export function editorDirty() {
+  const ed = store.editor
+  return !!ed && ed.state === 'ok' && ed.text !== ed.saved
+}
+
+export function setEditorView(view) {
+  editorPatch({ view: view === 'preview' ? 'preview' : 'edit' })
+}
+
+export async function saveEditor() {
+  const ed = store.editor
+  if (!ed || ed.state !== 'ok' || !ed.path) return false
+  if (!editorDirty()) { toast('没有改动', 'info'); return true }
+  try {
+    await apiPost('/fs/write', { path: ed.path, text: ed.text }, { timeout: 12000 })
+    editorPatch({ saved: ed.text, size: String(ed.text).length, truncated: false })
+    toast('已保存：' + (ed.name || ed.path), 'ok')
+    return true
+  } catch (err) {
+    toast('保存失败：' + String((err && err.message) || err), 'warn')
+    return false
+  }
+}
+
+/** 关掉内联编辑器（有未保存改动时问一句） */
+export function closeEditor(force) {
+  if (!store.editor || store.editor.state === 'idle') return true
+  if (!force && editorDirty() && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+    if (!window.confirm('这个文件还有未保存的改动，关掉就丢了。确定？')) return false
+  }
+  emit({ editor: { ...EMPTY_EDITOR } })
+  return true
 }
 
 /* ============================ 终端 ============================ */

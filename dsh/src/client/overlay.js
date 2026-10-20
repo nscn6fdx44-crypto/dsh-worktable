@@ -18,7 +18,7 @@ import {
   openModal, openMenu, setDockPx, openTab, closeTab, setActiveTab,
   loadSessions, stateOf, sessionsOf, primarySession, projectBySession, createFromSession, startSessionDrag, switchHostSession, emit,
   dropOnProject, canDropOnWorktable, pickDropEffect,
-  LAYOUTS, setLayout, setSecondTab, setSplit, setSplitB,
+  LAYOUTS, setLayout, setSecondTab, setSplit, closeWorkbench, setSplitB,
   paneCountOf, cellKeyOf, setCellTab, moveTabToCell,
   themeStyle, themeAttrs,
   jumpToSession, setGridTab, uiOf, flushUi,
@@ -154,7 +154,12 @@ function Overview({ ui, geo }) {
         el('button', { type: 'button', className: 'mini-btn', title: '重新读取宿主会话', onClick: () => { loadSessions() } }, '↻'),
         el('button', { type: 'button', className: 'mini-btn', title: '从 GitHub 克隆一个仓库', onClick: () => openModal('clone') }, '⑂ 克隆'),
         el('button', { type: 'button', className: 'mini-btn', title: '新建项目', onClick: () => openModal('add') }, '＋ 新建'),
-        el('button', { type: 'button', className: 'mini-btn', title: '关闭工作台 (Esc)', onClick: closeOverlay }, '✕'),
+        el('button', {
+          type: 'button', className: 'mini-btn wt-close', title: '关闭工作台 (Esc)', 'aria-label': '关闭工作台',
+          /* 双保险：pointerdown 就掐掉冒泡（避免被拖动/拖放逻辑吃掉），click 再执行关闭 */
+          onPointerDown: (e) => { e.stopPropagation() },
+          onClick: (e) => { if (e && e.preventDefault) e.preventDefault(); if (e && e.stopPropagation) e.stopPropagation(); closeWorkbench() },
+        }, '✕'),
       ),
     ),
 
@@ -446,7 +451,12 @@ function Workspace({ project, ui, geo }) {
           onClick: () => openTab(project.id, INFO_TAB.id),
         }, INFO_TAB.icon + ' ' + INFO_TAB.label),
         el('button', { type: 'button', className: 'mini-btn', title: '回到控制室', onClick: openGrid }, '≡ 项目'),
-        el('button', { type: 'button', className: 'mini-btn', title: '关闭工作台 (Esc)', onClick: closeOverlay }, '✕'),
+        el('button', {
+          type: 'button', className: 'mini-btn wt-close', title: '关闭工作台 (Esc)', 'aria-label': '关闭工作台',
+          /* 双保险：pointerdown 就掐掉冒泡（避免被拖动/拖放逻辑吃掉），click 再执行关闭 */
+          onPointerDown: (e) => { e.stopPropagation() },
+          onClick: (e) => { if (e && e.preventDefault) e.preventDefault(); if (e && e.stopPropagation) e.stopPropagation(); closeWorkbench() },
+        }, '✕'),
       ),
     ),
 

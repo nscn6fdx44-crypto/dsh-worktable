@@ -23,6 +23,7 @@ import {
   openModal, siteUrlOf, cycleStatus, updateProject, projectOf, toast, listMediaDir, openTab,
   dragFilePayload, dragUrlPayload, sendPathToChat, sendUrlToChat, sendToChat,
   fileToText, dropSummary,
+  openTextFile, editText, saveEditor, setEditorView, closeEditor,
   readChatDrop, FILE_DRAG, resetHostDropMask,
   webSync, webGoto, webGotoSmart, webSearch, webSetEngine, SEARCH_ENGINES, webHome, webCloseHome,
   webBack, webForward, webReload, webLoaded, webProbe,
@@ -792,6 +793,9 @@ export function FilesPane({ project }) {
             : null,
         ),
     ),
+
+    /* 内联编辑器：点文件就地改，不占独立窗格 */
+    el(FileEditor, { project }),
 
     /* 状态栏 */
     el('div', { className: 'fx-foot' },
@@ -1999,6 +2003,74 @@ export function CustomPane({ project }) {
         cu.error ? el('span', { className: 'cu-err' }, cu.error) : null,
       ),
     ),
+  )
+}
+
+
+/* ============================ 内联编辑器（文件管理器里，不占窗格） ============================ */
+
+function FileEditor({ project }) {
+  useStore()
+  const ed = store.editor
+  if (!ed || ed.state === 'idle') return null
+  const dirty = ed.state === 'ok' && ed.text !== ed.saved
+  const view = ed.view === 'preview' ? 'preview' : 'edit'
+  const isMd = /\.(md|markdown)$/i.test(String(ed.name || ''))
+  const dir = String(ed.path || '').replace(/[\\/][^\\/]*$/, '')
+
+  let body
+  if (ed.state === 'loading') body = el('div', { className: 'fx-edit-empty' }, '读取中…')
+  else if (ed.state === 'error') {
+    body = el('div', { className: 'fx-edit-empty' },
+      el('p', null, '打不开：' + (ed.error || '未知原因')),
+      el('button', { type: 'button', className: 'mini-btn', onClick: () => openTextFile(project.id, ed.path) }, '重试'),
+      el('button', { type: 'button', className: 'mini-btn', onClick: () => revealPath(ed.path) }, '系统打开'),
+    )
+  } else if (view === 'preview' && isMd) {
+    body = el('div', {
+      className: 'fx-edit-md md',
+      dangerouslySetInnerHTML: { __html: renderMarkdown(ed.text, { dir, imageUrl: rawUrl }) },
+    })
+  } else {
+    body = el('textarea', {
+      className: 'fx-edit-area mono',
+      value: ed.text,
+      spellCheck: false,
+      placeholder: '空文件',
+      onChange: (e) => editText(e.target.value),
+      onKeyDown: (e) => {
+        if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') { e.preventDefault(); saveEditor() }
+        if (e.key === 'Escape') { e.stopPropagation(); closeEditor() }
+      },
+    })
+  }
+
+  return el('div', { className: 'fx-edit' },
+    el('div', { className: 'fx-edit-head' },
+      el('span', { className: 'fx-edit-name mono', title: ed.path }, ed.name || ed.path),
+      dirty ? el('span', { className: 'fx-edit-flag' }, '未保存') : null,
+      ed.truncated ? el('span', { className: 'fx-edit-flag warn' }, '只读了前一段') : null,
+      ed.state === 'ok' && ed.size ? el('span', { className: 'fx-edit-size mono' }, fmtSize(ed.size)) : null,
+      isMd && ed.state === 'ok'
+        ? el('button', {
+          type: 'button', className: 'mini-btn' + (view === 'preview' ? ' on' : ''),
+          title: 'Markdown 预览 / 回到编辑',
+          onClick: () => setEditorView(view === 'preview' ? 'edit' : 'preview'),
+        }, view === 'preview' ? '✎ 编辑' : '👁 预览')
+        : null,
+      ed.state === 'ok'
+        ? el('button', {
+          type: 'button', className: 'mini-btn' + (dirty ? ' primary' : ''),
+          title: '保存（Ctrl+S）', disabled: dirty ? undefined : 'disabled',
+          onClick: () => saveEditor(),
+        }, '保存')
+        : null,
+      el('button', {
+        type: 'button', className: 'mini-btn', title: '关闭编辑器（Esc）',
+        onClick: () => closeEditor(),
+      }, '✕'),
+    ),
+    body,
   )
 }
 

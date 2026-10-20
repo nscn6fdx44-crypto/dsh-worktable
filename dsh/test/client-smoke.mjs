@@ -669,9 +669,9 @@ overlay = render(overlayComp)
 allByClass(overlay, /(^|\s)fx-row(\s|$)/).find((n) => textOf(n).includes('README.md')).props.onDoubleClick()
 await new Promise((r) => setTimeout(r, 40))
 overlay = render(overlayComp)
-check('双击文本文件 → 调 /fs/open 交给系统程序',
-  opens.length === opensBeforeMd + 1 && String(opens[opens.length - 1].path).endsWith('README.md'),
-  JSON.stringify(opens[opens.length - 1]))
+check('双击文本文件 → 打开内联编辑器（不弹系统程序）',
+  opens.length === opensBeforeMd && mod.store.editor.state === 'ok' && String(mod.store.editor.path).endsWith('README.md'),
+  mod.store.editor.state + ' / ' + mod.store.editor.path)
 check('内置编辑器窗格已经不存在', allByClass(overlay, /editor-body/).length === 0, '')
 check('「＋ 窗口」菜单里没有编辑器', !textOf(overlay).includes('编辑器'), textOf(overlay).slice(0, 140))
 
@@ -1629,9 +1629,9 @@ const opensBeforeArt = opens.length
 const openMd = collect(artRows[2]).find((n) => n.type === 'button' && textOf(n).trim() === '打开')
 openMd.props.onClick({ preventDefault() {}, stopPropagation() {} })
 await new Promise((r) => setTimeout(r, 20))
-check('文本/文档产物交给系统程序打开',
-  opens.length === opensBeforeArt + 1 && String(opens[opens.length - 1].path).endsWith('report.md'),
-  JSON.stringify(opens[opens.length - 1]) + ' @ ' + mod.uiOf(pid6).activeTab)
+check('文本/文档产物 → 进内联编辑器',
+  opens.length === opensBeforeArt && String(mod.store.editor.path).endsWith('report.md'),
+  String(mod.store.editor.path) + ' @ ' + mod.uiOf(pid6).activeTab)
 
 /* ---------- ⑨ 项目模板 ---------- */
 check('模板至少 5 种', mod.PROJECT_TEMPLATES.length >= 5 && mod.PROJECT_TEMPLATES.some((x) => x.id === 'frontend') && mod.PROJECT_TEMPLATES.some((x) => x.id === 'writing'), String(mod.PROJECT_TEMPLATES.length))
@@ -2439,6 +2439,58 @@ mod.store.activeId = pid6
 mod.openTab(pid6, 'custom')
 const cuTree = render(overlayComp)
 check('自定义窗提示可直接拖 .html 进来', textOf(cuTree).includes('.html') && (textOf(cuTree).includes('拖') || textOf(cuTree).includes('自定义窗口')), textOf(cuTree).slice(0, 80))
+
+/* ---------- ㉙ 内联编辑器（不是独立窗格） ---------- */
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+mod.openTab(pid6, 'files')
+
+const opened = await mod.openTextFile(pid6, 'C:\\projects\\smart-car\\README.md')
+check('openTextFile 读到内容', opened === true && mod.store.editor.state === 'ok' && String(mod.store.editor.text).includes('固件说明'), JSON.stringify({ s: mod.store.editor.state, n: mod.store.editor.name }))
+check('编辑器带文件名与大小', mod.store.editor.name === 'README.md' && mod.store.editor.size > 0, mod.store.editor.name + ' / ' + mod.store.editor.size)
+check('刚打开时不算脏', mod.editorDirty() === false, '')
+
+mod.editText('# 改过了\n')
+check('编辑后算脏', mod.editorDirty() === true && mod.store.editor.text === '# 改过了\n', JSON.stringify(mod.store.editor.text))
+const writesBefore = writes.length
+const savedOk = await mod.saveEditor()
+check('保存走 /fs/write 且清掉脏标记', savedOk === true && writes.length === writesBefore + 1 && mod.editorDirty() === false, 'writes+' + (writes.length - writesBefore))
+check('保存的路径与内容正确', String(writes[writes.length - 1].path).endsWith('README.md') && String(writes[writes.length - 1].text).includes('改过了'), JSON.stringify(writes[writes.length - 1]).slice(0, 80))
+
+const filesTree2 = render(overlayComp)
+check('文件管理器里出现内联编辑器面板', allByClass(filesTree2, /(^|\s)fx-edit(\s|$)/).length === 1, '')
+check('内联编辑器有 textarea 且带内容', (() => {
+  const area = collect(filesTree2).find((n) => n.type === 'textarea' && /fx-edit-area/.test(String(n.props && n.props.className || '')))
+  return !!area && String(area.props.value).includes('改过了')
+})(), '')
+check('编辑器标题显示文件名', textOf(filesTree2).includes('README.md'), '')
+check('编辑器有保存按钮', collect(filesTree2).some((n) => n.type === 'button' && textOf(n).trim() === '保存'), '')
+check('内联编辑器没有占独立标签页', !mod.uiOf(pid6).tabs.some((x) => x.kind === 'editor'), mod.uiOf(pid6).tabs.map((x) => x.kind).join(','))
+
+mod.setEditorView('preview')
+check('Markdown 可切预览', mod.store.editor.view === 'preview', mod.store.editor.view)
+mod.setEditorView('edit')
+check('关掉编辑器回到 idle', mod.closeEditor(true) === true && mod.store.editor.state === 'idle', mod.store.editor.state)
+
+/* ---------- ㉚ 关闭工作台按钮 ---------- */
+mod.store.open = true
+mod.chatDropHover = true
+const wbClosed = mod.closeWorkbench()
+check('closeWorkbench 关掉主区', wbClosed === true && mod.store.open === false, String(mod.store.open))
+check('关闭时顺手清掉拖放高亮', mod.store.chatDropHover === false, String(mod.store.chatDropHover))
+
+mod.store.open = true
+const ovTree2 = render(overlayComp)
+const closeBtn = collect(ovTree2).find((n) => n.type === 'button' && textOf(n).trim() === '✕' && String(n.props.className || '').includes('wt-close'))
+check('顶栏关闭键带 wt-close 且可点', !!closeBtn && typeof closeBtn.props.onClick === 'function' && typeof closeBtn.props.onPointerDown === 'function', closeBtn ? String(closeBtn.props.className) : '无')
+if (closeBtn) {
+  let stopped = false
+  closeBtn.props.onPointerDown({ stopPropagation: () => { stopped = true } })
+  check('pointerdown 掐掉冒泡（不被拖动逻辑吃掉）', stopped === true, '')
+  closeBtn.props.onClick({ preventDefault() {}, stopPropagation() {} })
+  check('点 ✕ 真的关掉工作台', mod.store.open === false, String(mod.store.open))
+}
 
 const failed = results.filter((r) => !r)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)

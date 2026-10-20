@@ -48,6 +48,7 @@ import {
   readDrop, dropOnWorktable, dropOnProject, canDropOnWorktable, pickDropEffect, normSessionId,
   startSessionDrag, createFromSession,
   fileToText, dropSummary,
+  openTextFile, editText, saveEditor, setEditorView, closeEditor, editorDirty, closeWorkbench,
 } from './core.js'
 import { el } from './ui.js'
 import { WorktableSidebar, sideModeOf } from './sidebar.js'
@@ -89,7 +90,8 @@ export { store, openFile, createSessionInDir, switchHostSession, searchUrl, webG
   readDrop, dropOnWorktable, dropOnProject, canDropOnWorktable, pickDropEffect, normSessionId,
   startSessionDrag, createFromSession, loadSessions,
   fileUrlOf, chatTextForFile, chatTextForUrl, readChatDrop, sendToChat, sendPathToChat, sendUrlToChat,
-  fileToText, dropSummary }
+  fileToText, dropSummary,
+  openTextFile, editText, saveEditor, setEditorView, closeEditor, editorDirty, closeWorkbench }
 
 class SidebarBoundary extends Component {
   constructor(props) { super(props); this.state = { err: null } }
