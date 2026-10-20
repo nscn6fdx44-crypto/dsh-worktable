@@ -8,7 +8,7 @@ import { useState, useEffect, useRef } from 'react'
 import XTERM_CSS from '@xterm/xterm/css/xterm.css'
 import { el, Icon, Light } from './ui.js'
 import {
-  viewKindOf, kindEmoji,
+  viewKindOf, kindEmoji, renderMarkdown, highlightCode, langOf,
 } from './render.js'
 import {
   API, store, useStore, STATES, normState, fmtSize, fmtDuration, relTime, shortPath, projEmoji,
@@ -23,7 +23,7 @@ import {
   openModal, siteUrlOf, cycleStatus, updateProject, projectOf, toast, listMediaDir, openTab,
   dragFilePayload, dragUrlPayload, sendPathToChat, sendUrlToChat, sendToChat,
   fileToText, dropSummary,
-  openTextFile, editText, saveEditor, setEditorView, closeEditor,
+  openTextFile, editText, saveEditor, setEditorView, closeEditor, closeTab,
   readChatDrop, FILE_DRAG, resetHostDropMask,
   webSync, webGoto, webGotoSmart, webSearch, webSetEngine, SEARCH_ENGINES, webHome, webCloseHome,
   webBack, webForward, webReload, webLoaded, webProbe,
@@ -793,9 +793,6 @@ export function FilesPane({ project }) {
             : null,
         ),
     ),
-
-    /* 内联编辑器：点文件就地改，不占独立窗格 */
-    el(FileEditor, { project }),
 
     /* 状态栏 */
     el('div', { className: 'fx-foot' },
@@ -2007,7 +2004,146 @@ export function CustomPane({ project }) {
 }
 
 
-/* ============================ 内联编辑器（文件管理器里，不占窗格） ============================ */
+
+/* ============================ 编辑器窗格（0.10.9 完整回归） ============================ */
+
+export function EditorPane({ project }) {
+  useStore()
+  const ed = store.editor
+  const [draftPath, setDraftPath] = useState('')
+  const [dropOver, setDropOver] = useState(false)
+  const dirty = ed.state === 'ok' && ed.text !== ed.saved
+  const isMd = /\.(md|markdown)$/i.test(String(ed.name || ''))
+  const kind = ed.name ? viewKindOf(ed.name) : 'text'
+  const canPreview = isMd || kind === 'code'
+  const view = ed.view === 'preview' ? 'preview' : 'edit'
+  const dir = String(ed.path || '').replace(/[\\/][^\\/]*$/, '')
+  const lang = ed.name ? langOf(ed.name) : ''
+
+  const open = (p) => {
+    const target = String(p || '').trim()
+    if (!target) return
+    openTextFile(project.id, target)
+  }
+
+  const takeFile = (file) => {
+    if (!file) return
+    if (typeof file.path === 'string' && file.path) { open(file.path); return }
+    toast('拿不到这个文件的磁盘路径，请用下面的输入框填绝对路径', 'warn')
+  }
+
+  if (ed.state === 'idle' || !ed.path) {
+    return el('div', {
+      className: 'pane-body ed-body' + (dropOver ? ' drop-over' : ''),
+      onDragOver: (e) => {
+        const t = e.dataTransfer && e.dataTransfer.types
+        const list = t ? Array.prototype.slice.call(t) : []
+        if (!list.includes('Files') && !list.includes('text/uri-list')) return
+        e.preventDefault()
+        setDropOver(true)
+      },
+      onDragLeave: (e) => {
+        const to = e.relatedTarget
+        if (to && e.currentTarget && e.currentTarget.contains(to)) return
+        setDropOver(false)
+      },
+      onDrop: (e) => {
+        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]
+        if (!f) return
+        e.preventDefault()
+        setDropOver(false)
+        takeFile(f)
+      },
+    },
+      el('div', { className: 'pane-empty' },
+        el('span', { className: 'pe-ico' }, '◆'),
+        el('p', null, '编辑器'),
+        el('p', { className: 'hint' }, '在文件管理器里双击文件即可打开；也可以把文件拖到这个窗格，或在下面填绝对路径。'),
+        el('div', { className: 'ed-open-row' },
+          el('input', {
+            className: 'mono ed-open-input', value: draftPath, spellCheck: false,
+            placeholder: 'C:\\projects\\demo\\README.md',
+            onChange: (e) => setDraftPath(e.target.value),
+            onKeyDown: (e) => { if (e.key === 'Enter') open(draftPath) },
+          }),
+          el('button', { type: 'button', className: 'btn small', onClick: () => open(draftPath) }, '打开'),
+        ),
+        store.fs && store.fs.sel
+          ? el('button', { type: 'button', className: 'mini-btn', onClick: () => open(joinPath(workspaceDirOf(project), store.fs.sel)) }, '打开文件管理器里选中的：' + store.fs.sel)
+          : null,
+      ),
+    )
+  }
+
+  if (ed.state === 'loading') {
+    return el('div', { className: 'pane-body ed-body' }, el('div', { className: 'pane-empty' }, el('p', null, '读取中…')))
+  }
+
+  if (ed.state === 'error') {
+    return el('div', { className: 'pane-body ed-body' },
+      el('div', { className: 'pane-error' },
+        el('p', null, '打不开这个文件：' + (ed.error || '未知原因')),
+        el('div', { className: 'ed-note-acts' },
+          el('button', { type: 'button', className: 'btn small', onClick: () => openTextFile(project.id, ed.path) }, '重试'),
+          el('button', { type: 'button', className: 'mini-btn', onClick: () => revealPath(ed.path) }, '系统打开'),
+        ),
+      ),
+    )
+  }
+
+  let body
+  if (view === 'preview' && isMd) {
+    body = el('div', {
+      className: 'ed-preview md',
+      dangerouslySetInnerHTML: { __html: renderMarkdown(ed.text, { dir, imageUrl: rawUrl }) },
+    })
+  } else if (view === 'preview' && kind === 'code') {
+    body = el('div', {
+      className: 'ed-preview',
+      dangerouslySetInnerHTML: { __html: '<pre class="mono">' + highlightCode(ed.text, lang) + '</pre>' },
+    })
+  } else {
+    body = el('textarea', {
+      className: 'ed-area mono',
+      value: ed.text,
+      spellCheck: false,
+      placeholder: '空文件',
+      onChange: (e) => editText(e.target.value),
+      onKeyDown: (e) => {
+        if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') { e.preventDefault(); saveEditor() }
+        if (e.key === 'Escape') { e.stopPropagation(); closeTab(project.id, 'editor') }
+      },
+    })
+  }
+
+  return el('div', { className: 'pane-body ed-body' },
+    el('div', { className: 'ed-bar' },
+      el('span', { className: 'ed-name mono', title: ed.path }, ed.name || ed.path),
+      dirty ? el('span', { className: 'ed-flag' }, '未保存') : null,
+      ed.truncated ? el('span', { className: 'ed-flag warn' }, '只读了前一段') : null,
+      el('span', { className: 'ed-size mono' }, fmtSize(ed.size || String(ed.text || '').length)),
+      canPreview
+        ? el('button', {
+          type: 'button', className: 'mini-btn' + (view === 'preview' ? ' on' : ''),
+          title: '预览 / 编辑', onClick: () => setEditorView(view === 'preview' ? 'edit' : 'preview'),
+        }, view === 'preview' ? '✎ 编辑' : '👁 预览')
+        : null,
+      el('button', {
+        type: 'button', className: 'mini-btn' + (dirty ? ' primary' : ''),
+        title: '保存（Ctrl+S）', disabled: dirty ? undefined : 'disabled',
+        onClick: () => saveEditor(),
+      }, '保存'),
+      el('button', { type: 'button', className: 'mini-btn', title: '在系统程序里打开', onClick: () => openExternal(ed.path) }, '系统打开'),
+    ),
+    body,
+    el('div', { className: 'ed-foot mono' },
+      el('span', null, dirty ? '有未保存改动 · Ctrl+S 保存' : '已保存'),
+      ed.truncated ? el('span', { className: 'ed-foot-warn' }, '文件较大，只显示了开头（可「系统打开」看全文）') : null,
+    ),
+  )
+}
+
+/* ============================ （旧）内联编辑器：0.10.9 起由编辑器窗格取代 ============================ */
 
 function FileEditor({ project }) {
   useStore()

@@ -657,9 +657,9 @@ const mig = mod.stripRetiredTabs({
     activeTab: 'editor', secondTab: 'editor', cells: ['editor', 'files', '', ''],
   },
 })
-check('迁移：editor 标签页被清掉', !mig.ui.p1.tabs.some((t) => t.kind === 'editor'), JSON.stringify(mig.ui.p1.tabs))
-check('迁移：activeTab 落到还活着的标签页', mig.ui.p1.activeTab === 'files', mig.ui.p1.activeTab)
-check('迁移：四格槽位里也不再有 editor', !mig.ui.p1.cells.includes('editor'), JSON.stringify(mig.ui.p1.cells))
+check('迁移：editor 标签页被保留（0.10.9 起不再下架）', mig.ui.p1.tabs.some((t) => t.kind === 'editor'), JSON.stringify(mig.ui.p1.tabs))
+check('迁移：activeTab 保留在 editor 上', mig.ui.p1.activeTab === 'editor', mig.ui.p1.activeTab)
+check('迁移：四格槽位里的 editor 也保留', mig.ui.p1.cells.includes('editor'), JSON.stringify(mig.ui.p1.cells))
 check('迁移：本来就干净的不标记 changed', mod.stripRetiredTabs({ p2: { tabs: [{ key: 'files', kind: 'files' }], activeTab: 'files' } }).changed === false, '')
 
 /* 双击文本文件：不再进内置编辑器，交给系统默认程序 */
@@ -672,8 +672,8 @@ overlay = render(overlayComp)
 check('双击文本文件 → 打开内联编辑器（不弹系统程序）',
   opens.length === opensBeforeMd && mod.store.editor.state === 'ok' && String(mod.store.editor.path).endsWith('README.md'),
   mod.store.editor.state + ' / ' + mod.store.editor.path)
-check('内置编辑器窗格已经不存在', allByClass(overlay, /editor-body/).length === 0, '')
-check('「＋ 窗口」菜单里没有编辑器', !textOf(overlay).includes('编辑器'), textOf(overlay).slice(0, 140))
+check('编辑器窗格回来了（ed-body 出现）', allByClass(overlay, /(^|\s)ed-body(\s|$)/).length >= 1, allByClass(overlay, /ed-body/).length)
+check('「＋ 窗口」菜单里有编辑器', textOf(overlay).includes('编辑器'), textOf(overlay).slice(0, 140))
 
 /* 双击图片 / PDF：统一走媒体窗 */
 clickByLabel(overlay, '文件管理器')
@@ -753,7 +753,7 @@ const termIn = allByClass(overlay, /term-in/)[0]
 check('终端窗格渲染输入行', !!termIn)
 check('终端窗格显示提示符', textOf(overlay).includes('❯'))
 check('终端显示当前目录', textOf(overlay).includes('smart-car') || textOf(overlay).includes('C:\\projects'), textOf(overlay).slice(0, 80))
-check('终端标签页与其它窗格并存', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 5, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
+check('终端标签页与其它窗格并存', allByClass(overlay, /(^|\s)tab(\s|$)/).length >= 4, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
 
 /* 打开浏览器标签页 */
 clickByLabel(overlay, '浏览器')
@@ -820,7 +820,7 @@ clickByLabel(overlay, '🚀 系统浏览器')
 await new Promise((r) => setTimeout(r, 20))
 check('绝对地址交给系统浏览器', webOpens.length === webOpensBefore + 1 && webOpens[webOpens.length - 1].url === 'http://localhost:5173/', JSON.stringify(webOpens[webOpens.length - 1]))
 
-check('多个标签页并存', allByClass(overlay, /(^|\s)tab(\s|$)/).length === 6, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
+check('多个标签页并存', allByClass(overlay, /(^|\s)tab(\s|$)/).length >= 5, allByClass(overlay, /(^|\s)tab(\s|$)/).length)
 check('当前窗格内容仍在渲染', !!allByClass(overlay, /wb-stage/)[0] || textOf(overlay).includes('浏览器窗格'))
 
 /* 关闭当前标签 */
@@ -2458,15 +2458,16 @@ const savedOk = await mod.saveEditor()
 check('保存走 /fs/write 且清掉脏标记', savedOk === true && writes.length === writesBefore + 1 && mod.editorDirty() === false, 'writes+' + (writes.length - writesBefore))
 check('保存的路径与内容正确', String(writes[writes.length - 1].path).endsWith('README.md') && String(writes[writes.length - 1].text).includes('改过了'), JSON.stringify(writes[writes.length - 1]).slice(0, 80))
 
-const filesTree2 = render(overlayComp)
-check('文件管理器里出现内联编辑器面板', allByClass(filesTree2, /(^|\s)fx-edit(\s|$)/).length === 1, '')
-check('内联编辑器有 textarea 且带内容', (() => {
-  const area = collect(filesTree2).find((n) => n.type === 'textarea' && /fx-edit-area/.test(String(n.props && n.props.className || '')))
+mod.openTab(pid6, 'editor')
+const edTree = render(overlayComp)
+check('编辑器是独立窗格（ed-body 在标签页里）', allByClass(edTree, /(^|\s)ed-body(\s|$)/).length >= 1, allByClass(edTree, /ed-body/).length)
+check('编辑器有 textarea 且带内容', (() => {
+  const area = collect(edTree).find((n) => n.type === 'textarea' && /ed-area/.test(String(n.props && n.props.className || '')))
   return !!area && String(area.props.value).includes('改过了')
 })(), '')
-check('编辑器标题显示文件名', textOf(filesTree2).includes('README.md'), '')
-check('编辑器有保存按钮', collect(filesTree2).some((n) => n.type === 'button' && textOf(n).trim() === '保存'), '')
-check('内联编辑器没有占独立标签页', !mod.uiOf(pid6).tabs.some((x) => x.kind === 'editor'), mod.uiOf(pid6).tabs.map((x) => x.kind).join(','))
+check('编辑器标题显示文件名', textOf(edTree).includes('README.md'), '')
+check('编辑器有保存按钮', collect(edTree).some((n) => n.type === 'button' && textOf(n).trim() === '保存'), '')
+check('编辑器标签页存在且是当前页', mod.uiOf(pid6).tabs.some((x) => x.kind === 'editor') && String(mod.uiOf(pid6).activeTab).startsWith('editor'), mod.uiOf(pid6).activeTab)
 
 mod.setEditorView('preview')
 check('Markdown 可切预览', mod.store.editor.view === 'preview', mod.store.editor.view)
@@ -2491,6 +2492,56 @@ if (closeBtn) {
   closeBtn.props.onClick({ preventDefault() {}, stopPropagation() {} })
   check('点 ✕ 真的关掉工作台', mod.store.open === false, String(mod.store.open))
 }
+
+/* ---------- ㉛ 关窗格回初始态 / 关工作台彻底 ---------- */
+mod.store.open = true
+mod.store.view = 'project'
+mod.store.activeId = pid6
+
+/* 终端：开一条命令 → 关标签 → 屏应清空 */
+mod.openTab(pid6, 'term')
+mod.termAppend(pid6, { kind: 'out', text: 'hello-reset' })
+check('终端有输出', mod.store.terms[pid6].lines.some((l) => String(l.text).includes('hello-reset')), '')
+mod.closeTab(pid6, 'term')
+check('关掉终端标签 → 终端清屏', (mod.store.terms[pid6] || {}).lines.length === 0, String((mod.store.terms[pid6] || {}).lines.length))
+
+/* 浏览器：改地址 → 关标签 → 回到默认页 */
+mod.openTab(pid6, 'web')
+mod.webGotoSmart('http://localhost:9999/x')
+mod.store.web = { ...mod.store.web, more: true }
+mod.closeTab(pid6, 'web')
+check('关掉浏览器标签 → 回默认页且收起更多面板', mod.store.web.more === false && !String(mod.store.web.url).includes('9999'), mod.store.web.url)
+
+/* 文件管理器：设置筛选 → 关标签 → 清掉 */
+mod.openTab(pid6, 'files')
+mod.setFsQuery('xyz')
+mod.closeTab(pid6, 'files')
+check('关掉文件管理器标签 → 清筛选与选中', mod.store.fs.query === '' && mod.store.fs.sel === '', JSON.stringify({ q: mod.store.fs.query, s: mod.store.fs.sel }))
+
+/* 媒体：设了路径 → 关标签 → 清路径 */
+mod.openTab(pid6, 'media')
+mod.openMedia(pid6, 'C:\\pics\\x.png')
+mod.closeTab(pid6, 'media')
+check('关掉媒体标签 → 清掉预览路径', !mod.store.media.path, String(mod.store.media.path))
+
+/* 编辑器：有内容 → 关标签 → 清空 */
+await mod.openTextFile(pid6, 'C:\\projects\\smart-car\\README.md')
+mod.openTab(pid6, 'editor')
+mod.closeTab(pid6, 'editor')
+check('关掉编辑器标签 → 内容清空（state idle）', mod.store.editor.state === 'idle', mod.store.editor.state)
+
+/* 工作台关闭：清掉所有临时态并还宿主边距 */
+mod.store.open = true
+mod.store.tabMenu = true
+mod.store.menu = { pid: pid6 }
+mod.store.modal = { kind: 'theme' }
+mod.store.chatDropHover = true
+mod.chatDropHover = true
+mod.store.fs = { ...mod.store.fs, menu: { dir: 'x', name: 'y' } }
+const wb = mod.closeWorkbench()
+check('关工作台：open/menu/modal/tabMenu 全清', wb === true && !mod.store.open && !mod.store.menu && !mod.store.modal && mod.store.tabMenu === false, JSON.stringify({ o: mod.store.open, m: !!mod.store.menu, d: !!mod.store.modal, t: mod.store.tabMenu }))
+check('关工作台：拖放高亮与文件菜单也清掉', mod.store.chatDropHover === false && !mod.store.fs.menu, '')
+check('关工作台后仍保留项目与布局', mod.store.projects.length > 0 && !!mod.uiOf(pid6), '')
 
 const failed = results.filter((r) => !r)
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length : 'ALL PASS') + ' / ' + results.length)

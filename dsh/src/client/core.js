@@ -61,6 +61,7 @@ export function normState(raw) {
  * 文本文件一律交给系统程序打开，网页（.html）交给自定义窗口预览。
  */
 export const PANE_TABS = [
+  { id: 'editor', label: '编辑器', icon: '◆' },
   { id: 'files', label: '文件管理器', icon: '🗂' },
   { id: 'scm', label: '源代码管理', icon: '⑂' },
   { id: 'term', label: '终端', icon: '›_' },
@@ -341,7 +342,7 @@ function normalizeProject(raw) {
  * （甚至是当时唯一的标签页），统一清掉并把槽位改到还活着的标签页上，
  * 免得一开项目就撞见一个打不开的空窗。
  */
-const RETIRED_TAB_KINDS = new Set(['editor'])
+const RETIRED_TAB_KINDS = new Set([])   /* 0.10.9：编辑器回归，不再有任何「已下架」的标签页 */
 
 export function stripRetiredTabs(ui) {
   let changed = false
@@ -958,7 +959,23 @@ export function closeOverlay() {
 
 /** 顶栏 ✕ / Esc 的统一入口（外部/测试都调这个） */
 export function closeWorkbench() {
-  closeOverlay()
+  /* 关工作台要「彻底」：拖放高亮、拖动态、菜单/弹窗/标签菜单、浏览器更多面板、
+     文件管理器右键菜单，以及宿主那边的 marginLeft，全部收干净 */
+  if (store.chatDropHover) emit({ chatDropHover: false })
+  if (store.dragOver) emit({ dragOver: false })
+  try { releaseDock() } catch { /* 没锚上宿主时忽略 */ }
+  try { forceClearHostMargin() } catch { /* 同上 */ }
+  try {
+    if (typeof document !== 'undefined' && document.body && document.body.classList) document.body.classList.remove('wt-dragging')
+  } catch { /* 只读环境 */ }
+  emit({
+    open: false,
+    modal: null,
+    menu: null,
+    tabMenu: false,
+    fs: { ...store.fs, menu: null },
+    web: { ...store.web, more: false },
+  })
   return true
 }
 
@@ -2368,10 +2385,59 @@ function sameTreePath(dir) {
   return !!cur && cur === norm(dir)
 }
 
+/**
+ * 关掉某个窗格时把它的状态复位成「刚打开」的样子：
+ * 编辑器清空、终端清屏、浏览器回默认页、文件管理器清筛选、媒体清路径、自定义回需求页。
+ * 不碰已保存的数据（笔记 / 自定义库 / 终端历史都留着）。
+ */
+export function resetPaneState(pid, kind) {
+  const k = String(kind || '')
+  if (k === 'editor') { closeEditor(true); return }
+  if (k === 'term') { termPatch(pid, { lines: [], busy: false }); return }
+  if (k === 'web') {
+    /* 直接复位到项目默认站点页：webSync() 在同项目+同默认地址时会早退，不能靠它 */
+    const p = projectOf(pid)
+    const def = p ? siteUrlOf(p) : ''
+    emit({
+      web: {
+        ...store.web,
+        pid: String(pid || ''),
+        defaultUrl: def,
+        url: def,
+        state: 'idle',
+        error: '',
+        ms: 0,
+        startedAt: 0,
+        history: def ? [def] : [],
+        index: def ? 0 : -1,
+        more: false,
+        home: false,
+        viewport: 'auto',
+        engine: store.web.engine || 'bing',
+        probe: { ...(store.web.probe || {}), state: 'idle', url: def, ok: false, status: 0, ms: 0, title: '', frameable: true, reason: '', error: '', at: 0 },
+      },
+    })
+    return
+  }
+  if (k === 'files') {
+    emit({ fs: { ...store.fs, query: '', sel: '', menu: null } })
+    return
+  }
+  if (k === 'media') { emit({ media: { pid: '', path: '' } }); return }
+  if (k === 'custom') {
+    emit({ custom: { ...store.custom, active: '', item: null, draft: null, view: 'prompt', busy: '', error: '', file: '', prompt: '', requirement: '' } })
+    return
+  }
+  if (k === 'scm') {
+    emit({ scm: { ...store.scm, sel: '', msg: '' } })
+  }
+}
+
 export function closeTab(pid, key) {
   const ui = uiOf(pid)
   const idx = ui.tabs.findIndex((t) => t.key === key)
   if (idx < 0) return
+  const closing = ui.tabs.find((t) => t.key === key) || null
   const tabs = ui.tabs.filter((t) => t.key !== key)
   const activeTab = ui.activeTab === key ? (tabs[Math.max(0, idx - 1)]?.key || '') : ui.activeTab
   const secondTab = ui.secondTab === key ? (tabs.find((t) => t.key !== activeTab)?.key || '') : ui.secondTab
@@ -2386,6 +2452,8 @@ export function closeTab(pid, key) {
     }
   }
   patchUi(pid, { tabs, activeTab, secondTab, cells })
+  /* 关掉哪个窗格就把它的状态复位（不留上次的屏 / 筛选 / 路径） */
+  if (closing) resetPaneState(pid, closing.kind)
 }
 
 export function setActiveTab(pid, key) {
@@ -2660,7 +2728,8 @@ export function openFile(path, pid) {
   if (!target) return
   if (isMediaKind(viewKindOf(baseName(target)))) { openMedia(pid, target); return }
   if (isHtmlFile(target)) { openHtmlWindow(target, pid); return }
-  /* 文本 / 代码 / Markdown：进文件管理器里的内联编辑器（不是独立窗格） */
+  /* 文本 / 代码 / Markdown：开「编辑器」标签页（0.10.9 回归，和上游一致） */
+  if (pid) openTab(pid, 'editor')
   openTextFile(pid, target)
   return true
 }

@@ -229,6 +229,30 @@ export function anchorLeft() {
   return 0
 }
 
+/**
+ * 兜底：把宿主会话列上的 marginLeft 无条件清掉（只清我们自己写的那种 "<n>px"）。
+ * closeWorkbench 会调它 —— 关工作台必须把对话位置还回去，不能留半截留白。
+ */
+export function forceClearHostMargin() {
+  try {
+    const doc = typeof document !== 'undefined' ? document : null
+    if (!doc || typeof doc.querySelectorAll !== 'function') return false
+    const list = doc.querySelectorAll('[class*="centerCol"]')
+    let cleared = 0
+    for (let i = 0; i < list.length; i += 1) {
+      const el = list[i]
+      if (!el || !el.style) continue
+      const cur = String(el.style.marginLeft || '')
+      if (/^\\d+px$/.test(cur.trim())) {
+        el.style.marginLeft = host.saved || ''
+        cleared += 1
+      }
+    }
+    applied = 0
+    return cleared > 0
+  } catch { return false }
+}
+
 /** 让 UI 手动重测（宿主布局变了之后） */
 export function remeasure() {
   if (!host.ready) return geo

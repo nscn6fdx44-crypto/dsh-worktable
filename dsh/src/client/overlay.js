@@ -27,7 +27,7 @@ import {
   setSideProject, setSideSplit, sideProjectOf, readChatDrop, dropToChat, setChatDropHover,
   openHtmlWindow, isHtmlFile, toast, resetHostDropMask,
 } from './core.js'
-import { InfoPane, FilesPane, ScmPane, TermPane, WebPane, CustomPane, MediaPane, NotesPane } from './panes.js'
+import { EditorPane, InfoPane, FilesPane, ScmPane, TermPane, WebPane, CustomPane, MediaPane, NotesPane } from './panes.js'
 
 export function MainView() {
   useStore()
@@ -827,6 +827,7 @@ export class PaneBoundary extends Component {
 }
 
 function renderPane(kind, project) {
+  if (kind === 'editor') return el(EditorPane, { project })
   if (kind === 'files') return el(FilesPane, { project })
   if (kind === 'scm') return el(ScmPane, { project })
   if (kind === 'info') return el(InfoPane, { project })
