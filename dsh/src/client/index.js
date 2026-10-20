@@ -42,6 +42,7 @@ import {
   scmDiff, scmShowCommit, scmClearDiff, scmSetView, scmOf,
   loadGh, ghLogin, ghLogout, loadGhRepos, ghUploadRepo, cloneRepo,
   htmlUrl, b64url, isHtmlFile, openHtmlWindow, stripRetiredTabs,
+  installDropMaskGuard, resetHostDropMask, isFileDragEvent, pointsIntoWorkbench,
   newCustomDraft, editCustom, setCustomView, saveCustom,
   fileUrlOf, chatTextForFile, chatTextForUrl, readChatDrop, sendToChat, sendPathToChat, sendUrlToChat,
   readDrop, dropOnWorktable, dropOnProject, canDropOnWorktable, pickDropEffect, normSessionId,
@@ -81,6 +82,7 @@ export { store, openFile, createSessionInDir, switchHostSession, searchUrl, webG
   loadGh, ghLogin, ghLogout, loadGhRepos, ghUploadRepo, cloneRepo,
   /* 本地网页托管 / 老标签页迁移（离线自测出口） */
   htmlUrl, b64url, isHtmlFile, openHtmlWindow, stripRetiredTabs, webRowsOf,
+  installDropMaskGuard, resetHostDropMask, isFileDragEvent, pointsIntoWorkbench,
   newCustomDraft, editCustom, setCustomView, saveCustom,
   /* 拖拽建项目（离线自测出口） */
   readDrop, dropOnWorktable, dropOnProject, canDropOnWorktable, pickDropEffect, normSessionId,
@@ -160,6 +162,10 @@ export function apply(ctx) {
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
   }, 'trae-usage-worktable: esc')
+
+  /* 工作台上方不许出现宿主那层「文件或图片拖动到此处即可添加」的整窗遮罩：
+     它 pointer-events:none、点不掉也 Esc 不掉，一旦被挡在 drop 中间就永久留在屏幕上 */
+  ctx.effect(() => installDropMaskGuard(), 'trae-usage-worktable: drop mask')
 
   /* 对外注册表：其他插件把项目塞进工作台（只挂函数，dispose 时摘掉） */
   ctx.effect(() => {

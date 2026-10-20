@@ -22,7 +22,7 @@ import {
   ARTIFACT_FILE, loadArtifacts, openArtifact, sendArtifactToChat,
   openModal, siteUrlOf, cycleStatus, updateProject, projectOf, toast, listMediaDir, openTab,
   dragFilePayload, dragUrlPayload, sendPathToChat, sendUrlToChat, sendToChat,
-  readChatDrop, FILE_DRAG,
+  readChatDrop, FILE_DRAG, resetHostDropMask,
   webSync, webGoto, webGotoSmart, webSearch, webSetEngine, SEARCH_ENGINES, webHome, webCloseHome,
   webBack, webForward, webReload, webLoaded, webProbe,
   webSetViewport, webOpenExternal, webSetMore,
@@ -1674,9 +1674,10 @@ export function CustomPane({ project }) {
   }
 
   /* ---------- 拖一个本地网页进来 ----------
-   * 宿主给整个窗口挂了 drop 处理器：文件掉进来它自己会弹窗（还可能是宿主自己的
-   * 「要不要加进对话 / 打开这个文件」那种），把工作台整个挡住。所以这里必须
-   * preventDefault + stopPropagation，把事件就地吃掉，再自己接住这个文件。 */
+   * 宿主在 document 上挂了整套拖放监听，命中文件就在 body 上盖一层整窗遮罩
+   * （pointer-events:none，点不掉）。这里就地 preventDefault + stopPropagation，
+   * 把文件接住；遮罩那边由 installDropMaskGuard 在捕获阶段掐掉 dragenter，
+   * drop 之后再补一发 resetHostDropMask 兜底 —— 详见 core.js 里那段注释。 */
   const isFileDrag = (e) => {
     const dt = e && e.dataTransfer
     if (!dt) return false
@@ -1725,6 +1726,8 @@ export function CustomPane({ project }) {
     e.stopPropagation()
     setDropHover(false)
     takeDropped(e)
+    /* 宿主的 onDrop 被我们挡住了，它自己的 dragActive 得有人替它关 */
+    resetHostDropMask()
   }
 
   if (cu.state === 'loading' && !cu.items.length) {

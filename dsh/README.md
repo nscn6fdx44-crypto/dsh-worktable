@@ -201,22 +201,32 @@
 
 ### 拖一个本地网页进来（0.10.7）
 
-0.10.6 漏了最顺手的那条路：**从资源管理器把 `.html` 拖进窗格**。窗格当时没挂 `drop` 处理器，
-事件一路冒到窗口上被宿主自己的拖放处理器接走，弹出宿主自己的窗（「要不要加进对话 / 要不要打开这个文件」
-那类），把工作台挡住 —— 看着就像「放进去就被弹窗卡住」。
+0.10.6 漏了最顺手的那条路：**从资源管理器把 `.html` 拖进窗格**。
 
-现在：
+踩到的坑值得记一笔 —— 挡住你的**不是弹窗，是宿主的一层遮罩**：
+宿主的 `@deepseek-ai/dsh-client-ui-attachment` 在 `document` 上挂了 `dragenter` / `dragover` /
+`dragleave` / `drop` 四个**冒泡**监听，只要拖的是文件就 `setDragActive(true)`，往 `document.body`
+塞一层 `position:fixed; inset:0; pointer-events:none` 的 `<DropOverlay>`（「文件或图片拖动到此处即可添加」）。
+它只有两条关法：宿主自己的 `onDrop` 里 `reset()`，或 `window` 的 `dragend` —— 而「从资源管理器拖进来」
+根本不派发 `dragend`。所以我们的窗格一旦 `stopPropagation()` 吃掉 `drop`，宿主的 `reset()` 就永远跑不到，
+那层灰底就永远挂着：**点不掉、`Esc` 也没用，因为它 `pointer-events:none`，压根没有交互层**。
 
-- **自定义窗格**自己接住拖放：认出是系统文件（`Files` / 带 `files` 的 `text/uri-list` / 本插件的
+现在的做法是两头都堵（细节见 `core.js` 里 `installDropMaskGuard` 那段注释）：
+
+- **自定义窗格**自己接住拖放：认出是系统文件（`Files` / `text/uri-list` / 本插件的
   `application/x-wt-file`）就 `preventDefault()` + `stopPropagation()`，`dropEffect='copy'`，
   整块亮虚线 +「松手 → 放进这个窗格」；松手后落成 `kind:'file'` 草稿（没起名字就用文件名主干）并直接进预览。
-- **只收 `.html` / `.htm` / `.xhtml`**，其它类型给一句提示，草稿不动、库不动。
-- 有未保存改动时**只 toast 提示、不弹确认框**：「先点「保存」，再来拖」。
+- **`document` 捕获阶段**拦 `dragenter`：指针在 `.wt-scope` 上（用 `elementFromPoint` 量，它会跳过
+  `pointer-events:none` 的遮罩）就掐断 —— 宿主进不了 `dragActive`，遮罩压根不出现。
+- **`resetHostDropMask()`** 兜底：合成一发 `dragleave`（`clientX/Y = -1`、`dataTransfer.types` 带 `Files`
+  但 `files` 为空）打在 `documentElement` 上，宿主按「指针离开视口」把 `dragDepth` 清零 + `setDragActive(false)`，
+  且不会往对话里加任何文件。窗格 `onDrop`、`.pane-main` 兜底、守卫里各调一次。
+- **只收 `.html` / `.htm` / `.xhtml`**，其它类型给一句提示，草稿不动、库不动；有未保存改动时只 toast，不弹确认框。
 - **整块工作区兜底**：没被具体窗格接住的系统文件，`.pane-main` 也吃掉 —— `.html` 直接落进自定义窗口，
-  其它类型提示该用哪个窗格。一律拦住，宿主收不到事件就不会弹窗；拖标签页换格子不受影响
-  （只认系统文件，不认 `text/plain` 的标签 key）。
+  其它类型提示该用哪个窗格；拖标签页换格子不受影响（只认系统文件，不认 `text/plain` 的标签 key）。
 - 顺手修掉：新建草稿不再误标「未保存」（`dirty` 现在要求 `draft.id === item.id`，以前刚点「＋」就亮红、
-  切窗口还会弹确认框）；`overlay.js` 里一直漏 import 的 `toast()` 补上了。
+  切窗口还会弹确认框）；`overlay.js` 里一直漏 import 的 `toast()` 补上了；预览 iframe 的 `sandbox`
+  去掉了 `allow-modals`（Electron 里 iframe 的 `alert/confirm` 会让整个窗口变模态，同样点不掉）。
 
 ### 拖到会话（0.8.53）
 
@@ -689,7 +699,7 @@ dsh/
 │       └── theme.css   # 全套样式（收在 .wt-scope 下）
 ├── test/
 │   ├── host-routes.mjs # 127 项：路由 / 沙箱 / 文件（大文件预览 / tail / fs-raw） / reveal / open / git / 托管 / web 探测 / 自定义库 / 终端 / 四态判定 / 安全加固（CSRF·凭证段·SSRF·软链接逃逸·二次写头守卫）
-│   └── client-smoke.mjs# 594 项：座位 / 侧边栏四态 / 菜单 / 让位换算 / 文件管理器 / 按类型分流开文件 / 本地网页（/asset 托管）/ 浏览器窗格 / 自定义窗口（生成·保存·预览·网页文件）/ 标签页 / 拖拽建项目
+│   └── client-smoke.mjs# 608 项：座位 / 侧边栏四态 / 菜单 / 让位换算 / 文件管理器 / 按类型分流开文件 / 本地网页（/asset 托管）/ 浏览器窗格 / 自定义窗口（生成·保存·预览·网页文件）/ 标签页 / 拖拽建项目
 └── lib/                # 构建产物（安装前必须 build）
 ```
 

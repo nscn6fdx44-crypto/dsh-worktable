@@ -936,6 +936,73 @@ overEv.currentTarget = mainNode
 if (mainNode && typeof mainNode.props.onDragOver === 'function') mainNode.props.onDragOver(overEv)
 check('整块工作区也吃掉系统文件拖拽（宿主别弹窗）', !!(mainNode && overEv.defaultPrevented && overEv.stopped))
 
+/* ---- 宿主那层「文件或图片拖动到此处即可添加」的整窗遮罩 ----
+ * 它在 document 上挂冒泡监听，pointer-events:none，点不掉也 Esc 不掉；
+ * 我们的 drop 一旦 stopPropagation，宿主自己的 onDrop 就跑不到，遮罩永远留着。 */
+check('isFileDragEvent：Files / uri-list / 自定义类型都算',
+  mod.isFileDragEvent({ dataTransfer: { types: ['Files'] } })
+  && mod.isFileDragEvent({ dataTransfer: { types: ['text/uri-list'] } })
+  && mod.isFileDragEvent({ dataTransfer: { types: ['application/x-wt-file'] } }))
+check('isFileDragEvent：拖标签页 / 会话行不算',
+  !mod.isFileDragEvent({ dataTransfer: { types: ['text/plain'], files: [] } }) && !mod.isFileDragEvent({}))
+
+const realElementFromPoint = globalThis.document.elementFromPoint
+globalThis.document.elementFromPoint = () => ({ closest: (sel) => (sel === '.wt-scope' ? {} : null) })
+check('pointsIntoWorkbench：指针落在工作台上', mod.pointsIntoWorkbench({ clientX: 10, clientY: 10 }) === true)
+globalThis.document.elementFromPoint = () => ({ closest: () => null })
+check('pointsIntoWorkbench：指针落在宿主区域', mod.pointsIntoWorkbench({ clientX: 10, clientY: 10 }) === false)
+globalThis.document.elementFromPoint = realElementFromPoint
+
+/* resetHostDropMask：合成一发「指针已经离开视口」的 dragleave，host 会据此把
+   dragDepth 清零 + setDragActive(false)，而且 files 是空的、不会往对话里塞东西 */
+const maskEvents = []
+const realDocument = globalThis.document
+globalThis.document = {
+  ...realDocument,
+  dispatchEvent: () => true,
+  documentElement: { dispatchEvent: (ev) => { maskEvents.push(ev); return true } },
+}
+check('resetHostDropMask：真发出去了一发事件', mod.resetHostDropMask() === true && maskEvents.length === 1)
+const maskEv = maskEvents[0] || {}
+check('resetHostDropMask：dragleave + 坐标为负（宿主据此走 reset 分支）',
+  maskEv.type === 'dragleave' && maskEv.bubbles === true && maskEv.clientX === -1 && maskEv.clientY === -1)
+check('resetHostDropMask：dataTransfer 带 Files 但文件是空的（不会顺手往对话里加东西）',
+  !!(maskEv.dataTransfer && maskEv.dataTransfer.types.indexOf('Files') >= 0 && maskEv.dataTransfer.files.length === 0))
+globalThis.document = { ...realDocument }
+check('resetHostDropMask：没有 documentElement 时安静返回', mod.resetHostDropMask() === false)
+globalThis.document = realDocument
+
+/* installDropMaskGuard：捕获阶段登记；命中工作台就掐断，别处放行 */
+const docListeners = []
+const realAdd = globalThis.document.addEventListener
+const realRemove = globalThis.document.removeEventListener
+let removedCount = 0
+globalThis.document.addEventListener = (type, fn, cap) => docListeners.push({ type, fn, cap })
+globalThis.document.removeEventListener = () => { removedCount += 1 }
+const stopGuard = mod.installDropMaskGuard()
+check('dragenter 守卫挂在捕获阶段（要早于宿主的 document 冒泡监听）',
+  docListeners.length === 1 && docListeners[0].type === 'dragenter' && docListeners[0].cap === true,
+  JSON.stringify(docListeners.map((l) => l.type + ':' + l.cap)))
+
+const guard = docListeners[0] ? docListeners[0].fn : () => {}
+const onWorkbench = { clientX: 5, clientY: 5, stopped: false, stopPropagation() { this.stopped = true }, dataTransfer: { types: ['Files'], files: [] } }
+globalThis.document.elementFromPoint = () => ({ closest: () => ({}) })
+guard(onWorkbench)
+check('文件拖到工作台上：dragenter 被掐断（宿主进不了 dragActive，遮罩不出现）', onWorkbench.stopped)
+const onHostArea = { clientX: 5, clientY: 5, stopped: false, stopPropagation() { this.stopped = true }, dataTransfer: { types: ['Files'], files: [] } }
+globalThis.document.elementFromPoint = () => null
+guard(onHostArea)
+check('文件拖到宿主自己的区域：放行（那边是宿主正常的拖放）', !onHostArea.stopped)
+const tabDrag = { clientX: 5, clientY: 5, stopped: false, stopPropagation() { this.stopped = true }, dataTransfer: { types: ['text/plain'], files: [] } }
+globalThis.document.elementFromPoint = () => ({ closest: () => ({}) })
+guard(tabDrag)
+check('拖我们自己的标签页经过工作台：不掐', !tabDrag.stopped)
+stopGuard()
+check('守卫可卸载（插件 dispose 时摘掉监听）', removedCount === 1)
+globalThis.document.elementFromPoint = realElementFromPoint
+globalThis.document.addEventListener = realAdd
+globalThis.document.removeEventListener = realRemove
+
 /* 收尾：清场，后面几段还要看到干净的空态 */
 customStore.length = 0
 mod.store.custom = { ...mod.store.custom, state: 'idle', items: [], active: '', item: null, draft: null, view: 'prompt', busy: '', error: '', prompt: '' }

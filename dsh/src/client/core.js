@@ -1644,6 +1644,84 @@ export function readChatDrop(e) {
   } catch { return null }
 }
 
+/* ---------- 宿主那层拖放遮罩 ----------
+ * 宿主 ComposerAttachments（@deepseek-ai/dsh-client-ui-attachment/drop-events）在
+ * document 上挂了 dragenter / dragover / dragleave / drop 四个**冒泡**监听，只认
+ * `dataTransfer.types` 里的 `Files`；一旦命中就 setDragActive(true)，往 body 里
+ * portal 一层整窗遮罩 —— 就是「文件或图片拖动到此处即可添加」那块灰底。
+ *
+ * 那层遮罩 `pointer-events: none`，纯装饰：**点不掉、Esc 也不管**，只有宿主自己的
+ * drop 或者 window 的 dragend 才会把它 reset（dragDepth 归零 + setDragActive(false)）。
+ * 我们没有 window 级 dragend 可指望（从资源管理器拖进来时 dragend 不派发到页面），
+ * 而我们的窗格一旦 stopPropagation 吃掉 drop，宿主的 onDrop 就跑不到 ——
+ * dragActive 永远停在 true，遮罩死死盖住工作台。0.10.7 用户报的「弹窗无法关闭」
+ * 正是这个：不是弹窗，是一层关不掉的遮罩。
+ *
+ * 两头都堵：
+ *   ① 在 document **捕获**阶段掐掉「落在工作台上的文件 dragenter」，宿主压根进不了
+ *      dragActive，遮罩不出现（捕获早于宿主的冒泡监听，也早于 React 根容器）；
+ *   ② 万一已经亮了（拖拽先落在宿主自己的区域再移进来），就地补一发合成 dragleave
+ *      把它的 dragDepth 清零 —— 它跑 reset() 只关遮罩，不会加任何文件。
+ */
+const FILE_DRAG_TYPES = ['Files', 'text/uri-list']
+
+/** 这次拖的是不是系统文件（不是我们自己的标签页 / 会话行） */
+export function isFileDragEvent(e) {
+  const dt = e && e.dataTransfer
+  if (!dt) return false
+  let types = []
+  try { types = dt.types ? Array.prototype.slice.call(dt.types) : [] } catch { types = [] }
+  if (types.indexOf(FILE_DRAG) >= 0) return true
+  for (let i = 0; i < FILE_DRAG_TYPES.length; i += 1) {
+    if (types.indexOf(FILE_DRAG_TYPES[i]) >= 0) return true
+  }
+  return !types.length && !!dt.files && dt.files.length > 0
+}
+
+/** 指针底下是不是我们工作台自己的界面（遮罩是 pointer-events:none，elementFromPoint 会跳过它） */
+export function pointsIntoWorkbench(e) {
+  const doc = typeof document !== 'undefined' ? document : null
+  if (!doc || !e || typeof doc.elementFromPoint !== 'function') return false
+  let hit = null
+  try { hit = doc.elementFromPoint(Number(e.clientX) || 0, Number(e.clientY) || 0) } catch { hit = null }
+  return !!(hit && typeof hit.closest === 'function' && hit.closest('.wt-scope'))
+}
+
+/** 强制关掉宿主的拖放遮罩（合成一发 cancel 用的 dragleave，不会加任何文件） */
+export function resetHostDropMask() {
+  const doc = typeof document !== 'undefined' ? document : null
+  if (!doc || typeof doc.dispatchEvent !== 'function' || !doc.documentElement) return false
+  if (typeof doc.documentElement.dispatchEvent !== 'function') return false
+  try {
+    const ev = new Event('dragleave', { bubbles: true })
+    /* 宿主只认 types 里带 Files 的 dataTransfer；files 给空数组，它就不会往对话里塞东西 */
+    Object.defineProperty(ev, 'dataTransfer', { value: { types: ['Files'], files: [], items: [], getData: () => '' } })
+    /* clientX/-Y 给负数：宿主判「指针离开视口」的分支会连 dragDepth 一起清零 */
+    Object.defineProperty(ev, 'clientX', { value: -1 })
+    Object.defineProperty(ev, 'clientY', { value: -1 })
+    doc.documentElement.dispatchEvent(ev)
+    return true
+  } catch { return false }
+}
+
+/** 挂一次：工作台上方不许出现宿主那层拖放遮罩 */
+export function installDropMaskGuard() {
+  const doc = typeof document !== 'undefined' ? document : null
+  if (!doc || typeof doc.addEventListener !== 'function') return () => {}
+  const onEnter = (e) => {
+    if (!isFileDragEvent(e)) return
+    if (!pointsIntoWorkbench(e)) return
+    /* 捕获阶段掐断 → 宿主的 document 冒泡监听收不到，dragActive 不会亮 */
+    if (typeof e.stopPropagation === 'function') e.stopPropagation()
+    /* 已经亮着（从宿主区域挪进来的）就顺手关掉 */
+    resetHostDropMask()
+  }
+  doc.addEventListener('dragenter', onEnter, true)
+  return () => {
+    if (typeof doc.removeEventListener === 'function') doc.removeEventListener('dragenter', onEnter, true)
+  }
+}
+
 /** 统一出口：把文件/网页塞进宿主输入框（不自动发送） */
 export function sendToChat(payload) {
   if (!payload || !payload.value) return false

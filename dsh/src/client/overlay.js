@@ -25,7 +25,7 @@ import {
   overviewProjects, setOverview, OVERVIEW_SORTS, OVERVIEW_FILTERS,
   runProject, stopProject, openRunPort,
   setSideProject, setSideSplit, sideProjectOf, readChatDrop, dropToChat, setChatDropHover,
-  openHtmlWindow, isHtmlFile, toast,
+  openHtmlWindow, isHtmlFile, toast, resetHostDropMask,
 } from './core.js'
 import { InfoPane, FilesPane, ScmPane, TermPane, WebPane, CustomPane, MediaPane, NotesPane } from './panes.js'
 
@@ -674,12 +674,14 @@ function MainPane({ project, ui, nest, slot = 0 }) {
     return !types.length && !!dt.files && dt.files.length > 0
   }
 
-  /* 没被具体窗格接住的系统文件，就地吃掉：宿主自己也给整窗挂了 drop 处理器，
-     让它接着冒泡会弹宿主自己的窗，把工作台整个挡住（0.10.6 用户报的就是这个）。 */
+  /* 没被具体窗格接住的系统文件，就地吃掉。宿主在 document 上挂了 dragenter/drop，
+     命中文件会盖一层关不掉的整窗遮罩（pointer-events:none 的纯装饰）；它自己的
+     onDrop 被我们挡住后 dragActive 不会复位，所以每次都要补一发 resetHostDropMask。 */
   const swallowOsDrop = (e, doOpen) => {
     if (!osFileDrag(e)) return false
     e.preventDefault()
     e.stopPropagation()
+    resetHostDropMask()
     if (!doOpen) return true
     const payload = readChatDrop(e)
     const path = payload && payload.kind === 'file' ? String(payload.value || '').trim() : ''

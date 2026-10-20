@@ -1,6 +1,6 @@
 # 交接文档 · trae-usage-worktable（工作台）
 
-> 生成时间：2026-10-20 · 版本 **0.10.6** · 分支 `dsh-plugin`（远端默认分支）
+> 生成时间：2026-10-20 · 版本 **0.10.7** · 分支 `dsh-plugin`（远端默认分支）
 > 用途：换会话/换人接手时，靠这一份 + 仓库本身恢复全部上下文。README 讲“是什么”，这份讲“现在到哪了、怎么继续”。
 
 ---
@@ -12,10 +12,10 @@
 | 仓库目录 | `C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh`（git 顶层是上一级 `2026-10-16-23-21-22`，插件在 `dsh/` 子目录） |
 | 远端 | `https://github.com/nscn6fdx44-crypto/dsh-worktable.git` |
 | 分支 / 最近提交 | `dsh-plugin` / 0.10.6：`feat(0.10.6): 下架编辑器窗格 / 标签条左右滑 / 自定义窗口放本地 html`（`0ce8d5f`，tag `v0.10.6`） |
-| 版本 | `package.json` = `dsh.plugin.json` = **0.10.6** |
+| 版本 | `package.json` = `dsh.plugin.json` = **0.10.7**（已改号，**还没打 tag / 发 Release**） |
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
 | 运行中的实例 | 客户端会热更，但 **host 路由必须完整重启 DSH** 才生效（`/asset`、`/gh/status`、`op:uninit` 在旧实例上会 401/404） |
-| 自测基线 | host **188** + client **585** 全通过（`npm test`） |
+| 自测基线 | host **189** + client **608** 全通过（`npm test`） |
 | tag | 0.10.0 / 0.10.1 / 0.10.2 / 0.10.3 / 0.10.4 / 0.10.5 / `v0.10.6` **全部已打并推送** |
 | Release | 0.10.0（417235810）、0.10.1（417246640）、0.10.2（417267258）、0.10.3（417344262）、0.10.4（417364793）、0.10.5（417385825）、**0.10.6（417899693，附件 id 657887031）** 都已发布；0.10.6 附件 **254354 字节 / 248.4 KB**、sha256 `7a2921e10311c0f18a6edcf5333fd7656eacfd57ac3e0b76adbc5acbaecaadeb`，下载回本地逐字节校验一致 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
@@ -27,14 +27,14 @@
 ```powershell
 cd C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh
 git pull --ff-only            # 可能有别的会话也在改同一个仓库（见 §11）
-npm run build && npm test     # 基线必须 188 / 585 全绿，否则先别改
+npm run build && npm test     # 基线必须 189 / 608 全绿，否则先别改
 ```
 
 要读的三处（按顺序，读这三处就能接上）：
 
 1. `src/client/core.js`（约 3600 行）—— 唯一的状态源（store / 所有动作 / 路由调用）
 2. `src/client/overlay.js` + `src/client/hostdock.js` —— 主区渲染 + **让位机制**（最容易被改坏的部位）
-3. `test/client-smoke.mjs` —— 585 条断言就是行为规格书
+3. `test/client-smoke.mjs` —— 608 条断言就是行为规格书
 
 ---
 
@@ -106,8 +106,8 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 | `src/client/ui.js` | ~197 | 基础件：`el`、`Icon`、`Light`、`Splitter`、`ContextMenu`、`Toasts` |
 | `src/client/render.js` | ~464 | 纯函数：`viewKindOf`、Markdown 渲染、代码高亮、格式化 |
 | `src/client/theme.css` | ~1577 | 全部样式（`.wt-scope` 作用域，CSS 变量控制主题） |
-| `test/client-smoke.mjs` | ~2298 | 客户端离线自测：stub React / document / fetch，**585 条断言** |
-| `test/host-routes.mjs` | ~855 | host 路由自测：fake webServer / sessionController，**188 条断言** |
+| `test/client-smoke.mjs` | ~2298 | 客户端离线自测：stub React / document / fetch，**608 条断言** |
+| `test/host-routes.mjs` | ~855 | host 路由自测：fake webServer / sessionController，**189 条断言** |
 
 ---
 
@@ -334,3 +334,34 @@ cd $repo; npm run build; npm test
 - **安全模型**：HTML 带 `CSP: sandbox allow-scripts allow-forms …`，iframe 也**不给 `allow-same-origin`** ——
   脚本能跑，但拿不到插件同源身份（localStorage 被禁、无法反调 `/fs/write`）。这是刻意的减法，别随手放开。
 
+---
+
+## 14. 宿主那层「文件或图片拖动到此处即可添加」的遮罩（0.10.7，踩了三次才找对）
+
+**它不是弹窗，是宿主的 DropOverlay。** 真相全在 `app.asar` 里（`@deepseek-ai/dsh-client-ui-attachment`）：
+
+- `drop-events.js` 的 `installDocumentDropEvents()` 把 `dragenter/dragover/dragleave/drop`
+  挂在 **`document` 上、冒泡阶段**（没传 capture），只认 `dataTransfer.types` 里的 `Files`；
+- 命中就 `setDragActive(true)`，`ComposerAttachments` 渲染 `<DropOverlay>`：portal 到 `document.body`，
+  `position:fixed; inset:0`，**`pointer-events:none`**（注释写的 "Decoration only"）；
+- 关它只有两条路：宿主自己的 `onDrop` 里 `reset()`，或 `window` 的 `dragend`。
+  **从资源管理器拖进来不会派发 `dragend`**（drag source 在页面之外）。
+
+⇒ 我们的窗格 `stopPropagation()` 吃掉 `drop`，宿主的 `reset()` 就永远跑不到，遮罩永久留在屏幕上。
+因为它 `pointer-events:none`，**文件其实早就放进去了**，卡住的只是那层灰底 —— 所以「点不掉、Esc 没用」。
+
+现在的对策（`core.js`，三个纯函数 + 一个安装器，都能单测）：
+
+| 函数 | 作用 |
+| --- | --- |
+| `isFileDragEvent(e)` | `Files` / `text/uri-list` / `application/x-wt-file` 才算系统文件；拖标签页（`text/plain` 的 key）不算 |
+| `pointsIntoWorkbench(e)` | `document.elementFromPoint()` 后 `closest('.wt-scope')`。遮罩 `pointer-events:none`，`elementFromPoint` 会自动跳过它 |
+| `resetHostDropMask()` | 合成 `dragleave` 打 `documentElement`：`clientX/Y=-1` + `dataTransfer.types=['Files']` 且 `files=[]` → 宿主走「离开视口」分支，`dragDepth` 清零 + `setDragActive(false)`，且不会往对话里加文件 |
+| `installDropMaskGuard()` | **`document` 捕获阶段**拦 `dragenter`（早于宿主冒泡监听、也早于 React 根容器）：命中工作台就 `stopPropagation()` + 顺手 `resetHostDropMask()` |
+
+三个调用点：`apply()` 里 `ctx.effect(installDropMaskGuard, …)`、`CustomPane` 的 `onDrop` 之后、
+`overlay.js` 的 `swallowOsDrop()` 之后（拖拽可能先落在宿主区域再移进来，那时遮罩已经亮了）。
+
+**通用规律（以后遇到同类问题先看这条）**：宿主在 `document` 冒泡阶段管事的时候，
+`stopPropagation()` 只解决「别让它处理」，不解决「它已经改掉的状态谁来复位」——
+必须自己补一次等价事件，或者干脆在捕获阶段就别让它收到。
