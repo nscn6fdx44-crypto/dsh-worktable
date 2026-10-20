@@ -2,7 +2,7 @@
 
 DeepSeek Harness（DSH）侧边栏**工作台**插件：把你的项目收纳成侧边栏应用抽屉，提供可停靠的分栏工作区——文件浏览、真 PTY 终端、内置浏览器、媒体查看、笔记、自定义窗口（含直接挂本地 `.html`），以及完整的 git / GitHub 管理——全部在 DSH 内完成。
 
-> 英文说明见 [README.md](README.md) · 当前版本 **0.10.6**
+> 英文说明见 [README.md](README.md) · 当前版本 **0.10.7**
 
 需要 **DSH `0.2.0-rc.2` 或 `0.2.1-rc.2`**（Windows 桌面端）。
 
@@ -17,26 +17,26 @@ CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`�
 **方式 A —— 直接按网址装**（DSH 自己去 GitHub 下载附件）：
 
 ```powershell
-& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.6/trae-usage-worktable-0.10.6.tgz"
+& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.7/trae-usage-worktable-0.10.7.tgz"
 ```
 
 **方式 B —— 下载后装本地文件**（GitHub 慢或被墙时用）：
 
-1. 从 [v0.10.6 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.6) 把 `trae-usage-worktable-0.10.6.tgz` 下载到**你想放的任意目录**
-   （248.4 KB，sha256 `7a2921e10311c0f18a6edcf5333fd7656eacfd57ac3e0b76adbc5acbaecaadeb`）
+1. 从 [v0.10.7 Release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.7) 把 `trae-usage-worktable-0.10.7.tgz` 下载到**你想放的任意目录**
+   （253.6 KB，sha256 `ec609bc94ef1621adf1fa01506b602eb7e8f952624a0b34bbab67c2f86d25b70`）
 2. 在 PowerShell 执行——路径换成**你自己**存放的位置：
    ```powershell
-   & "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<你下载的完整路径>\trae-usage-worktable-0.10.6.tgz"
+   & "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<你下载的完整路径>\trae-usage-worktable-0.10.7.tgz"
    ```
 
-重开 DSH —— 侧边栏即出现「工作台」面板。用 `/api/trae-worktable/health` 核对：`"version": "0.10.6"`。
+重开 DSH —— 侧边栏即出现「工作台」面板。用 `/api/trae-worktable/health` 核对：`"version": "0.10.7"`。
 
 ## 功能
 
 - **项目抽屉**——从侧边栏扫描、固定、排序、管理本机项目；卡片大小按宿主实际给的空间自适应
 - **可停靠分栏工作区**——窗格贴在对话左侧，右侧留给**真能打字的** DSH 对话；比例可拖、按项目记忆
 - **布局预设**——六种：单栏 / 左右 / 上下 / 上一下二 / 三列 / 2×2，分割线都能拖；标签可以拖到别的格子互换
-- **文件浏览与编辑**——带沙箱，拦截凭证目录（`.ssh` / `.aws` / `.env*` 等）与越界路径
+- **文件浏览**——带沙箱，拦截凭证目录（`.ssh` / `.aws` / `.env*` 等）与越界路径；文件按类型分流：媒体窗 / `.html` 进自定义窗口 / 其余交系统默认程序
 - **终端**——真 PTY（xterm.js + 宿主自带的 node-pty）：`vim`、`top`、`ssh`、REPL 都能跑，`Ctrl+C` 真的进前台进程；借不到原生模块时降级为「一条命令一个进程」
 - **运行配置**——一键 ▶ 把命令喂进终端（cwd = 项目目录），■ 停止，端口直接开窗格
 - **内置浏览器**——在停靠窗格里打开内部工具与网页（先探测可达性与能否 iframe）
@@ -50,8 +50,13 @@ CLI 在「你的 DSH 安装目录」下的 `resources\runtime\cli\bin\dsh.cmd`�
 - **快捷键体系**、项目模板、配置 JSON 导入导出
 - **拖到对话**——文件行或网页地址拖到顶栏，自动填成一段可发送的内容
 
-## 本版变更（0.8.48 → 0.10.6）
+## 本版变更（0.8.48 → 0.10.7）
 
+- **0.10.7** 从资源管理器把 `.html` **直接拖进自定义窗口**能用了，而且不再留下宿主的「文件或图片拖动到此处即可添加」
+  整窗遮罩关不掉 —— 那层遮罩是**纯装饰**（`pointer-events: none`，连按钮都没有），只能由宿主自己处理 `drop` 时复位
+  （从资源管理器拖进来的拖拽压根不派发 `dragend`），我们一旦把 drop 就地吃掉，它就永远挂在屏幕上，点不掉、Esc 也没用。
+  现在的办法：`document` **捕获阶段**掐掉落在工作台上的 `dragenter`；万一它已经亮了，就补一发合成 `dragleave` 让它自己复位。
+  顺带把预览 iframe 里的 `alert` / `confirm` 也一并禁掉了（Electron 里会把整个窗口变成模态）
 - **0.10.6** 三处界面调整：① **删掉「编辑器」窗格**（和宿主 / 系统默认程序重复），文件改为按类型分流 ——
   图片/PDF/音视频进媒体窗、`.html` 进自定义窗口、其余交给系统默认程序；老版本存下的 `editor` 标签页会自动清掉。
   ② **项目内标签条能左右滑**：溢出时出 `‹ ›` 箭头、滚轮直接横滚、切到被挤出去的标签自动带回、底部细滚动条提示。

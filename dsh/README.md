@@ -444,7 +444,7 @@ worktree / 子模块，删了会连带毁掉主仓库，直接拒绝并提示手
 | POST | `/web/open` | `{ url }` → 交给系统默认浏览器（`explorer.exe <url>` / `open` / `xdg-open`） |
 | POST | `/custom/list` | `{}` → `{ file, items:[{id,name,kind,pid,created,updated,size}] }`（列表不带正文） |
 | POST | `/custom/get` | `{ id }` → `{ item }`，没有则 404 |
-| POST | `/custom/save` | `{ id?, name?, kind:'html'\|'url', body, pid? }` → 新建时由**宿主发号**，同 id 覆盖；`url` 型会归一成 `http(s)://` 并挡掉 `javascript:`；正文上限 512KB |
+| POST | `/custom/save` | `{ id?, name?, kind:'html'\|'url'\|'file', body, pid? }` → 新建时由**宿主发号**，同 id 覆盖；`url` 型会归一成 `http(s)://` 并挡掉 `javascript:`；`file` 型要求绝对路径 + `.html/.htm/.xhtml`；正文上限 512KB |
 | POST | `/custom/delete` | `{ id }` → `{ ok }` |
 
 `/git` 支持的 `op`（除 `status` 外都要求目录落在可写白名单内）：
@@ -699,7 +699,7 @@ dsh/
 │       └── theme.css   # 全套样式（收在 .wt-scope 下）
 ├── test/
 │   ├── host-routes.mjs # 127 项：路由 / 沙箱 / 文件（大文件预览 / tail / fs-raw） / reveal / open / git / 托管 / web 探测 / 自定义库 / 终端 / 四态判定 / 安全加固（CSRF·凭证段·SSRF·软链接逃逸·二次写头守卫）
-│   └── client-smoke.mjs# 608 项：座位 / 侧边栏四态 / 菜单 / 让位换算 / 文件管理器 / 按类型分流开文件 / 本地网页（/asset 托管）/ 浏览器窗格 / 自定义窗口（生成·保存·预览·网页文件）/ 标签页 / 拖拽建项目
+│   └── client-smoke.mjs# 616 项：座位 / 侧边栏四态 / 菜单 / 让位换算 / 文件管理器 / 按类型分流开文件 / 本地网页（/asset 托管）/ 浏览器窗格 / 自定义窗口（生成·保存·预览·网页文件）/ 标签页 / 拖拽建项目
 └── lib/                # 构建产物（安装前必须 build）
 ```
 

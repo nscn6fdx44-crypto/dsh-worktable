@@ -1,8 +1,9 @@
 # Trae Worktable — DSH Plugin
 
-A **DeepSeek Harness (DSH)** side-panel *worktable* plugin: turn your projects into a side-panel app drawer with a dockable split workspace — file browser, editor, real terminal, in-app browser, media viewer, notes, custom window, and full git/GitHub management — all inside DSH.
+A **DeepSeek Harness (DSH)** side-panel *worktable* plugin: turn your projects into a side-panel app drawer with a dockable split workspace — file browser, real terminal, in-app browser, media viewer, notes, custom window (including hosting a local
+`.html` file), and full git/GitHub management — all inside DSH.
 
-> 中文说明见 [README.zh.md](README.zh.md) · 当前版本 **0.10.6**
+> 中文说明见 [README.zh.md](README.zh.md) · 当前版本 **0.10.7**
 
 Requires **DSH `0.2.0-rc.2` or `0.2.1-rc.2`** (Windows desktop).
 
@@ -17,26 +18,27 @@ The CLI lives at `<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd` — 
 **Option A — install straight from the release URL** (DSH downloads the asset itself):
 
 ```powershell
-& "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.6/trae-usage-worktable-0.10.6.tgz"
+& "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/download/v0.10.7/trae-usage-worktable-0.10.7.tgz"
 ```
 
 **Option B — download the file and install it locally** (use this if GitHub is slow or blocked):
 
-1. Download `trae-usage-worktable-0.10.6.tgz` from the [v0.10.6 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.6) to any folder you like
-   (248.4 KB, sha256 `7a2921e10311c0f18a6edcf5333fd7656eacfd57ac3e0b76adbc5acbaecaadeb`)
+1. Download `trae-usage-worktable-0.10.7.tgz` from the [v0.10.7 release](https://github.com/nscn6fdx44-crypto/dsh-worktable/releases/tag/v0.10.7) to any folder you like
+   (253.6 KB, sha256 `ec609bc94ef1621adf1fa01506b602eb7e8f952624a0b34bbab67c2f86d25b70`)
 2. In PowerShell — replace the path with wherever **you** saved it:
    ```powershell
-   & "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<full path to>\trae-usage-worktable-0.10.6.tgz"
+   & "<your DSH install dir>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "<full path to>\trae-usage-worktable-0.10.7.tgz"
    ```
 
-Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. Verify with `/api/trae-worktable/health` → `"version": "0.10.6"`.
+Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. Verify with `/api/trae-worktable/health` → `"version": "0.10.7"`.
 
 ## What's inside
 
 - **Project drawer** — scan, pin, reorder and manage your local projects from the sidebar; auto-adapts to how much room the host sidebar gives it
 - **Dockable split workspace** — panes sit left of the conversation and hand the right side back to a *real* DSH chat, resizable and remembered per project
 - **Layout presets** — six of them: single / side-by-side / stacked / top-row + two / three columns / 2×2, each with drag-to-resize splits; drag a tab onto another pane to swap them
-- **File browser & editor** — browse, open and edit files with a sandbox that blocks credential dirs (`.ssh` / `.aws` / `.env*` …) and path escapes
+- **File browser** — browse and open files (by type: media pane, custom window for `.html`, OS default program for
+  everything else) inside a sandbox that blocks credential dirs (`.ssh` / `.aws` / `.env*` …) and path escapes
 - **Terminal** — a real PTY (xterm.js + the host's own node-pty): `vim`, `top`, `ssh` and REPLs work, `Ctrl+C` reaches the foreground process; falls back to one-process-per-command if the native module is unavailable
 - **Run configs** — one click ▶ feeds a command to the terminal in the project directory, ■ stops it, ports open in a pane
 - **In-app browser** — open internal tools and web pages in a docked pane (reachability + iframe-ability probed first)
@@ -51,8 +53,14 @@ Then reopen DSH — the **工作台 (Worktable)** panel appears in the sidebar. 
 - **Keyboard shortcuts**, per-project templates, and JSON import/export for your setup
 - **Drag to chat** — drop a file row or a browser URL on the top bar and it lands in the chat input as a ready-to-send block
 
-## Latest changes (0.8.48 → 0.10.6)
+## Latest changes (0.8.48 → 0.10.7)
 
+- **0.10.7** dropping a local `.html` file straight into a **custom window** now works, and it no longer leaves the
+  host's full-window "drop here" overlay stuck on screen. That overlay is pure decoration — `pointer-events: none`,
+  no buttons at all — and it only closes when the host handles the `drop` itself (there is no `dragend` for drags
+  coming from Explorer), so swallowing the drop left it hanging there forever, immune to clicks and `Esc`. We now
+  mute the host's `dragenter` in the **capture** phase while the pointer is over the workbench, and hand it a
+  synthetic `dragleave` if it did light up. Preview iframes also stop running `alert` / `confirm` modals.
 - **0.10.6** three UI changes. (1) The **editor pane is gone** — it duplicated the host editor and your OS default
   program; files now route by type: images / PDF / audio / video → media pane, `.html` → a custom window, everything
   else → the OS default program. Stale `editor` tabs from older versions are migrated away on load.

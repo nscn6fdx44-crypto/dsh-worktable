@@ -15,7 +15,7 @@
 | 版本 | `package.json` = `dsh.plugin.json` = **0.10.7**（已改号，**还没打 tag / 发 Release**） |
 | 安装方式 | profile 里 `link:` 到本目录（Junction），bundles 含 `trae-usage-worktable` |
 | 运行中的实例 | 客户端会热更，但 **host 路由必须完整重启 DSH** 才生效（`/asset`、`/gh/status`、`op:uninit` 在旧实例上会 401/404） |
-| 自测基线 | host **189** + client **608** 全通过（`npm test`） |
+| 自测基线 | host **189** + client **616** 全通过（`npm test`） |
 | tag | 0.10.0 / 0.10.1 / 0.10.2 / 0.10.3 / 0.10.4 / 0.10.5 / `v0.10.6` **全部已打并推送** |
 | Release | 0.10.0（417235810）、0.10.1（417246640）、0.10.2（417267258）、0.10.3（417344262）、0.10.4（417364793）、0.10.5（417385825）、**0.10.6（417899693，附件 id 657887031）** 都已发布；0.10.6 附件 **254354 字节 / 248.4 KB**、sha256 `7a2921e10311c0f18a6edcf5333fd7656eacfd57ac3e0b76adbc5acbaecaadeb`，下载回本地逐字节校验一致 |
 | 宿主 | DeepSeek Harness Desktop `0.2.0-rc.2`（Windows），CLI 在 `D:\dsh\resources\runtime\cli\bin\dsh.cmd` |
@@ -27,14 +27,14 @@
 ```powershell
 cd C:\Users\jinshuaiyu\WorkBuddy\2026-10-16-23-21-22\dsh
 git pull --ff-only            # 可能有别的会话也在改同一个仓库（见 §11）
-npm run build && npm test     # 基线必须 189 / 608 全绿，否则先别改
+npm run build && npm test     # 基线必须 189 / 616 全绿，否则先别改
 ```
 
 要读的三处（按顺序，读这三处就能接上）：
 
 1. `src/client/core.js`（约 3600 行）—— 唯一的状态源（store / 所有动作 / 路由调用）
 2. `src/client/overlay.js` + `src/client/hostdock.js` —— 主区渲染 + **让位机制**（最容易被改坏的部位）
-3. `test/client-smoke.mjs` —— 608 条断言就是行为规格书
+3. `test/client-smoke.mjs` —— 616 条断言就是行为规格书
 
 ---
 
@@ -106,7 +106,7 @@ node C:\Users\jinshuaiyu\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm
 | `src/client/ui.js` | ~197 | 基础件：`el`、`Icon`、`Light`、`Splitter`、`ContextMenu`、`Toasts` |
 | `src/client/render.js` | ~464 | 纯函数：`viewKindOf`、Markdown 渲染、代码高亮、格式化 |
 | `src/client/theme.css` | ~1577 | 全部样式（`.wt-scope` 作用域，CSS 变量控制主题） |
-| `test/client-smoke.mjs` | ~2298 | 客户端离线自测：stub React / document / fetch，**608 条断言** |
+| `test/client-smoke.mjs` | ~2298 | 客户端离线自测：stub React / document / fetch，**616 条断言** |
 | `test/host-routes.mjs` | ~855 | host 路由自测：fake webServer / sessionController，**189 条断言** |
 
 ---
